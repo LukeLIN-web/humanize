@@ -89,8 +89,8 @@ echo ""
 echo "Scenario 6: Testing with set -euo pipefail"
 bash -c '
 set -euo pipefail
-source "'"$SCRIPT_DIR"'/template-loader.sh"
-TEMPLATE_DIR=$(get_template_dir "'"$SCRIPT_DIR"'")
+source "'"$PROJECT_ROOT"'/hooks/lib/template-loader.sh"
+TEMPLATE_DIR=$(get_template_dir "'"$PROJECT_ROOT"'/hooks/lib")
 
 # Test with missing template
 REASON=$(load_and_render "$TEMPLATE_DIR" "non-existing.md" "VAR=value" 2>/dev/null)
