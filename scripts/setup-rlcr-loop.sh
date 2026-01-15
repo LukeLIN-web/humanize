@@ -269,7 +269,6 @@ fi
 # ========================================
 
 PLAN_GIT_STATUS=$(git -C "$PROJECT_ROOT" status --porcelain "$PLAN_FILE" 2>/dev/null || echo "")
-PLAN_IS_IGNORED=$(git -C "$PROJECT_ROOT" check-ignore -q "$PLAN_FILE" 2>/dev/null && echo "true" || echo "false")
 PLAN_IS_TRACKED=$(git -C "$PROJECT_ROOT" ls-files --error-unmatch "$PLAN_FILE" &>/dev/null && echo "true" || echo "false")
 
 if [[ "$TRACK_PLAN_FILE" == "true" ]]; then

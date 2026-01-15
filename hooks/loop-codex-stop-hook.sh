@@ -59,17 +59,48 @@ fi
 STATE_FILE="$LOOP_DIR/state.md"
 
 # ========================================
-# Parse State File (Early - needed for integrity checks)
+# Parse State File (all frontmatter fields)
 # ========================================
 
 if [[ ! -f "$STATE_FILE" ]]; then
     exit 0
 fi
 
-EARLY_FRONTMATTER=$(sed -n '/^---$/,/^---$/{ /^---$/d; p; }' "$STATE_FILE" 2>/dev/null || echo "")
-PLAN_TRACKED=$(echo "$EARLY_FRONTMATTER" | grep '^plan_tracked:' | sed 's/plan_tracked: *//' | tr -d ' ')
-START_BRANCH=$(echo "$EARLY_FRONTMATTER" | grep '^start_branch:' | sed 's/start_branch: *//' | tr -d ' ')
-PLAN_FILE_PATH=$(echo "$EARLY_FRONTMATTER" | grep '^plan_file:' | sed 's/plan_file: *//')
+FRONTMATTER=$(sed -n '/^---$/,/^---$/{ /^---$/d; p; }' "$STATE_FILE" 2>/dev/null || echo "")
+
+# Fields for integrity checks (may be empty for old state files)
+PLAN_TRACKED=$(echo "$FRONTMATTER" | grep '^plan_tracked:' | sed 's/plan_tracked: *//' | tr -d ' ' || true)
+START_BRANCH=$(echo "$FRONTMATTER" | grep '^start_branch:' | sed 's/start_branch: *//' | tr -d ' ' || true)
+PLAN_FILE=$(echo "$FRONTMATTER" | grep '^plan_file:' | sed 's/plan_file: *//' || true)
+
+# Fields for loop iteration control
+CURRENT_ROUND=$(echo "$FRONTMATTER" | grep '^current_round:' | sed 's/current_round: *//' | tr -d ' ' || true)
+MAX_ITERATIONS=$(echo "$FRONTMATTER" | grep '^max_iterations:' | sed 's/max_iterations: *//' | tr -d ' ' || true)
+PUSH_EVERY_ROUND=$(echo "$FRONTMATTER" | grep '^push_every_round:' | sed 's/push_every_round: *//' | tr -d ' ' || true)
+
+# Fields for Codex configuration
+CODEX_MODEL=$(echo "$FRONTMATTER" | grep '^codex_model:' | sed 's/codex_model: *//' | tr -d ' ' || true)
+CODEX_EFFORT=$(echo "$FRONTMATTER" | grep '^codex_effort:' | sed 's/codex_effort: *//' | tr -d ' ' || true)
+STATE_CODEX_TIMEOUT=$(echo "$FRONTMATTER" | grep '^codex_timeout:' | sed 's/codex_timeout: *//' | tr -d ' ' || true)
+
+# Apply defaults
+CURRENT_ROUND="${CURRENT_ROUND:-0}"
+MAX_ITERATIONS="${MAX_ITERATIONS:-10}"
+PUSH_EVERY_ROUND="${PUSH_EVERY_ROUND:-false}"
+CODEX_MODEL="${CODEX_MODEL:-$DEFAULT_CODEX_MODEL}"
+CODEX_EFFORT="${CODEX_EFFORT:-$DEFAULT_CODEX_EFFORT}"
+CODEX_TIMEOUT="${STATE_CODEX_TIMEOUT:-${CODEX_TIMEOUT:-$DEFAULT_CODEX_TIMEOUT}}"
+
+# Validate numeric fields early
+if [[ ! "$CURRENT_ROUND" =~ ^[0-9]+$ ]]; then
+    echo "Warning: State file corrupted (current_round), stopping loop" >&2
+    end_loop "$LOOP_DIR" "$STATE_FILE" "unexpected"
+    exit 0
+fi
+
+if [[ ! "$MAX_ITERATIONS" =~ ^[0-9]+$ ]]; then
+    MAX_ITERATIONS=42
+fi
 
 # ========================================
 # Quick-check 0: Schema Validation (v1.1.2+ fields)
@@ -106,7 +137,7 @@ fi
 # ========================================
 
 BACKUP_PLAN="$LOOP_DIR/plan.md"
-FULL_PLAN_PATH="$PROJECT_ROOT/$PLAN_FILE_PATH"
+FULL_PLAN_PATH="$PROJECT_ROOT/$PLAN_FILE"
 
 # Check backup exists
 if [[ ! -f "$BACKUP_PLAN" ]]; then
@@ -125,7 +156,7 @@ fi
 if [[ ! -f "$FULL_PLAN_PATH" ]]; then
     REASON="Project plan file has been deleted.
 
-Original: $PLAN_FILE_PATH
+Original: $PLAN_FILE
 Backup available at: $BACKUP_PLAN
 
 You can restore from backup if needed. Plan file modifications are not allowed during RLCR loop."
@@ -135,12 +166,21 @@ You can restore from backup if needed. Plan file modifications are not allowed d
 fi
 
 if ! diff -q "$FULL_PLAN_PATH" "$BACKUP_PLAN" &>/dev/null; then
-    REASON="Plan file has been modified during RLCR loop.
+    FALLBACK="# Plan File Modified
 
-Modifying plan files is forbidden during an active RLCR loop.
-If you need to change the plan, please restart the RLCR loop with the updated plan file.
+The plan file \`$PLAN_FILE\` has been modified since the RLCR loop started.
 
-Original backup: $BACKUP_PLAN"
+**Modifying plan files is forbidden during an active RLCR loop.**
+
+If you need to change the plan:
+1. Cancel the current loop: \`/humanize:cancel-rlcr-loop\`
+2. Update the plan file
+3. Start a new loop: \`/humanize:start-rlcr-loop $PLAN_FILE\`
+
+Backup available at: \`$BACKUP_PLAN\`"
+    REASON=$(load_and_render_safe "$TEMPLATE_DIR" "block/plan-file-modified.md" "$FALLBACK" \
+        "PLAN_FILE=$PLAN_FILE" \
+        "BACKUP_PATH=$BACKUP_PLAN")
     jq -n --arg reason "$REASON" --arg msg "Loop: Blocked - plan file modified" \
         '{"decision": "block", "reason": $reason, "systemMessage": $msg}'
     exit 0
@@ -330,8 +370,6 @@ Please commit all changes before exiting.
     # ========================================
     # Check Unpushed Commits (only when push_every_round is true)
     # ========================================
-    # Read push_every_round from state file
-    PUSH_EVERY_ROUND=$(grep -E "^push_every_round:" "$STATE_FILE" 2>/dev/null | sed 's/push_every_round: *//' || echo "false")
 
     if [[ "$PUSH_EVERY_ROUND" == "true" ]]; then
         # Check if local branch is ahead of remote (unpushed commits)
@@ -360,44 +398,6 @@ Please push before exiting."
             exit 0
         fi
     fi
-fi
-
-# ========================================
-# Parse State File
-# ========================================
-
-if [[ ! -f "$STATE_FILE" ]]; then
-    exit 0
-fi
-
-# Extract frontmatter values
-FRONTMATTER=$(sed -n '/^---$/,/^---$/{ /^---$/d; p; }' "$STATE_FILE" 2>/dev/null || echo "")
-
-CURRENT_ROUND=$(echo "$FRONTMATTER" | grep '^current_round:' | sed 's/current_round: *//' | tr -d ' ')
-MAX_ITERATIONS=$(echo "$FRONTMATTER" | grep '^max_iterations:' | sed 's/max_iterations: *//' | tr -d ' ')
-CODEX_MODEL=$(echo "$FRONTMATTER" | grep '^codex_model:' | sed 's/codex_model: *//' | tr -d ' ')
-CODEX_EFFORT=$(echo "$FRONTMATTER" | grep '^codex_effort:' | sed 's/codex_effort: *//' | tr -d ' ')
-STATE_CODEX_TIMEOUT=$(echo "$FRONTMATTER" | grep '^codex_timeout:' | sed 's/codex_timeout: *//' | tr -d ' ')
-PLAN_FILE=$(echo "$FRONTMATTER" | grep '^plan_file:' | sed 's/plan_file: *//')
-
-# Defaults
-CURRENT_ROUND="${CURRENT_ROUND:-0}"
-MAX_ITERATIONS="${MAX_ITERATIONS:-10}"
-CODEX_MODEL="${CODEX_MODEL:-$DEFAULT_CODEX_MODEL}"
-CODEX_EFFORT="${CODEX_EFFORT:-$DEFAULT_CODEX_EFFORT}"
-# Timeout priority: state file > env var > default
-CODEX_TIMEOUT="${STATE_CODEX_TIMEOUT:-${CODEX_TIMEOUT:-$DEFAULT_CODEX_TIMEOUT}}"
-
-# Validate numeric fields
-if [[ ! "$CURRENT_ROUND" =~ ^[0-9]+$ ]]; then
-    echo "Warning: State file corrupted (current_round), stopping loop" >&2
-    end_loop "$LOOP_DIR" "$STATE_FILE" "unexpected"
-    exit 0
-fi
-
-# max_iterations must be a number
-if [[ ! "$MAX_ITERATIONS" =~ ^[0-9]+$ ]]; then
-    MAX_ITERATIONS=42
 fi
 
 # ========================================
