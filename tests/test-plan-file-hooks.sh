@@ -228,6 +228,103 @@ else
 fi
 
 echo ""
+echo "=== Test: Stop Hook Plan File Integrity ==="
+echo ""
+
+# Test 9: Stop hook blocks when plan file has been modified
+echo "Test 9: Stop hook blocks when plan file is modified"
+setup_test_loop
+# Modify the project plan file (different from backup)
+echo "# Modified content" >> "$TEST_DIR/plans/test-plan.md"
+# Create a summary file so the hook doesn't fail on that check first
+cat > "$LOOP_DIR/round-0-summary.md" << 'EOF'
+# Summary
+Work done.
+EOF
+# Create goal tracker so the hook doesn't fail on that check
+cat > "$LOOP_DIR/goal-tracker.md" << 'EOF'
+# Goal Tracker
+## IMMUTABLE SECTION
+### Ultimate Goal
+Test goal
+### Acceptance Criteria
+- Criterion 1
+## MUTABLE SECTION
+### Plan Version: 1 (Updated: Round 0)
+#### Plan Evolution Log
+| Round | Change | Reason | Impact on AC |
+|-------|--------|--------|--------------|
+| 0 | Initial plan | - | - |
+#### Active Tasks
+| Task | Target AC | Status | Notes |
+|------|-----------|--------|-------|
+| Task 1 | AC1 | in_progress | - |
+EOF
+set +e
+RESULT=$(echo '{}' | "$PROJECT_ROOT/hooks/loop-codex-stop-hook.sh" 2>&1)
+EXIT_CODE=$?
+set -e
+# The hook should output JSON with "block" decision and mention plan file modified
+if echo "$RESULT" | grep -q '"decision"' && echo "$RESULT" | grep -qi "plan.*modified"; then
+    pass "Stop hook blocks when plan file is modified"
+else
+    fail "Stop hook plan modification detection" "block with plan modified error" "exit $EXIT_CODE, output: $RESULT"
+fi
+
+# Test 10: Stop hook blocks when plan file is deleted
+echo "Test 10: Stop hook blocks when plan file is deleted"
+setup_test_loop
+# Delete the project plan file
+rm -f "$TEST_DIR/plans/test-plan.md"
+# Create necessary files
+cat > "$LOOP_DIR/round-0-summary.md" << 'EOF'
+# Summary
+Work done.
+EOF
+cat > "$LOOP_DIR/goal-tracker.md" << 'EOF'
+# Goal Tracker
+## IMMUTABLE SECTION
+### Ultimate Goal
+Test goal
+### Acceptance Criteria
+- Criterion 1
+## MUTABLE SECTION
+### Plan Version: 1 (Updated: Round 0)
+#### Active Tasks
+| Task | Target AC | Status | Notes |
+|------|-----------|--------|-------|
+| Task 1 | AC1 | done | - |
+EOF
+set +e
+RESULT=$(echo '{}' | "$PROJECT_ROOT/hooks/loop-codex-stop-hook.sh" 2>&1)
+EXIT_CODE=$?
+set -e
+if echo "$RESULT" | grep -q '"decision"' && echo "$RESULT" | grep -qi "plan.*deleted"; then
+    pass "Stop hook blocks when plan file is deleted"
+else
+    fail "Stop hook plan deletion detection" "block with plan deleted error" "exit $EXIT_CODE, output: $RESULT"
+fi
+
+# Test 11: Stop hook blocks when plan backup is missing
+echo "Test 11: Stop hook blocks when plan backup is missing"
+setup_test_loop
+# Remove the backup
+rm -f "$LOOP_DIR/plan.md"
+cat > "$LOOP_DIR/round-0-summary.md" << 'EOF'
+# Summary
+Work done.
+EOF
+set +e
+RESULT=$(echo '{}' | "$PROJECT_ROOT/hooks/loop-codex-stop-hook.sh" 2>&1)
+EXIT_CODE=$?
+set -e
+if echo "$RESULT" | grep -q '"decision"' && echo "$RESULT" | grep -qi "backup.*not found\|plan.*backup"; then
+    pass "Stop hook blocks when plan backup is missing"
+else
+    fail "Stop hook plan backup detection" "block with backup missing error" "exit $EXIT_CODE, output: $RESULT"
+fi
+
+echo ""
 echo "========================================="
 echo "Test Results"
 echo "========================================="
