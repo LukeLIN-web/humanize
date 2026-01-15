@@ -19,23 +19,16 @@ source "$SCRIPT_DIR/lib/loop-common.sh"
 # Read hook input (required for UserPromptSubmit hooks)
 INPUT=$(cat)
 
-# Find active loop
+# Find active loop using shared function
 LOOP_BASE_DIR="$PROJECT_ROOT/.humanize-loop.local"
-if [[ ! -d "$LOOP_BASE_DIR" ]]; then
-    exit 0  # No loop directory
-fi
+LOOP_DIR=$(find_active_loop "$LOOP_BASE_DIR")
 
-# Get the newest directory (by timestamp name, descending)
-LATEST_LOOP=$(ls -1d "$LOOP_BASE_DIR"/*/ 2>/dev/null | sort -r | head -1)
-if [[ -z "$LATEST_LOOP" ]]; then
+# If no active loop, allow exit
+if [[ -z "$LOOP_DIR" ]]; then
     exit 0
 fi
 
-LATEST_LOOP="${LATEST_LOOP%/}"
-STATE_FILE="$LATEST_LOOP/state.md"
-if [[ ! -f "$STATE_FILE" ]]; then
-    exit 0  # No active loop
-fi
+STATE_FILE="$LOOP_DIR/state.md"
 
 # Parse state file
 FRONTMATTER=$(sed -n '/^---$/,/^---$/{ /^---$/d; p; }' "$STATE_FILE" 2>/dev/null || echo "")
