@@ -169,6 +169,9 @@ command_modifies_file() {
         "(mv|cp)[[:space:]]+[^[:space:]]+[[:space:]]+[^[:space:]]*${file_pattern}"
         "rm[[:space:]]+(-[rfv]+[[:space:]]+)?[^[:space:]]*${file_pattern}"
         "dd[[:space:]].*of=[^[:space:]]*${file_pattern}"
+        "truncate[[:space:]]+[^|]*${file_pattern}"
+        "printf[[:space:]].*>[[:space:]]*[^[:space:]]*${file_pattern}"
+        "exec[[:space:]]+[0-9]*>[[:space:]]*[^[:space:]]*${file_pattern}"
     )
 
     for pattern in "${patterns[@]}"; do

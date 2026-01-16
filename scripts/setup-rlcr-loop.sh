@@ -231,6 +231,15 @@ if [[ "$PLAN_FILE" =~ [[:space:]] ]]; then
     exit 1
 fi
 
+# Reject paths with shell metacharacters (prevents injection when used in shell commands)
+# Use glob pattern matching (== *[...]*) instead of regex (=~) for portability
+if [[ "$PLAN_FILE" == *[\;\&\|\$\`\<\>\(\)\{\}\[\]\!\#\~\*\?\\]* ]]; then
+    echo "Error: Plan file path contains shell metacharacters" >&2
+    echo "  Got: $PLAN_FILE" >&2
+    echo "  Rename the file to use only alphanumeric, dash, underscore, dot, and slash" >&2
+    exit 1
+fi
+
 # Build full path
 FULL_PLAN_PATH="$PROJECT_ROOT/$PLAN_FILE"
 
@@ -261,15 +270,18 @@ if [[ ! "$REAL_PLAN_PATH" = "$PROJECT_ROOT"/* ]]; then
 fi
 
 # Check not in submodule
-if git -C "$PROJECT_ROOT" submodule status 2>/dev/null | grep -q .; then
-    # Get list of submodule paths
-    SUBMODULES=$(git -C "$PROJECT_ROOT" submodule status | awk '{print $2}')
-    for submod in $SUBMODULES; do
-        if [[ "$PLAN_FILE" = "$submod"/* || "$PLAN_FILE" = "$submod" ]]; then
-            echo "Error: Plan file cannot be inside a git submodule: $submod" >&2
-            exit 1
-        fi
-    done
+# Quick check: only run expensive git submodule status if .gitmodules exists
+if [[ -f "$PROJECT_ROOT/.gitmodules" ]]; then
+    if git -C "$PROJECT_ROOT" submodule status 2>/dev/null | grep -q .; then
+        # Get list of submodule paths
+        SUBMODULES=$(git -C "$PROJECT_ROOT" submodule status | awk '{print $2}')
+        for submod in $SUBMODULES; do
+            if [[ "$PLAN_FILE" = "$submod"/* || "$PLAN_FILE" = "$submod" ]]; then
+                echo "Error: Plan file cannot be inside a git submodule: $submod" >&2
+                exit 1
+            fi
+        done
+    fi
 fi
 
 # ========================================
@@ -364,9 +376,9 @@ codex_model: $CODEX_MODEL
 codex_effort: $CODEX_EFFORT
 codex_timeout: $CODEX_TIMEOUT
 push_every_round: $PUSH_EVERY_ROUND
-plan_file: "$PLAN_FILE"
+plan_file: $PLAN_FILE
 plan_tracked: $TRACK_PLAN_FILE
-start_branch: "$START_BRANCH"
+start_branch: $START_BRANCH
 started_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 ---
 EOF

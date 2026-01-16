@@ -162,6 +162,26 @@ else
     fail "Filename with spaces rejection" "exit 1 with spaces error" "$RESULT"
 fi
 
+# Test 2.8: Path with shell metacharacters should fail
+echo "Test 2.8: Reject path with shell metacharacters"
+cat > "$TEST_DIR/plans/test-plan.md" << 'EOF'
+# Plan
+## Goal
+Test metacharacters
+## Requirements
+- Requirement 1
+- Requirement 2
+EOF
+# Test various shell metacharacters
+for meta_char in ';' '&' '|' '$' '`' '<' '>' '(' ')' '{' '}' '[' ']' '!' '#' '~' '*' '?'; do
+    RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" "plans/test${meta_char}plan.md" 2>&1) || true
+    if ! echo "$RESULT" | grep -q "shell metacharacters"; then
+        fail "Shell metacharacter rejection ($meta_char)" "error mentioning metacharacters" "$RESULT"
+        break
+    fi
+done
+pass "Path with shell metacharacters rejected"
+
 # Test 3: Symlink should fail
 echo "Test 3: Reject symbolic link"
 ln -sf plans/test-plan.md "$TEST_DIR/link-plan.md"

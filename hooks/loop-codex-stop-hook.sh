@@ -69,6 +69,8 @@ fi
 FRONTMATTER=$(sed -n '/^---$/,/^---$/{ /^---$/d; p; }' "$STATE_FILE" 2>/dev/null || echo "")
 
 # Fields for integrity checks (may be empty for old state files)
+# Note: Values are unquoted since v1.1.2+ validates paths don't contain special chars
+# Legacy quote-stripping kept for backward compatibility with older state files
 PLAN_TRACKED=$(echo "$FRONTMATTER" | grep '^plan_tracked:' | sed 's/plan_tracked: *//' | tr -d ' ' || true)
 START_BRANCH=$(echo "$FRONTMATTER" | grep '^start_branch:' | sed 's/start_branch: *//; s/^"//; s/"$//' || true)
 PLAN_FILE=$(echo "$FRONTMATTER" | grep '^plan_file:' | sed 's/plan_file: *//; s/^"//; s/"$//' || true)
@@ -105,13 +107,13 @@ fi
 # ========================================
 # Quick-check 0: Schema Validation (v1.1.2+ fields)
 # ========================================
-# If schema is outdated, allow exit with unexpected status
+# If schema is outdated, terminate loop as unexpected
 
 if [[ -z "$PLAN_TRACKED" || -z "$START_BRANCH" ]]; then
     end_loop "$LOOP_DIR" "$STATE_FILE" "unexpected"
     echo "Loop terminated: state schema outdated (missing plan_tracked or start_branch)" >&2
     echo "Please update humanize plugin to v1.1.2+ and restart the loop." >&2
-    exit 0  # Allow exit
+    exit 0
 fi
 
 # ========================================
@@ -165,8 +167,12 @@ You can restore from backup if needed. Plan file modifications are not allowed d
     exit 0
 fi
 
-if ! diff -q "$FULL_PLAN_PATH" "$BACKUP_PLAN" &>/dev/null; then
-    FALLBACK="# Plan File Modified
+# For tracked plan files, rely on git status check in UserPromptSubmit hook
+# Skip diff check because git operations (checkout, rebase) may legitimately change content
+# For gitignored files, enforce exact match as defense-in-depth
+if [[ "$PLAN_TRACKED" != "true" ]]; then
+    if ! diff -q "$FULL_PLAN_PATH" "$BACKUP_PLAN" &>/dev/null; then
+        FALLBACK="# Plan File Modified
 
 The plan file \`$PLAN_FILE\` has been modified since the RLCR loop started.
 
@@ -178,12 +184,13 @@ If you need to change the plan:
 3. Start a new loop: \`/humanize:start-rlcr-loop $PLAN_FILE\`
 
 Backup available at: \`$BACKUP_PLAN\`"
-    REASON=$(load_and_render_safe "$TEMPLATE_DIR" "block/plan-file-modified.md" "$FALLBACK" \
-        "PLAN_FILE=$PLAN_FILE" \
-        "BACKUP_PATH=$BACKUP_PLAN")
-    jq -n --arg reason "$REASON" --arg msg "Loop: Blocked - plan file modified" \
-        '{"decision": "block", "reason": $reason, "systemMessage": $msg}'
-    exit 0
+        REASON=$(load_and_render_safe "$TEMPLATE_DIR" "block/plan-file-modified.md" "$FALLBACK" \
+            "PLAN_FILE=$PLAN_FILE" \
+            "BACKUP_PATH=$BACKUP_PLAN")
+        jq -n --arg reason "$REASON" --arg msg "Loop: Blocked - plan file modified" \
+            '{"decision": "block", "reason": $reason, "systemMessage": $msg}'
+        exit 0
+    fi
 fi
 
 # ========================================
@@ -207,6 +214,7 @@ if [[ -f "$TODO_CHECKER" ]]; then
         FALLBACK="# Incomplete Todos
 
 Complete these tasks before exiting:
+
 {{INCOMPLETE_LIST}}"
         REASON=$(load_and_render_safe "$TEMPLATE_DIR" "block/incomplete-todos.md" "$FALLBACK" \
             "INCOMPLETE_LIST=$INCOMPLETE_LIST")
@@ -285,6 +293,7 @@ EOF
         FALLBACK="# Large Files Detected
 
 Files exceeding {{MAX_LINES}} lines:
+
 {{LARGE_FILES}}
 
 Split these into smaller modules before continuing."

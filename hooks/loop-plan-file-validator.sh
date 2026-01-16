@@ -31,6 +31,8 @@ fi
 STATE_FILE="$LOOP_DIR/state.md"
 
 # Parse state file
+# Note: Values are unquoted since v1.1.2+ validates paths don't contain special chars
+# Legacy quote-stripping kept for backward compatibility with older state files
 FRONTMATTER=$(sed -n '/^---$/,/^---$/{ /^---$/d; p; }' "$STATE_FILE" 2>/dev/null || echo "")
 
 PLAN_TRACKED=$(echo "$FRONTMATTER" | grep '^plan_tracked:' | sed 's/plan_tracked: *//' | tr -d ' ' || true)
