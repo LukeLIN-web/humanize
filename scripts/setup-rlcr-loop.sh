@@ -363,6 +363,24 @@ if [[ "$START_BRANCH" == *[:\#\"\'\`]* ]] || [[ "$START_BRANCH" =~ $'\n' ]]; the
     exit 1
 fi
 
+# Validate codex model for YAML safety
+# Only alphanumeric, hyphen, underscore, dot allowed
+if [[ ! "$CODEX_MODEL" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+    echo "Error: Codex model contains invalid characters" >&2
+    echo "  Model: $CODEX_MODEL" >&2
+    echo "  Only alphanumeric, hyphen, underscore, dot allowed" >&2
+    exit 1
+fi
+
+# Validate codex effort for YAML safety
+# Only alphanumeric, hyphen, underscore allowed
+if [[ ! "$CODEX_EFFORT" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    echo "Error: Codex effort contains invalid characters" >&2
+    echo "  Effort: $CODEX_EFFORT" >&2
+    echo "  Only alphanumeric, hyphen, underscore allowed" >&2
+    exit 1
+fi
+
 # ========================================
 # Setup State Directory
 # ========================================

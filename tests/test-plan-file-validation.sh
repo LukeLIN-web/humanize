@@ -541,6 +541,50 @@ else
 fi
 
 echo ""
+echo "=== Test: Codex Parameter Validation ==="
+echo ""
+
+# Test 12: Reject codex model with YAML-unsafe characters
+# Note: colon is used as delimiter (model:effort), so test with $ which stays in model portion
+echo "Test 12: Reject codex model with YAML-unsafe characters"
+setup_test_repo
+mock_codex
+set +e
+RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" --codex-model 'model$inject:high' "plans/test-plan.md" 2>&1)
+EXIT_CODE=$?
+set -e
+if [[ $EXIT_CODE -ne 0 ]] && echo "$RESULT" | grep -q "invalid characters"; then
+    pass "Codex model with $ rejected"
+else
+    fail "Codex model validation" "exit 1 with invalid characters error" "$RESULT"
+fi
+
+# Test 13: Reject codex effort with YAML-unsafe characters
+echo "Test 13: Reject codex effort with YAML-unsafe characters"
+set +e
+RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" --codex-model "gpt-5.2-codex:high#comment" "plans/test-plan.md" 2>&1)
+EXIT_CODE=$?
+set -e
+if [[ $EXIT_CODE -ne 0 ]] && echo "$RESULT" | grep -q "invalid characters"; then
+    pass "Codex effort with hash rejected"
+else
+    fail "Codex effort validation" "exit 1 with invalid characters error" "$RESULT"
+fi
+
+# Test 14: Accept valid codex model with dots and hyphens
+echo "Test 14: Accept valid codex model (alphanumeric, dots, hyphens)"
+set +e
+RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" --codex-model "gpt-5.2-codex:medium" "plans/test-plan.md" 2>&1)
+EXIT_CODE=$?
+set -e
+# Should not fail due to model/effort validation (may fail later for other reasons)
+if ! echo "$RESULT" | grep -q "invalid characters"; then
+    pass "Valid codex model accepted"
+else
+    fail "Valid codex model" "no invalid characters error" "$RESULT"
+fi
+
+echo ""
 echo "========================================="
 echo "Test Results"
 echo "========================================="
