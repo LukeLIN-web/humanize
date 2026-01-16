@@ -652,6 +652,84 @@ else
     fail "Stop hook schema blocking" "JSON block response" "exit $EXIT_CODE, output: $RESULT"
 fi
 
+# Test 14: Stop hook blocks tracked file with committed changes (content differs from backup)
+# This tests the security fix: even if git status is clean, content must match backup
+echo "Test 14: Stop hook blocks tracked file with committed changes"
+cd "$TEST_DIR"
+rm -rf tracked-commit-test 2>/dev/null || true
+mkdir -p tracked-commit-test
+cd tracked-commit-test
+git init -q
+git config user.email "test@test.com"
+git config user.name "Test"
+echo "init" > init.txt
+git add init.txt
+git commit -q -m "Initial"
+# Get the default branch name for this new repo
+TEST14_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+# Create tracked plan file
+cat > tracked-plan.md << 'EOF'
+# Tracked Plan
+## Goal
+Test tracked file
+## Requirements
+- Requirement 1
+EOF
+git add tracked-plan.md
+git commit -q -m "Add plan"
+# Create loop directory and backup
+TRACKED_LOOP_DIR="$PWD/.humanize-loop.local/2024-01-01_12-00-00"
+mkdir -p "$TRACKED_LOOP_DIR"
+cp tracked-plan.md "$TRACKED_LOOP_DIR/plan.md"
+cat > "$TRACKED_LOOP_DIR/state.md" << EOF
+---
+current_round: 0
+max_iterations: 42
+plan_file: tracked-plan.md
+plan_tracked: true
+start_branch: $TEST14_BRANCH
+---
+EOF
+cat > "$TRACKED_LOOP_DIR/round-0-summary.md" << 'EOF'
+# Summary
+Work done.
+EOF
+cat > "$TRACKED_LOOP_DIR/goal-tracker.md" << 'EOF'
+# Goal Tracker
+## IMMUTABLE SECTION
+### Ultimate Goal
+Test goal
+### Acceptance Criteria
+- Criterion 1
+## MUTABLE SECTION
+### Plan Version: 1 (Updated: Round 0)
+#### Active Tasks
+| Task | Target AC | Status | Notes |
+|------|-----------|--------|-------|
+| Task 1 | AC1 | done | - |
+EOF
+# Modify and COMMIT the plan file (git status will be clean)
+echo "# Modified and committed" >> tracked-plan.md
+git add tracked-plan.md
+git commit -q -m "Modify plan"
+# Verify git status is clean for the plan file
+GIT_STATUS_CHECK=$(git status --porcelain tracked-plan.md)
+if [[ -n "$GIT_STATUS_CHECK" ]]; then
+    fail "Test 14 setup" "clean git status" "git status: $GIT_STATUS_CHECK"
+else
+    export CLAUDE_PROJECT_DIR="$PWD"
+    set +e
+    RESULT=$(echo '{}' | "$PROJECT_ROOT/hooks/loop-codex-stop-hook.sh" 2>&1)
+    EXIT_CODE=$?
+    set -e
+    # Should detect modification via content diff (not git status)
+    if echo "$RESULT" | grep -q '"decision"' && echo "$RESULT" | grep -qi "plan.*modif"; then
+        pass "Stop hook blocks tracked file with committed changes"
+    else
+        fail "Stop hook committed file detection" "block with modification error" "exit $EXIT_CODE, output: $RESULT"
+    fi
+fi
+
 echo ""
 echo "========================================="
 echo "Test Results"

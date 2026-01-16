@@ -174,11 +174,11 @@ You can restore from backup if needed. Plan file modifications are not allowed d
     exit 0
 fi
 
-# Check plan file integrity based on tracking mode
-# For tracked files: verify git status is clean (catches race condition between hooks)
-# For gitignored files: verify content matches backup exactly
+# Check plan file integrity
+# For tracked files: check both git status (uncommitted) AND content diff (committed changes)
+# For gitignored files: check content diff only
 if [[ "$PLAN_TRACKED" == "true" ]]; then
-    # Tracked file: check git status (final safety check for race condition)
+    # Tracked file: first check git status for uncommitted changes
     PLAN_GIT_STATUS=$(git -C "$PROJECT_ROOT" status --porcelain "$PLAN_FILE" 2>/dev/null || echo "")
     if [[ -n "$PLAN_GIT_STATUS" ]]; then
         REASON="Plan file has uncommitted modifications.
@@ -187,14 +187,15 @@ File: $PLAN_FILE
 Status: $PLAN_GIT_STATUS
 
 This RLCR loop was started with --track-plan-file. Plan file modifications are not allowed during the loop."
-        jq -n --arg reason "$REASON" --arg msg "Loop: Blocked - plan file modified" \
+        jq -n --arg reason "$REASON" --arg msg "Loop: Blocked - plan file modified (uncommitted)" \
             '{"decision": "block", "reason": $reason, "systemMessage": $msg}'
         exit 0
     fi
-else
-    # Gitignored file: verify content matches backup exactly
-    if ! diff -q "$FULL_PLAN_PATH" "$BACKUP_PLAN" &>/dev/null; then
-        FALLBACK="# Plan File Modified
+fi
+
+# Always verify content matches backup (catches committed changes for tracked files)
+if ! diff -q "$FULL_PLAN_PATH" "$BACKUP_PLAN" &>/dev/null; then
+    FALLBACK="# Plan File Modified
 
 The plan file \`$PLAN_FILE\` has been modified since the RLCR loop started.
 
@@ -206,13 +207,12 @@ If you need to change the plan:
 3. Start a new loop: \`/humanize:start-rlcr-loop $PLAN_FILE\`
 
 Backup available at: \`$BACKUP_PLAN\`"
-        REASON=$(load_and_render_safe "$TEMPLATE_DIR" "block/plan-file-modified.md" "$FALLBACK" \
-            "PLAN_FILE=$PLAN_FILE" \
-            "BACKUP_PATH=$BACKUP_PLAN")
-        jq -n --arg reason "$REASON" --arg msg "Loop: Blocked - plan file modified" \
-            '{"decision": "block", "reason": $reason, "systemMessage": $msg}'
-        exit 0
-    fi
+    REASON=$(load_and_render_safe "$TEMPLATE_DIR" "block/plan-file-modified.md" "$FALLBACK" \
+        "PLAN_FILE=$PLAN_FILE" \
+        "BACKUP_PATH=$BACKUP_PLAN")
+    jq -n --arg reason "$REASON" --arg msg "Loop: Blocked - plan file modified" \
+        '{"decision": "block", "reason": $reason, "systemMessage": $msg}'
+    exit 0
 fi
 
 # ========================================
