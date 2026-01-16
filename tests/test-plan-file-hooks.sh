@@ -44,7 +44,7 @@ setup_test_loop() {
         git config user.name "Test"
         echo "initial" > init.txt
         git add init.txt
-        git commit -q -m "Initial commit"
+        git -c commit.gpgsign=false commit -q -m "Initial commit"
         # Capture default branch name (main or master depending on git version)
         DEFAULT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
     fi
@@ -67,7 +67,7 @@ Test the RLCR loop
 EOF
     echo "plans/" >> .gitignore
     git add .gitignore
-    git commit -q -m "Add gitignore"
+    git -c commit.gpgsign=false commit -q -m "Add gitignore"
 
     # Create plan backup
     cp plans/test-plan.md "$LOOP_DIR/plan.md"
@@ -570,7 +570,7 @@ git config user.email "test@test.com"
 git config user.name "Test"
 echo "init" > init.txt
 git add init.txt
-git commit -q -m "Initial"
+git -c commit.gpgsign=false commit -q -m "Initial"
 # Get the default branch name for this new repo
 TEST12_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 # Create tracked plan file
@@ -582,7 +582,7 @@ Test tracked file
 - Requirement 1
 EOF
 git add tracked-plan.md
-git commit -q -m "Add plan"
+git -c commit.gpgsign=false commit -q -m "Add plan"
 # Create loop directory
 TRACKED_LOOP_DIR="$PWD/.humanize/rlcr/2024-01-01_12-00-00"
 mkdir -p "$TRACKED_LOOP_DIR"
@@ -664,7 +664,7 @@ git config user.email "test@test.com"
 git config user.name "Test"
 echo "init" > init.txt
 git add init.txt
-git commit -q -m "Initial"
+git -c commit.gpgsign=false commit -q -m "Initial"
 # Get the default branch name for this new repo
 TEST14_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 # Create tracked plan file
@@ -676,7 +676,7 @@ Test tracked file
 - Requirement 1
 EOF
 git add tracked-plan.md
-git commit -q -m "Add plan"
+git -c commit.gpgsign=false commit -q -m "Add plan"
 # Create loop directory and backup
 TRACKED_LOOP_DIR="$PWD/.humanize/rlcr/2024-01-01_12-00-00"
 mkdir -p "$TRACKED_LOOP_DIR"
@@ -711,7 +711,7 @@ EOF
 # Modify and COMMIT the plan file (git status will be clean)
 echo "# Modified and committed" >> tracked-plan.md
 git add tracked-plan.md
-git commit -q -m "Modify plan"
+git -c commit.gpgsign=false commit -q -m "Modify plan"
 # Verify git status is clean for the plan file
 GIT_STATUS_CHECK=$(git status --porcelain tracked-plan.md)
 if [[ -n "$GIT_STATUS_CHECK" ]]; then
@@ -728,6 +728,285 @@ else
     else
         fail "Stop hook committed file detection" "block with modification error" "exit $EXIT_CODE, output: $RESULT"
     fi
+fi
+
+echo ""
+echo "=== Test: Section-Specific Placeholder Detection ==="
+echo ""
+
+# Test 14.1: Stop hook only reports Ultimate Goal placeholder when only that is missing
+echo "Test 14.1: Stop hook only reports Ultimate Goal placeholder"
+cd "$TEST_DIR"
+rm -rf placeholder-test-14-1 2>/dev/null || true
+mkdir -p placeholder-test-14-1
+cd placeholder-test-14-1
+git init -q
+git config user.email "test@test.com"
+git config user.name "Test"
+echo "init" > init.txt
+# Add .humanize to gitignore so it doesn't trigger uncommitted changes
+echo ".humanize*" > .gitignore
+git add init.txt .gitignore
+git -c commit.gpgsign=false commit -q -m "Initial"
+TEST_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+# Create gitignored plan
+mkdir -p plans
+echo "plans/" >> .gitignore
+cat > plans/test-plan.md << 'EOF'
+# Test Plan
+## Goal
+Test
+EOF
+git add .gitignore
+git -c commit.gpgsign=false commit -q -m "Add gitignore"
+# Create loop directory
+LOOP_DIR_14_1="$PWD/.humanize/rlcr/2024-01-01_12-00-00"
+mkdir -p "$LOOP_DIR_14_1"
+cp plans/test-plan.md "$LOOP_DIR_14_1/plan.md"
+cat > "$LOOP_DIR_14_1/state.md" << EOF
+---
+current_round: 0
+max_iterations: 42
+plan_file: "plans/test-plan.md"
+plan_tracked: false
+start_branch: $TEST_BRANCH
+---
+EOF
+cat > "$LOOP_DIR_14_1/round-0-summary.md" << 'EOF'
+# Summary
+Work done.
+EOF
+# Goal tracker with ONLY Ultimate Goal placeholder (AC and Tasks are filled)
+cat > "$LOOP_DIR_14_1/goal-tracker.md" << 'EOF'
+# Goal Tracker
+## IMMUTABLE SECTION
+### Ultimate Goal
+[To be extracted from plan by Claude in Round 0]
+### Acceptance Criteria
+- AC1: Real acceptance criterion
+## MUTABLE SECTION
+### Plan Version: 1 (Updated: Round 0)
+#### Active Tasks
+| Task | Target AC | Status | Notes |
+|------|-----------|--------|-------|
+| Task 1 | AC1 | in_progress | Real task |
+EOF
+export CLAUDE_PROJECT_DIR="$PWD"
+set +e
+RESULT=$(echo '{}' | "$PROJECT_ROOT/hooks/loop-codex-stop-hook.sh" 2>&1)
+EXIT_CODE=$?
+set -e
+# Should report Ultimate Goal missing-item line but NOT AC or Active Tasks missing-item lines
+# The exact format is: **<Section>**: Still contains placeholder text
+if echo "$RESULT" | grep -qF '**Ultimate Goal**: Still contains placeholder text' && \
+   ! echo "$RESULT" | grep -qF '**Acceptance Criteria**: Still contains placeholder text' && \
+   ! echo "$RESULT" | grep -qF '**Active Tasks**: Still contains placeholder text'; then
+    pass "Stop hook only reports Ultimate Goal placeholder"
+else
+    fail "Section-specific Ultimate Goal" "only **Ultimate Goal**: Still contains placeholder text" "output: $RESULT"
+fi
+
+# Test 14.2: Stop hook only reports Acceptance Criteria placeholder when only that is missing
+echo "Test 14.2: Stop hook only reports Acceptance Criteria placeholder"
+cd "$TEST_DIR"
+rm -rf placeholder-test-14-2 2>/dev/null || true
+mkdir -p placeholder-test-14-2
+cd placeholder-test-14-2
+git init -q
+git config user.email "test@test.com"
+git config user.name "Test"
+echo "init" > init.txt
+echo ".humanize*" > .gitignore
+git add init.txt .gitignore
+git -c commit.gpgsign=false commit -q -m "Initial"
+TEST_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+mkdir -p plans
+echo "plans/" >> .gitignore
+cat > plans/test-plan.md << 'EOF'
+# Test Plan
+## Goal
+Test
+EOF
+git add .gitignore
+git -c commit.gpgsign=false commit -q -m "Add gitignore"
+LOOP_DIR_14_2="$PWD/.humanize/rlcr/2024-01-01_12-00-00"
+mkdir -p "$LOOP_DIR_14_2"
+cp plans/test-plan.md "$LOOP_DIR_14_2/plan.md"
+cat > "$LOOP_DIR_14_2/state.md" << EOF
+---
+current_round: 0
+max_iterations: 42
+plan_file: "plans/test-plan.md"
+plan_tracked: false
+start_branch: $TEST_BRANCH
+---
+EOF
+cat > "$LOOP_DIR_14_2/round-0-summary.md" << 'EOF'
+# Summary
+Work done.
+EOF
+# Goal tracker with ONLY AC placeholder (Goal and Tasks are filled)
+cat > "$LOOP_DIR_14_2/goal-tracker.md" << 'EOF'
+# Goal Tracker
+## IMMUTABLE SECTION
+### Ultimate Goal
+Implement the feature completely
+### Acceptance Criteria
+[To be defined by Claude in Round 0 based on the plan]
+## MUTABLE SECTION
+### Plan Version: 1 (Updated: Round 0)
+#### Active Tasks
+| Task | Target AC | Status | Notes |
+|------|-----------|--------|-------|
+| Task 1 | AC1 | in_progress | Real task |
+EOF
+export CLAUDE_PROJECT_DIR="$PWD"
+set +e
+RESULT=$(echo '{}' | "$PROJECT_ROOT/hooks/loop-codex-stop-hook.sh" 2>&1)
+EXIT_CODE=$?
+set -e
+# Should report Acceptance Criteria missing-item line but NOT Goal or Active Tasks missing-item lines
+# The exact format is: **<Section>**: Still contains placeholder text
+if echo "$RESULT" | grep -qF '**Acceptance Criteria**: Still contains placeholder text' && \
+   ! echo "$RESULT" | grep -qF '**Ultimate Goal**: Still contains placeholder text' && \
+   ! echo "$RESULT" | grep -qF '**Active Tasks**: Still contains placeholder text'; then
+    pass "Stop hook only reports Acceptance Criteria placeholder"
+else
+    fail "Section-specific Acceptance Criteria" "only **Acceptance Criteria**: Still contains placeholder text" "output: $RESULT"
+fi
+
+# Test 14.3: Stop hook only reports Active Tasks placeholder when only that is missing
+echo "Test 14.3: Stop hook only reports Active Tasks placeholder"
+cd "$TEST_DIR"
+rm -rf placeholder-test-14-3 2>/dev/null || true
+mkdir -p placeholder-test-14-3
+cd placeholder-test-14-3
+git init -q
+git config user.email "test@test.com"
+git config user.name "Test"
+echo "init" > init.txt
+echo ".humanize*" > .gitignore
+git add init.txt .gitignore
+git -c commit.gpgsign=false commit -q -m "Initial"
+TEST_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+mkdir -p plans
+echo "plans/" >> .gitignore
+cat > plans/test-plan.md << 'EOF'
+# Test Plan
+## Goal
+Test
+EOF
+git add .gitignore
+git -c commit.gpgsign=false commit -q -m "Add gitignore"
+LOOP_DIR_14_3="$PWD/.humanize/rlcr/2024-01-01_12-00-00"
+mkdir -p "$LOOP_DIR_14_3"
+cp plans/test-plan.md "$LOOP_DIR_14_3/plan.md"
+cat > "$LOOP_DIR_14_3/state.md" << EOF
+---
+current_round: 0
+max_iterations: 42
+plan_file: "plans/test-plan.md"
+plan_tracked: false
+start_branch: $TEST_BRANCH
+---
+EOF
+cat > "$LOOP_DIR_14_3/round-0-summary.md" << 'EOF'
+# Summary
+Work done.
+EOF
+# Goal tracker with ONLY Active Tasks placeholder (Goal and AC are filled)
+cat > "$LOOP_DIR_14_3/goal-tracker.md" << 'EOF'
+# Goal Tracker
+## IMMUTABLE SECTION
+### Ultimate Goal
+Implement the feature completely
+### Acceptance Criteria
+- AC1: Real acceptance criterion
+## MUTABLE SECTION
+### Plan Version: 1 (Updated: Round 0)
+#### Active Tasks
+[To be populated by Claude based on plan]
+EOF
+export CLAUDE_PROJECT_DIR="$PWD"
+set +e
+RESULT=$(echo '{}' | "$PROJECT_ROOT/hooks/loop-codex-stop-hook.sh" 2>&1)
+EXIT_CODE=$?
+set -e
+# Should report Active Tasks missing-item line but NOT Goal or AC missing-item lines
+# The exact format is: **<Section>**: Still contains placeholder text
+if echo "$RESULT" | grep -qF '**Active Tasks**: Still contains placeholder text' && \
+   ! echo "$RESULT" | grep -qF '**Ultimate Goal**: Still contains placeholder text' && \
+   ! echo "$RESULT" | grep -qF '**Acceptance Criteria**: Still contains placeholder text'; then
+    pass "Stop hook only reports Active Tasks placeholder"
+else
+    fail "Section-specific Active Tasks" "only **Active Tasks**: Still contains placeholder text" "output: $RESULT"
+fi
+
+# Test 14.4: Stop hook reports all three when all placeholders present
+echo "Test 14.4: Stop hook reports all three placeholders when all missing"
+cd "$TEST_DIR"
+rm -rf placeholder-test-14-4 2>/dev/null || true
+mkdir -p placeholder-test-14-4
+cd placeholder-test-14-4
+git init -q
+git config user.email "test@test.com"
+git config user.name "Test"
+echo "init" > init.txt
+echo ".humanize*" > .gitignore
+git add init.txt .gitignore
+git -c commit.gpgsign=false commit -q -m "Initial"
+TEST_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+mkdir -p plans
+echo "plans/" >> .gitignore
+cat > plans/test-plan.md << 'EOF'
+# Test Plan
+## Goal
+Test
+EOF
+git add .gitignore
+git -c commit.gpgsign=false commit -q -m "Add gitignore"
+LOOP_DIR_14_4="$PWD/.humanize/rlcr/2024-01-01_12-00-00"
+mkdir -p "$LOOP_DIR_14_4"
+cp plans/test-plan.md "$LOOP_DIR_14_4/plan.md"
+cat > "$LOOP_DIR_14_4/state.md" << EOF
+---
+current_round: 0
+max_iterations: 42
+plan_file: "plans/test-plan.md"
+plan_tracked: false
+start_branch: $TEST_BRANCH
+---
+EOF
+cat > "$LOOP_DIR_14_4/round-0-summary.md" << 'EOF'
+# Summary
+Work done.
+EOF
+# Goal tracker with ALL placeholders
+cat > "$LOOP_DIR_14_4/goal-tracker.md" << 'EOF'
+# Goal Tracker
+## IMMUTABLE SECTION
+### Ultimate Goal
+[To be extracted from plan by Claude in Round 0]
+### Acceptance Criteria
+[To be defined by Claude in Round 0 based on the plan]
+## MUTABLE SECTION
+### Plan Version: 1 (Updated: Round 0)
+#### Active Tasks
+[To be populated by Claude based on plan]
+EOF
+export CLAUDE_PROJECT_DIR="$PWD"
+set +e
+RESULT=$(echo '{}' | "$PROJECT_ROOT/hooks/loop-codex-stop-hook.sh" 2>&1)
+EXIT_CODE=$?
+set -e
+# Should report all three missing-item lines
+# The exact format is: **<Section>**: Still contains placeholder text
+if echo "$RESULT" | grep -qF '**Ultimate Goal**: Still contains placeholder text' && \
+   echo "$RESULT" | grep -qF '**Acceptance Criteria**: Still contains placeholder text' && \
+   echo "$RESULT" | grep -qF '**Active Tasks**: Still contains placeholder text'; then
+    pass "Stop hook reports all three placeholders when all missing"
+else
+    fail "All placeholders reported" "all three **<Section>**: Still contains placeholder text lines" "output: $RESULT"
 fi
 
 echo ""

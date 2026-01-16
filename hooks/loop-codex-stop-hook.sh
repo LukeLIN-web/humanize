@@ -33,7 +33,7 @@ HOOK_INPUT=$(cat)
 # from a previous blocked stop. We WANT to run Codex review each iteration.
 # Loop termination is controlled by:
 # - No active loop directory (no state.md) -> exit early below
-# - Codex outputs "COMPLETE" -> allow exit
+# - Codex outputs MARKER_COMPLETE -> allow exit
 # - current_round >= max_iterations -> allow exit
 
 # ========================================
@@ -47,6 +47,13 @@ LOOP_BASE_DIR="$PROJECT_ROOT/.humanize/rlcr"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 source "$SCRIPT_DIR/lib/loop-common.sh"
 
+# Source portable timeout wrapper for git operations
+PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$PLUGIN_ROOT/scripts/portable-timeout.sh"
+
+# Default timeout for git operations (30 seconds)
+GIT_TIMEOUT=30
+
 # Template directory is set by loop-common.sh via template-loader.sh
 
 LOOP_DIR=$(find_active_loop "$LOOP_BASE_DIR")
@@ -59,44 +66,44 @@ fi
 STATE_FILE="$LOOP_DIR/state.md"
 
 # ========================================
-# Parse State File (all frontmatter fields)
+# Parse State File (using shared function)
 # ========================================
 
 if [[ ! -f "$STATE_FILE" ]]; then
     exit 0
 fi
 
-FRONTMATTER=$(sed -n '/^---$/,/^---$/{ /^---$/d; p; }' "$STATE_FILE" 2>/dev/null || echo "")
+# Use shared parsing function from loop-common.sh
+parse_state_file "$STATE_FILE"
 
-# Fields for integrity checks (may be empty for old state files)
-# Note: Values are unquoted since v1.1.2+ validates paths don't contain special chars
-# Legacy quote-stripping kept for backward compatibility with older state files
-PLAN_TRACKED=$(echo "$FRONTMATTER" | grep '^plan_tracked:' | sed 's/plan_tracked: *//' | tr -d ' ' || true)
-START_BRANCH=$(echo "$FRONTMATTER" | grep '^start_branch:' | sed 's/start_branch: *//; s/^"//; s/"$//' || true)
-PLAN_FILE=$(echo "$FRONTMATTER" | grep '^plan_file:' | sed 's/plan_file: *//; s/^"//; s/"$//' || true)
-
-# Fields for loop iteration control
-CURRENT_ROUND=$(echo "$FRONTMATTER" | grep '^current_round:' | sed 's/current_round: *//' | tr -d ' ' || true)
-MAX_ITERATIONS=$(echo "$FRONTMATTER" | grep '^max_iterations:' | sed 's/max_iterations: *//' | tr -d ' ' || true)
-PUSH_EVERY_ROUND=$(echo "$FRONTMATTER" | grep '^push_every_round:' | sed 's/push_every_round: *//' | tr -d ' ' || true)
-
-# Fields for Codex configuration
-CODEX_MODEL=$(echo "$FRONTMATTER" | grep '^codex_model:' | sed 's/codex_model: *//' | tr -d ' ' || true)
-CODEX_EFFORT=$(echo "$FRONTMATTER" | grep '^codex_effort:' | sed 's/codex_effort: *//' | tr -d ' ' || true)
-STATE_CODEX_TIMEOUT=$(echo "$FRONTMATTER" | grep '^codex_timeout:' | sed 's/codex_timeout: *//' | tr -d ' ' || true)
-
-# Apply defaults
-CURRENT_ROUND="${CURRENT_ROUND:-0}"
-MAX_ITERATIONS="${MAX_ITERATIONS:-10}"
-PUSH_EVERY_ROUND="${PUSH_EVERY_ROUND:-false}"
-CODEX_MODEL="${CODEX_MODEL:-$DEFAULT_CODEX_MODEL}"
-CODEX_EFFORT="${CODEX_EFFORT:-$DEFAULT_CODEX_EFFORT}"
+# Map STATE_* variables to local names for backward compatibility
+PLAN_TRACKED="$STATE_PLAN_TRACKED"
+START_BRANCH="$STATE_START_BRANCH"
+PLAN_FILE="$STATE_PLAN_FILE"
+CURRENT_ROUND="$STATE_CURRENT_ROUND"
+MAX_ITERATIONS="$STATE_MAX_ITERATIONS"
+PUSH_EVERY_ROUND="$STATE_PUSH_EVERY_ROUND"
+CODEX_MODEL="${STATE_CODEX_MODEL:-$DEFAULT_CODEX_MODEL}"
+CODEX_EFFORT="${STATE_CODEX_EFFORT:-$DEFAULT_CODEX_EFFORT}"
 CODEX_TIMEOUT="${STATE_CODEX_TIMEOUT:-${CODEX_TIMEOUT:-$DEFAULT_CODEX_TIMEOUT}}"
+
+# Re-validate Codex Model and Effort for YAML safety (in case state.md was manually edited)
+# Use same validation patterns as setup-rlcr-loop.sh
+if [[ ! "$CODEX_MODEL" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+    echo "Error: Invalid codex_model in state file: $CODEX_MODEL" >&2
+    end_loop "$LOOP_DIR" "$STATE_FILE" "$EXIT_UNEXPECTED"
+    exit 0
+fi
+if [[ ! "$CODEX_EFFORT" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    echo "Error: Invalid codex_effort in state file: $CODEX_EFFORT" >&2
+    end_loop "$LOOP_DIR" "$STATE_FILE" "$EXIT_UNEXPECTED"
+    exit 0
+fi
 
 # Validate numeric fields early
 if [[ ! "$CURRENT_ROUND" =~ ^[0-9]+$ ]]; then
     echo "Warning: State file corrupted (current_round), stopping loop" >&2
-    end_loop "$LOOP_DIR" "$STATE_FILE" "unexpected"
+    end_loop "$LOOP_DIR" "$STATE_FILE" "$EXIT_UNEXPECTED"
     exit 0
 fi
 
@@ -127,7 +134,22 @@ fi
 # Quick-check 0.5: Branch Consistency
 # ========================================
 
-CURRENT_BRANCH=$(git -C "$PROJECT_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+# Use || GIT_EXIT_CODE=$? to prevent set -e from aborting on non-zero exit
+CURRENT_BRANCH=$(run_with_timeout "$GIT_TIMEOUT" git -C "$PROJECT_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null) || GIT_EXIT_CODE=$?
+GIT_EXIT_CODE=${GIT_EXIT_CODE:-0}
+if [[ $GIT_EXIT_CODE -ne 0 || -z "$CURRENT_BRANCH" ]]; then
+    REASON="Git operation failed or timed out.
+
+Cannot verify branch consistency. This may indicate:
+- Git is not responding
+- Repository is in an invalid state
+- Network issues (if remote operations are involved)
+
+Please check git status manually and try again."
+    jq -n --arg reason "$REASON" --arg msg "Loop: Blocked - git operation failed" \
+        '{"decision": "block", "reason": $reason, "systemMessage": $msg}'
+    exit 0
+fi
 
 if [[ -n "$START_BRANCH" && "$CURRENT_BRANCH" != "$START_BRANCH" ]]; then
     REASON="Git branch changed during RLCR loop.
@@ -179,7 +201,7 @@ fi
 # For gitignored files: check content diff only
 if [[ "$PLAN_TRACKED" == "true" ]]; then
     # Tracked file: first check git status for uncommitted changes
-    PLAN_GIT_STATUS=$(git -C "$PROJECT_ROOT" status --porcelain "$PLAN_FILE" 2>/dev/null || echo "")
+    PLAN_GIT_STATUS=$(run_with_timeout "$GIT_TIMEOUT" git -C "$PROJECT_ROOT" status --porcelain "$PLAN_FILE" 2>/dev/null || echo "")
     if [[ -n "$PLAN_GIT_STATUS" ]]; then
         REASON="Plan file has uncommitted modifications.
 
@@ -228,6 +250,25 @@ if [[ -f "$TODO_CHECKER" ]]; then
     TODO_RESULT=$(echo "$HOOK_INPUT" | python3 "$TODO_CHECKER" 2>&1) || TODO_EXIT=$?
     TODO_EXIT=${TODO_EXIT:-0}
 
+    if [[ "$TODO_EXIT" -eq 2 ]]; then
+        # Parse error - block and surface the error
+        REASON="Todo checker encountered a parse error.
+
+Error: $TODO_RESULT
+
+This may indicate an issue with the hook input or transcript format.
+Please try again or cancel the loop if this persists."
+        jq -n \
+            --arg reason "$REASON" \
+            --arg msg "Loop: Blocked - todo checker parse error" \
+            '{
+                "decision": "block",
+                "reason": $reason,
+                "systemMessage": $msg
+            }'
+        exit 0
+    fi
+
     if [[ "$TODO_EXIT" -eq 1 ]]; then
         # Incomplete todos found - block immediately without Codex review
         # Extract the incomplete todo list from the result
@@ -254,6 +295,37 @@ Complete these tasks before exiting:
 fi
 
 # ========================================
+# Cache Git Status Output
+# ========================================
+# Cache git status output to avoid calling it multiple times.
+# Used by both large file check and git clean check below.
+# IMPORTANT: Fail-closed on git failures to prevent bypassing checks.
+
+GIT_STATUS_CACHED=""
+GIT_IS_REPO=false
+
+if command -v git &>/dev/null && run_with_timeout "$GIT_TIMEOUT" git rev-parse --git-dir &>/dev/null 2>&1; then
+    GIT_IS_REPO=true
+    # Capture exit code to detect timeout/failure - do NOT use || echo "" which would fail-open
+    GIT_STATUS_EXIT=0
+    GIT_STATUS_CACHED=$(run_with_timeout "$GIT_TIMEOUT" git status --porcelain 2>/dev/null) || GIT_STATUS_EXIT=$?
+
+    if [[ $GIT_STATUS_EXIT -ne 0 ]]; then
+        # Git status failed or timed out - fail-closed by blocking exit
+        FALLBACK="# Git Status Failed
+
+Git status operation failed or timed out (exit code {{GIT_STATUS_EXIT}}).
+
+Cannot verify repository state. Please check git status manually and try again."
+        REASON=$(load_and_render_safe "$TEMPLATE_DIR" "block/git-status-failed.md" "$FALLBACK" \
+            "GIT_STATUS_EXIT=$GIT_STATUS_EXIT")
+        jq -n --arg reason "$REASON" --arg msg "Loop: Blocked - git status failed (exit $GIT_STATUS_EXIT)" \
+            '{"decision": "block", "reason": $reason, "systemMessage": $msg}'
+        exit 0
+    fi
+fi
+
+# ========================================
 # Quick Check: Large File Detection
 # ========================================
 # Check if any tracked or new files exceed the line limit.
@@ -261,7 +333,7 @@ fi
 
 MAX_LINES=2000
 
-if command -v git &>/dev/null && git rev-parse --git-dir &>/dev/null 2>&1; then
+if [[ "$GIT_IS_REPO" == "true" ]]; then
     LARGE_FILES=""
 
     while IFS= read -r line; do
@@ -303,13 +375,14 @@ if command -v git &>/dev/null && git rev-parse --git-dir &>/dev/null 2>&1; then
         # Count lines and trim whitespace (portable across shells)
         line_count=$(wc -l < "$filename" 2>/dev/null | tr -d ' ') || continue
 
+        # Validate line_count is numeric before comparison
+        [[ "$line_count" =~ ^[0-9]+$ ]] || continue
+
         if [ "$line_count" -gt "$MAX_LINES" ]; then
             LARGE_FILES="${LARGE_FILES}
 - \`${filename}\`: ${line_count} lines (${file_type} file)"
         fi
-    done <<EOF
-$(git status --porcelain 2>/dev/null)
-EOF
+    done <<< "$GIT_STATUS_CACHED"
 
     if [ -n "$LARGE_FILES" ]; then
         FALLBACK="# Large Files Detected
@@ -341,18 +414,17 @@ fi
 # Before running expensive Codex review, check if all changes have been
 # committed and pushed. This ensures work is properly saved.
 
-# Check if git is available and we're in a git repo
-if command -v git &>/dev/null && git rev-parse --git-dir &>/dev/null 2>&1; then
+# Use cached git status from above
+if [[ "$GIT_IS_REPO" == "true" ]]; then
     GIT_ISSUES=""
     SPECIAL_NOTES=""
 
-    # Check for uncommitted changes (staged or unstaged)
-    GIT_STATUS=$(git status --porcelain 2>/dev/null)
-    if [[ -n "$GIT_STATUS" ]]; then
+    # Check for uncommitted changes (staged or unstaged) using cached status
+    if [[ -n "$GIT_STATUS_CACHED" ]]; then
         GIT_ISSUES="uncommitted changes"
 
         # Check for special cases in untracked files
-        UNTRACKED=$(echo "$GIT_STATUS" | grep '^??' || true)
+        UNTRACKED=$(echo "$GIT_STATUS_CACHED" | grep '^??' || true)
 
         # Check if .humanize* directories are untracked (includes .humanize/ and any legacy .humanize-* dirs)
         if echo "$UNTRACKED" | grep -q '\.humanize'; then
@@ -404,10 +476,10 @@ Please commit all changes before exiting.
 
     if [[ "$PUSH_EVERY_ROUND" == "true" ]]; then
         # Check if local branch is ahead of remote (unpushed commits)
-        GIT_AHEAD=$(git status -sb 2>/dev/null | grep -o 'ahead [0-9]*' || true)
+        GIT_AHEAD=$(run_with_timeout "$GIT_TIMEOUT" git status -sb 2>/dev/null | grep -o 'ahead [0-9]*' || true)
         if [[ -n "$GIT_AHEAD" ]]; then
             AHEAD_COUNT=$(echo "$GIT_AHEAD" | grep -o '[0-9]*')
-            CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+            CURRENT_BRANCH=$(run_with_timeout "$GIT_TIMEOUT" git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
 
             FALLBACK="# Unpushed Commits
 
@@ -466,21 +538,34 @@ GOAL_TRACKER_FILE="$LOOP_DIR/goal-tracker.md"
 
 if [[ "$CURRENT_ROUND" -eq 0 ]] && [[ -f "$GOAL_TRACKER_FILE" ]]; then
     # Check if goal-tracker.md still contains placeholder text
-    GOAL_TRACKER_CONTENT=$(cat "$GOAL_TRACKER_FILE")
+    # Extract each section and check for generic placeholder pattern within that section
+    # This avoids coupling to specific placeholder wording and prevents false positives
+    # from stray mentions of placeholder text elsewhere in the file
 
     HAS_GOAL_PLACEHOLDER=false
     HAS_AC_PLACEHOLDER=false
     HAS_TASKS_PLACEHOLDER=false
 
-    if echo "$GOAL_TRACKER_CONTENT" | grep -q '\[To be extracted from plan'; then
+    # Extract Ultimate Goal section (### Ultimate Goal to next heading)
+    # Use awk to extract lines between start and end patterns, excluding end pattern
+    GOAL_SECTION=$(awk '/^### Ultimate Goal/{found=1; next} /^##/{found=0} found' "$GOAL_TRACKER_FILE" 2>/dev/null)
+    # Check for generic placeholder pattern "[To be " within this section
+    if echo "$GOAL_SECTION" | grep -qE '\[To be [a-z]'; then
         HAS_GOAL_PLACEHOLDER=true
     fi
 
-    if echo "$GOAL_TRACKER_CONTENT" | grep -q '\[To be defined by Claude'; then
+    # Extract Acceptance Criteria section (### Acceptance Criteria to next heading)
+    AC_SECTION=$(awk '/^### Acceptance Criteria/{found=1; next} /^##/{found=0} found' "$GOAL_TRACKER_FILE" 2>/dev/null)
+    # Check for generic placeholder pattern "[To be " within this section
+    if echo "$AC_SECTION" | grep -qE '\[To be [a-z]'; then
         HAS_AC_PLACEHOLDER=true
     fi
 
-    if echo "$GOAL_TRACKER_CONTENT" | grep -q '\[To be populated by Claude'; then
+    # Extract Active Tasks section (#### Active Tasks to next heading or EOF)
+    # Active Tasks is a level-4 heading, so match any ## or higher
+    TASKS_SECTION=$(awk '/^#### Active Tasks/{found=1; next} /^##/{found=0} found' "$GOAL_TRACKER_FILE" 2>/dev/null)
+    # Check for generic placeholder pattern "[To be " within this section
+    if echo "$TASKS_SECTION" | grep -qE '\[To be [a-z]'; then
         HAS_TASKS_PLACEHOLDER=true
     fi
 
@@ -528,7 +613,7 @@ NEXT_ROUND=$((CURRENT_ROUND + 1))
 
 if [[ $NEXT_ROUND -gt $MAX_ITERATIONS ]]; then
     echo "RLCR loop did not complete, but reached max iterations ($MAX_ITERATIONS). Exiting." >&2
-    end_loop "$LOOP_DIR" "$STATE_FILE" "maxiter"
+    end_loop "$LOOP_DIR" "$STATE_FILE" "$EXIT_MAXITER"
     exit 0
 fi
 
@@ -835,18 +920,18 @@ LAST_LINE=$(echo "$REVIEW_CONTENT" | grep -v '^[[:space:]]*$' | tail -1)
 LAST_LINE_TRIMMED=$(echo "$LAST_LINE" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 
 # Handle COMPLETE - loop finished successfully
-if [[ "$LAST_LINE_TRIMMED" == "COMPLETE" ]]; then
+if [[ "$LAST_LINE_TRIMMED" == "$MARKER_COMPLETE" ]]; then
     if [[ "$FULL_ALIGNMENT_CHECK" == "true" ]]; then
         echo "Codex review passed. All goals achieved. Loop complete!" >&2
     else
         echo "Codex review passed. Loop complete!" >&2
     fi
-    end_loop "$LOOP_DIR" "$STATE_FILE" "complete"
+    end_loop "$LOOP_DIR" "$STATE_FILE" "$EXIT_COMPLETE"
     exit 0
 fi
 
 # Handle STOP - circuit breaker triggered
-if [[ "$LAST_LINE_TRIMMED" == "STOP" ]]; then
+if [[ "$LAST_LINE_TRIMMED" == "$MARKER_STOP" ]]; then
     echo "" >&2
     echo "========================================" >&2
     if [[ "$FULL_ALIGNMENT_CHECK" == "true" ]]; then
@@ -871,7 +956,7 @@ if [[ "$LAST_LINE_TRIMMED" == "STOP" ]]; then
         echo "  $REVIEW_RESULT_FILE" >&2
     fi
     echo "========================================" >&2
-    end_loop "$LOOP_DIR" "$STATE_FILE" "stop"
+    end_loop "$LOOP_DIR" "$STATE_FILE" "$EXIT_STOP"
     exit 0
 fi
 

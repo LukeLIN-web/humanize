@@ -42,15 +42,19 @@ if [[ -z "$ACTIVE_LOOP_DIR" ]]; then
     exit 0
 fi
 
-CURRENT_ROUND=$(get_current_round "$ACTIVE_LOOP_DIR/state.md")
 STATE_FILE="$ACTIVE_LOOP_DIR/state.md"
+
+# Parse state file using shared function to get current round
+parse_state_file "$STATE_FILE"
+CURRENT_ROUND="$STATE_CURRENT_ROUND"
 
 # ========================================
 # Block Git Push When push_every_round is false
 # ========================================
 # Default behavior: commits stay local, no need to push to remote
 
-PUSH_EVERY_ROUND=$(grep -E "^push_every_round:" "$STATE_FILE" 2>/dev/null | sed 's/push_every_round: *//' || echo "false")
+# Note: parse_state_file was called above, STATE_* vars are available
+PUSH_EVERY_ROUND="$STATE_PUSH_EVERY_ROUND"
 
 if [[ "$PUSH_EVERY_ROUND" != "true" ]]; then
     # Check if command is a git push command
@@ -130,8 +134,13 @@ fi
 # ========================================
 
 if command_modifies_file "$COMMAND_LOWER" "round-[0-9]+-todos\.md"; then
-    todos_blocked_message "Bash" >&2
-    exit 2
+    # Require full path to active loop dir to prevent same-basename bypass from different roots
+    ACTIVE_LOOP_DIR_LOWER=$(to_lower "$ACTIVE_LOOP_DIR")
+    ACTIVE_LOOP_DIR_ESCAPED=$(echo "$ACTIVE_LOOP_DIR_LOWER" | sed 's/[\\.*^$[(){}+?|]/\\&/g')
+    if ! echo "$COMMAND_LOWER" | grep -qE "${ACTIVE_LOOP_DIR_ESCAPED}/round-[12]-todos\.md"; then
+        todos_blocked_message "Bash" >&2
+        exit 2
+    fi
 fi
 
 exit 0

@@ -543,6 +543,102 @@ else
 fi
 
 # ========================================
+# Test 37-41: Additional Edge Cases
+# ========================================
+# These tests cover additional edge cases for template rendering.
+
+echo ""
+echo "========================================"
+echo "Additional Edge Case Tests"
+echo "========================================"
+
+# Test 37: Empty variable substitution
+echo ""
+echo "Test 37: Empty variable substitution"
+TEMPLATE="Hello {{NAME}}, status: {{STATUS}}"
+RESULT=$(render_template "$TEMPLATE" "NAME=" "STATUS=active")
+EXPECTED="Hello , status: active"
+if [[ "$RESULT" == "$EXPECTED" ]]; then
+    pass "Empty variable substitution works"
+else
+    fail "Empty variable substitution" "$EXPECTED" "$RESULT"
+fi
+
+# Test 38: Unicode characters in template
+echo ""
+echo "Test 38: Unicode characters in template"
+TEMPLATE="Greeting: {{GREETING}}"
+RESULT=$(render_template "$TEMPLATE" "GREETING=Hello World")
+EXPECTED="Greeting: Hello World"
+if [[ "$RESULT" == "$EXPECTED" ]]; then
+    pass "Unicode in template renders correctly"
+else
+    fail "Unicode in template" "$EXPECTED" "$RESULT"
+fi
+
+# Test 38.1: Actual non-ASCII Unicode in template (e acute)
+echo ""
+echo "Test 38.1: Non-ASCII Unicode in template"
+# Using French accented word "caf\xc3\xa9" (cafe with acute e)
+TEMPLATE=$'Caf\xc3\xa9: {{ITEM}}'
+RESULT=$(render_template "$TEMPLATE" "ITEM=espresso")
+EXPECTED=$'Caf\xc3\xa9: espresso'
+if [[ "$RESULT" == "$EXPECTED" ]]; then
+    pass "Non-ASCII Unicode in template renders correctly"
+else
+    fail "Non-ASCII Unicode in template" "$EXPECTED" "$RESULT"
+fi
+
+# Test 39: Unicode characters in value
+echo ""
+echo "Test 39: Unicode characters in value"
+TEMPLATE="Message: {{MSG}}"
+RESULT=$(render_template "$TEMPLATE" "MSG=Bonjour mon ami")
+EXPECTED="Message: Bonjour mon ami"
+if [[ "$RESULT" == "$EXPECTED" ]]; then
+    pass "Unicode in value renders correctly"
+else
+    fail "Unicode in value" "$EXPECTED" "$RESULT"
+fi
+
+# Test 39.1: Actual non-ASCII Unicode in value (accented characters)
+echo ""
+echo "Test 39.1: Non-ASCII Unicode in value"
+TEMPLATE="Location: {{PLACE}}"
+# Using "Caf\xc3\xa9" (cafe with acute e) and "\xc3\xa0" (a with grave)
+RESULT=$(render_template "$TEMPLATE" $'PLACE=Caf\xc3\xa9 \xc3\xa0 Paris')
+EXPECTED=$'Location: Caf\xc3\xa9 \xc3\xa0 Paris'
+if [[ "$RESULT" == "$EXPECTED" ]]; then
+    pass "Non-ASCII Unicode in value renders correctly"
+else
+    fail "Non-ASCII Unicode in value" "$EXPECTED" "$RESULT"
+fi
+
+# Test 40: Variable name edge cases - underscore prefix
+echo ""
+echo "Test 40: Variable with underscore prefix"
+TEMPLATE="Value: {{_PRIVATE}}"
+RESULT=$(render_template "$TEMPLATE" "_PRIVATE=secret")
+EXPECTED="Value: secret"
+if [[ "$RESULT" == "$EXPECTED" ]]; then
+    pass "Underscore-prefixed variable works"
+else
+    fail "Underscore-prefixed variable" "$EXPECTED" "$RESULT"
+fi
+
+# Test 41: Variable name with numbers
+echo ""
+echo "Test 41: Variable name with numbers"
+TEMPLATE="Round: {{ROUND_1}} and {{ROUND_2}}"
+RESULT=$(render_template "$TEMPLATE" "ROUND_1=first" "ROUND_2=second")
+EXPECTED="Round: first and second"
+if [[ "$RESULT" == "$EXPECTED" ]]; then
+    pass "Variable names with numbers work"
+else
+    fail "Variable names with numbers" "$EXPECTED" "$RESULT"
+fi
+
+# ========================================
 # Summary
 # ========================================
 echo ""

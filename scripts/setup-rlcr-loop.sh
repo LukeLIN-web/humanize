@@ -20,6 +20,13 @@ DEFAULT_CODEX_EFFORT="high"
 DEFAULT_CODEX_TIMEOUT=5400
 DEFAULT_MAX_ITERATIONS=42
 
+# Default timeout for git operations (30 seconds)
+GIT_TIMEOUT=30
+
+# Source portable timeout wrapper
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+source "$SCRIPT_DIR/portable-timeout.sh"
+
 # ========================================
 # Parse Arguments
 # ========================================
@@ -201,15 +208,15 @@ fi
 # Git Repository Validation
 # ========================================
 
-# Check git repo
-if ! git rev-parse --git-dir &>/dev/null; then
-    echo "Error: Project must be a git repository" >&2
+# Check git repo (with timeout)
+if ! run_with_timeout "$GIT_TIMEOUT" git rev-parse --git-dir &>/dev/null; then
+    echo "Error: Project must be a git repository (or git command timed out)" >&2
     exit 1
 fi
 
-# Check at least one commit
-if ! git rev-parse HEAD &>/dev/null 2>&1; then
-    echo "Error: Git repository must have at least one commit" >&2
+# Check at least one commit (with timeout)
+if ! run_with_timeout "$GIT_TIMEOUT" git rev-parse HEAD &>/dev/null 2>&1; then
+    echo "Error: Git repository must have at least one commit (or git command timed out)" >&2
     exit 1
 fi
 
@@ -262,6 +269,12 @@ if [[ ! -f "$FULL_PLAN_PATH" ]]; then
     exit 1
 fi
 
+# Check file is readable
+if [[ ! -r "$FULL_PLAN_PATH" ]]; then
+    echo "Error: Plan file not readable: $PLAN_FILE" >&2
+    exit 1
+fi
+
 # Check file is within project (no ../ escaping)
 # Resolve the real path by cd'ing to the directory and getting pwd
 # This handles symlinks in parent directories and ../ path components
@@ -279,9 +292,9 @@ fi
 # Check not in submodule
 # Quick check: only run expensive git submodule status if .gitmodules exists
 if [[ -f "$PROJECT_ROOT/.gitmodules" ]]; then
-    if git -C "$PROJECT_ROOT" submodule status 2>/dev/null | grep -q .; then
+    if run_with_timeout "$GIT_TIMEOUT" git -C "$PROJECT_ROOT" submodule status 2>/dev/null | grep -q .; then
         # Get list of submodule paths
-        SUBMODULES=$(git -C "$PROJECT_ROOT" submodule status | awk '{print $2}')
+        SUBMODULES=$(run_with_timeout "$GIT_TIMEOUT" git -C "$PROJECT_ROOT" submodule status | awk '{print $2}')
         for submod in $SUBMODULES; do
             if [[ "$PLAN_FILE" = "$submod"/* || "$PLAN_FILE" = "$submod" ]]; then
                 echo "Error: Plan file cannot be inside a git submodule: $submod" >&2
@@ -295,8 +308,25 @@ fi
 # Plan File Tracking Status Validation
 # ========================================
 
-PLAN_GIT_STATUS=$(git -C "$PROJECT_ROOT" status --porcelain "$PLAN_FILE" 2>/dev/null || echo "")
-PLAN_IS_TRACKED=$(git -C "$PROJECT_ROOT" ls-files --error-unmatch "$PLAN_FILE" &>/dev/null && echo "true" || echo "false")
+# Check git status - fail closed on timeout
+# Use || true to capture exit code without triggering set -e
+PLAN_GIT_STATUS=$(run_with_timeout "$GIT_TIMEOUT" git -C "$PROJECT_ROOT" status --porcelain "$PLAN_FILE" 2>/dev/null) || STATUS_EXIT=$?
+STATUS_EXIT=${STATUS_EXIT:-0}
+if [[ $STATUS_EXIT -eq 124 ]]; then
+    echo "Error: Git operation timed out while checking plan file status" >&2
+    exit 1
+fi
+
+# Check if tracked - fail closed on timeout
+# ls-files --error-unmatch returns 1 for untracked files (expected behavior)
+# We need to distinguish between: 0 (tracked), 1 (not tracked), 124 (timeout)
+run_with_timeout "$GIT_TIMEOUT" git -C "$PROJECT_ROOT" ls-files --error-unmatch "$PLAN_FILE" &>/dev/null || LS_FILES_EXIT=$?
+LS_FILES_EXIT=${LS_FILES_EXIT:-0}
+if [[ $LS_FILES_EXIT -eq 124 ]]; then
+    echo "Error: Git operation timed out while checking plan file tracking status" >&2
+    exit 1
+fi
+PLAN_IS_TRACKED=$([[ $LS_FILES_EXIT -eq 0 ]] && echo "true" || echo "false")
 
 if [[ "$TRACK_PLAN_FILE" == "true" ]]; then
     # Must be tracked and clean
@@ -339,6 +369,51 @@ if [[ "$LINE_COUNT" -lt 5 ]]; then
     exit 1
 fi
 
+# Check plan has actual content (not just whitespace/blank lines/comments)
+# Exclude: blank lines, shell/YAML comments (# ...), and HTML comments (<!-- ... -->)
+# Note: Lines starting with # are treated as comments, not markdown headings
+# A "content line" is any line that is not blank and not purely a comment
+# For multi-line HTML comments, we count lines inside them as non-content
+CONTENT_LINES=0
+IN_COMMENT=false
+while IFS= read -r line || [[ -n "$line" ]]; do
+    # If inside multi-line comment, check for end marker
+    if [[ "$IN_COMMENT" == "true" ]]; then
+        if [[ "$line" =~ --\>[[:space:]]*$ ]]; then
+            IN_COMMENT=false
+        fi
+        continue
+    fi
+    # Skip blank lines
+    if [[ "$line" =~ ^[[:space:]]*$ ]]; then
+        continue
+    fi
+    # Skip single-line HTML comments (must check BEFORE multi-line start)
+    # Single-line: <!-- ... --> on same line
+    if [[ "$line" =~ ^[[:space:]]*\<!--.*--\>[[:space:]]*$ ]]; then
+        continue
+    fi
+    # Check for multi-line HTML comment start (<!-- without closing --> on same line)
+    # Only trigger if the line contains <!-- but NOT -->
+    if [[ "$line" =~ ^[[:space:]]*\<!-- ]] && ! [[ "$line" =~ --\> ]]; then
+        IN_COMMENT=true
+        continue
+    fi
+    # Skip shell/YAML style comments (lines starting with #)
+    if [[ "$line" =~ ^[[:space:]]*# ]]; then
+        continue
+    fi
+    # This is a content line
+    CONTENT_LINES=$((CONTENT_LINES + 1))
+done < "$FULL_PLAN_PATH"
+
+if [[ "$CONTENT_LINES" -lt 3 ]]; then
+    echo "Error: Plan file has insufficient content (only $CONTENT_LINES content lines)" >&2
+    echo "" >&2
+    echo "The plan file should contain meaningful content, not just blank lines or comments." >&2
+    exit 1
+fi
+
 # Check codex is available
 if ! command -v codex &>/dev/null; then
     echo "Error: start-rlcr-loop requires codex to run" >&2
@@ -351,7 +426,11 @@ fi
 # Record Branch
 # ========================================
 
-START_BRANCH=$(git -C "$PROJECT_ROOT" rev-parse --abbrev-ref HEAD)
+START_BRANCH=$(run_with_timeout "$GIT_TIMEOUT" git -C "$PROJECT_ROOT" rev-parse --abbrev-ref HEAD)
+if [[ -z "$START_BRANCH" ]]; then
+    echo "Error: Failed to get current branch (git command timed out or failed)" >&2
+    exit 1
+fi
 
 # Validate branch name for YAML safety (prevents injection in state.md)
 # Reject branches with YAML-unsafe characters: colon, hash, quotes, newlines
@@ -447,10 +526,11 @@ GOAL_TRACKER_EOF
 
 # Extract goal from plan file (look for ## Goal, ## Objective, or first paragraph)
 # This is a heuristic - Claude will refine it in round 0
-GOAL_LINE=$(grep -i -m1 '^\s*##\s*\(goal\|objective\|purpose\)' "$FULL_PLAN_PATH" 2>/dev/null || echo "")
+# Use ^## without leading whitespace - markdown headers should start at column 0
+GOAL_LINE=$(grep -i -m1 '^##[[:space:]]*\(goal\|objective\|purpose\)' "$FULL_PLAN_PATH" 2>/dev/null || echo "")
 if [[ -n "$GOAL_LINE" ]]; then
     # Get the content after the heading
-    GOAL_SECTION=$(sed -n '/^\s*##\s*[Gg]oal\|^\s*##\s*[Oo]bjective\|^\s*##\s*[Pp]urpose/,/^\s*##/p' "$FULL_PLAN_PATH" | head -20 | tail -n +2 | head -10)
+    GOAL_SECTION=$(sed -n '/^##[[:space:]]*[Gg]oal\|^##[[:space:]]*[Oo]bjective\|^##[[:space:]]*[Pp]urpose/,/^##/p' "$FULL_PLAN_PATH" | head -20 | tail -n +2 | head -10)
     echo "$GOAL_SECTION" >> "$GOAL_TRACKER_FILE"
 else
     # Use first non-empty, non-heading paragraph as goal description
@@ -468,7 +548,8 @@ cat >> "$GOAL_TRACKER_FILE" << 'GOAL_TRACKER_EOF'
 GOAL_TRACKER_EOF
 
 # Extract acceptance criteria from plan file (look for ## Acceptance, ## Criteria, ## Requirements)
-AC_SECTION=$(sed -n '/^\s*##\s*[Aa]cceptance\|^\s*##\s*[Cc]riteria\|^\s*##\s*[Rr]equirements/,/^\s*##/p' "$FULL_PLAN_PATH" 2>/dev/null | head -30 | tail -n +2 | head -25)
+# Use ^## without leading whitespace - markdown headers should start at column 0
+AC_SECTION=$(sed -n '/^##[[:space:]]*[Aa]cceptance\|^##[[:space:]]*[Cc]riteria\|^##[[:space:]]*[Rr]equirements/,/^##/p' "$FULL_PLAN_PATH" 2>/dev/null | head -30 | tail -n +2 | head -25)
 if [[ -n "$AC_SECTION" ]]; then
     echo "$AC_SECTION" >> "$GOAL_TRACKER_FILE"
 else

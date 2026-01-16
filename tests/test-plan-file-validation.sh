@@ -16,6 +16,10 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Unset CLAUDE_PROJECT_DIR so setup-rlcr-loop.sh uses pwd (the temp test repo)
+# instead of the actual repo root where this test is running
+unset CLAUDE_PROJECT_DIR
+
 # Test helpers
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -43,7 +47,7 @@ setup_test_repo() {
         git config user.name "Test"
         echo "initial" > init.txt
         git add init.txt
-        git commit -q -m "Initial commit"
+        git -c commit.gpgsign=false commit -q -m "Initial commit"
 
         # Create test plan files
         mkdir -p plans
@@ -62,7 +66,7 @@ EOF
         # Add plans/ to gitignore (default behavior)
         echo "plans/" >> .gitignore
         git add .gitignore
-        git commit -q -m "Add gitignore"
+        git -c commit.gpgsign=false commit -q -m "Add gitignore"
     fi
 }
 
@@ -205,7 +209,7 @@ git config user.email "test@test.com"
 git config user.name "Test"
 echo "init" > init.txt
 git add init.txt
-git commit -q -m "Initial"
+git -c commit.gpgsign=false commit -q -m "Initial"
 # Create a plan directory that we'll make inaccessible
 mkdir -p plans
 cat > plans/plan.md << 'EOF'
@@ -218,7 +222,7 @@ Test path resolution
 EOF
 echo "plans/" >> .gitignore
 git add .gitignore
-git commit -q -m "Gitignore"
+git -c commit.gpgsign=false commit -q -m "Gitignore"
 # Make the plans directory unreadable (if we have permission to do so)
 if chmod 000 plans 2>/dev/null; then
     set +e
@@ -256,7 +260,7 @@ git config user.email "test@test.com"
 git config user.name "Test"
 echo "init" > init.txt
 git add init.txt
-git commit -q -m "Initial"
+git -c commit.gpgsign=false commit -q -m "Initial"
 set +e
 RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" "../outside/escape-plan.md" 2>&1)
 EXIT_CODE=$?
@@ -333,7 +337,7 @@ git config user.email "test@test.com"
 git config user.name "Test"
 echo "init" > init.txt
 git add init.txt
-git commit -q -m "Initial"
+git -c commit.gpgsign=false commit -q -m "Initial"
 cat > tracked-plan.md << 'EOF'
 # Tracked Plan
 ## Goal
@@ -343,7 +347,7 @@ Test tracking
 - Requirement 2
 EOF
 git add tracked-plan.md
-git commit -q -m "Add plan"
+git -c commit.gpgsign=false commit -q -m "Add plan"
 set +e
 RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" "tracked-plan.md" 2>&1)
 EXIT_CODE=$?
@@ -365,7 +369,7 @@ git config user.email "test@test.com"
 git config user.name "Test"
 echo "init" > init.txt
 git add init.txt
-git commit -q -m "Initial"
+git -c commit.gpgsign=false commit -q -m "Initial"
 mkdir -p plans
 cat > plans/untracked-plan.md << 'EOF'
 # Untracked Plan
@@ -377,7 +381,7 @@ Test untracked
 EOF
 echo "plans/" >> .gitignore
 git add .gitignore
-git commit -q -m "Gitignore"
+git -c commit.gpgsign=false commit -q -m "Gitignore"
 set +e
 RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" --track-plan-file "plans/untracked-plan.md" 2>&1)
 EXIT_CODE=$?
@@ -399,7 +403,7 @@ git config user.email "test@test.com"
 git config user.name "Test"
 echo "init" > init.txt
 git add init.txt
-git commit -q -m "Initial"
+git -c commit.gpgsign=false commit -q -m "Initial"
 cat > modified-plan.md << 'EOF'
 # Modified Plan
 ## Goal
@@ -409,7 +413,7 @@ Test modified
 - Requirement 2
 EOF
 git add modified-plan.md
-git commit -q -m "Add plan"
+git -c commit.gpgsign=false commit -q -m "Add plan"
 echo "# Extra line" >> modified-plan.md
 set +e
 RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" --track-plan-file "modified-plan.md" 2>&1)
@@ -438,7 +442,7 @@ git config user.email "test@test.com"
 git config user.name "Test"
 echo "init" > init.txt
 git add init.txt
-git commit -q -m "Initial"
+git -c commit.gpgsign=false commit -q -m "Initial"
 # Get the default branch name for this repo (main or master)
 BRANCH_TEST_DEFAULT=$(git rev-parse --abbrev-ref HEAD)
 mkdir -p plans
@@ -452,7 +456,7 @@ Test branch validation
 EOF
 echo "plans/" >> .gitignore
 git add .gitignore
-git commit -q -m "Gitignore"
+git -c commit.gpgsign=false commit -q -m "Gitignore"
 # Try to create branch with colon (YAML-unsafe) - git may reject this
 if git checkout -q -b "feature:test" 2>/dev/null; then
     set +e
@@ -505,6 +509,155 @@ if git checkout -q -b 'test"quote' 2>/dev/null; then
     git checkout -q "$BRANCH_TEST_DEFAULT" 2>/dev/null || true
 else
     pass "Branch with quotes rejected (by git)"
+fi
+
+echo ""
+echo "=== Test: Plan File Content Validation ==="
+echo ""
+
+# Test 9.8: Reject plan file with only blank lines
+echo "Test 9.8: Reject plan with only blank lines"
+cd "$TEST_DIR"
+rm -rf content-test 2>/dev/null || true
+mkdir -p content-test
+cd content-test
+git init -q
+git config user.email "test@test.com"
+git config user.name "Test"
+echo "init" > init.txt
+git add init.txt
+git -c commit.gpgsign=false commit -q -m "Initial"
+mkdir -p plans
+# Create plan with only blank lines (6 lines total to pass the 5-line minimum)
+printf '\n\n\n\n\n\n' > plans/blank-plan.md
+echo "plans/" >> .gitignore
+git add .gitignore
+git -c commit.gpgsign=false commit -q -m "Gitignore"
+set +e
+RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" "plans/blank-plan.md" 2>&1)
+EXIT_CODE=$?
+set -e
+if [[ $EXIT_CODE -ne 0 ]] && echo "$RESULT" | grep -q "insufficient content"; then
+    pass "Plan with only blank lines rejected"
+else
+    fail "Blank plan rejection" "exit 1 with insufficient content error" "$RESULT"
+fi
+
+# Test 9.9: Reject plan file with only few non-blank lines
+echo "Test 9.9: Reject plan with too few non-blank lines"
+# Create plan with mostly blank lines and only 2 non-blank lines
+cat > plans/sparse-plan.md << 'EOF'
+# Title
+
+
+Only one more line
+
+
+EOF
+set +e
+RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" "plans/sparse-plan.md" 2>&1)
+EXIT_CODE=$?
+set -e
+if [[ $EXIT_CODE -ne 0 ]] && echo "$RESULT" | grep -q "insufficient content"; then
+    pass "Plan with too few non-blank lines rejected"
+else
+    fail "Sparse plan rejection" "exit 1 with insufficient content error" "$RESULT"
+fi
+
+# Test 9.9.1: Reject plan file with only HTML comments
+echo "Test 9.9.1: Reject plan with only HTML comments"
+cat > plans/comment-plan.md << 'EOF'
+<!-- HTML comment line 1 -->
+<!-- HTML comment line 2 -->
+
+
+<!-- HTML comment line 3 -->
+<!--
+Multi-line HTML comment
+that spans multiple lines
+-->
+EOF
+set +e
+RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" "plans/comment-plan.md" 2>&1)
+EXIT_CODE=$?
+set -e
+if [[ $EXIT_CODE -ne 0 ]] && echo "$RESULT" | grep -q "insufficient content"; then
+    pass "Plan with only HTML comments rejected"
+else
+    fail "HTML-comment-only plan rejection" "exit 1 with insufficient content error" "$RESULT"
+fi
+
+# Test 9.9.2: Reject plan file with only shell/markdown comments (# lines)
+echo "Test 9.9.2: Reject plan with only # comments"
+cat > plans/hash-comment-plan.md << 'EOF'
+# This is a comment line 1
+# This is a comment line 2
+# This is a comment line 3
+# This is a comment line 4
+# This is a comment line 5
+# This is a comment line 6
+EOF
+set +e
+RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" "plans/hash-comment-plan.md" 2>&1)
+EXIT_CODE=$?
+set -e
+if [[ $EXIT_CODE -ne 0 ]] && echo "$RESULT" | grep -q "insufficient content"; then
+    pass "Plan with only # comments rejected"
+else
+    fail "#-comment-only plan rejection" "exit 1 with insufficient content error" "$RESULT"
+fi
+
+# Test 9.10: Accept plan with enough non-blank content
+# Note: Lines starting with # are treated as comments, so we use plain text
+echo "Test 9.10: Accept plan with sufficient non-blank content"
+cat > plans/good-plan.md << 'EOF'
+Good Plan
+
+Goal
+This is a valid plan file with enough content.
+
+Requirements
+- Requirement 1
+- Requirement 2
+
+Implementation
+Details here.
+EOF
+set +e
+RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" "plans/good-plan.md" 2>&1)
+EXIT_CODE=$?
+set -e
+# Should not fail due to content validation (may fail later for other reasons like codex)
+if ! echo "$RESULT" | grep -q "insufficient content"; then
+    pass "Valid plan with sufficient content accepted"
+else
+    fail "Valid plan acceptance" "no insufficient content error" "$RESULT"
+fi
+
+# Test 9.10.1: Accept plan with single-line HTML comments and valid content
+# Regression test: single-line HTML comments should NOT trigger multi-line comment mode
+echo "Test 9.10.1: Accept plan with single-line HTML comments + valid content"
+cat > plans/single-line-html-comment-plan.md << 'EOF'
+<!-- This is a single-line HTML comment -->
+This plan has real content
+
+Goal
+The goal is to test single-line comment handling.
+
+Requirements
+- Requirement 1
+- Requirement 2
+- Requirement 3
+EOF
+set +e
+RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" "plans/single-line-html-comment-plan.md" 2>&1)
+EXIT_CODE=$?
+set -e
+# Should not fail due to content validation - single-line comments should be skipped properly
+if ! echo "$RESULT" | grep -q "insufficient content"; then
+    pass "Plan with single-line HTML comments + valid content accepted"
+else
+    fail "Single-line HTML comment handling" "no insufficient content error" "$RESULT"
 fi
 
 echo ""

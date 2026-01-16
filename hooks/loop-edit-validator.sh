@@ -34,8 +34,13 @@ FILE_PATH_LOWER=$(to_lower "$FILE_PATH")
 # ========================================
 
 if is_round_file_type "$FILE_PATH_LOWER" "todos"; then
-    todos_blocked_message "Edit" >&2
-    exit 2
+    PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(pwd)}"
+    LOOP_BASE_DIR="$PROJECT_ROOT/.humanize/rlcr"
+    LOOP_DIR=$(find_active_loop "$LOOP_BASE_DIR")
+    if [[ -z "$LOOP_DIR" ]] || ! is_allowlisted_file "$FILE_PATH" "$LOOP_DIR"; then
+        todos_blocked_message "Edit" >&2
+        exit 2
+    fi
 fi
 
 if is_round_file_type "$FILE_PATH_LOWER" "prompt"; then
@@ -55,15 +60,17 @@ fi
 # Find Active Loop and Current Round
 # ========================================
 
-PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(pwd)}"
-LOOP_BASE_DIR="$PROJECT_ROOT/.humanize/rlcr"
-ACTIVE_LOOP_DIR=$(find_active_loop "$LOOP_BASE_DIR")
+PROJECT_ROOT="${PROJECT_ROOT:-${CLAUDE_PROJECT_DIR:-$(pwd)}}"
+LOOP_BASE_DIR="${LOOP_BASE_DIR:-$PROJECT_ROOT/.humanize/rlcr}"
+ACTIVE_LOOP_DIR="${LOOP_DIR:-$(find_active_loop "$LOOP_BASE_DIR")}"
 
 if [[ -z "$ACTIVE_LOOP_DIR" ]]; then
     exit 0
 fi
 
-CURRENT_ROUND=$(get_current_round "$ACTIVE_LOOP_DIR/state.md")
+# Parse state file using shared function
+parse_state_file "$ACTIVE_LOOP_DIR/state.md"
+CURRENT_ROUND="$STATE_CURRENT_ROUND"
 
 # ========================================
 # Block State File Edits
@@ -112,7 +119,7 @@ if is_round_file_type "$FILE_PATH_LOWER" "summary"; then
     if [[ -n "$CLAUDE_FILENAME" ]]; then
         CLAUDE_ROUND=$(extract_round_number "$CLAUDE_FILENAME")
 
-        if [[ -n "$CLAUDE_ROUND" ]] && [[ "$CLAUDE_ROUND" != "$CURRENT_ROUND" ]]; then
+        if [[ -n "$CLAUDE_ROUND" ]] && [[ "$CLAUDE_ROUND" != "$CURRENT_ROUND" ]] && ! is_allowlisted_file "$FILE_PATH" "$ACTIVE_LOOP_DIR"; then
             CORRECT_PATH="$ACTIVE_LOOP_DIR/round-${CURRENT_ROUND}-summary.md"
             FALLBACK="# Wrong Round Number
 
