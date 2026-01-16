@@ -31,6 +31,9 @@ skip() { echo -e "${YELLOW}SKIP${NC}: $1 - $2"; TESTS_SKIPPED=$((TESTS_SKIPPED +
 TEST_DIR=$(mktemp -d)
 trap "rm -rf $TEST_DIR" EXIT
 
+# Default branch name (set after first git init)
+DEFAULT_BRANCH=""
+
 setup_test_loop() {
     cd "$TEST_DIR"
 
@@ -42,7 +45,12 @@ setup_test_loop() {
         echo "initial" > init.txt
         git add init.txt
         git commit -q -m "Initial commit"
+        # Capture default branch name (main or master depending on git version)
+        DEFAULT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
     fi
+
+    # Get current branch name (handles both 'main' and 'master' defaults)
+    CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 
     # Create loop directory structure
     LOOP_DIR="$TEST_DIR/.humanize-loop.local/2024-01-01_12-00-00"
@@ -65,13 +73,14 @@ EOF
     cp plans/test-plan.md "$LOOP_DIR/plan.md"
 
     # Create state file with v1.1.2+ fields (plan_file is quoted in YAML)
+    # Use actual branch name to handle both 'main' and 'master' defaults
     cat > "$LOOP_DIR/state.md" << EOF
 ---
 current_round: 0
 max_iterations: 42
 plan_file: "plans/test-plan.md"
 plan_tracked: false
-start_branch: main
+start_branch: $CURRENT_BRANCH
 ---
 EOF
 }
@@ -111,12 +120,12 @@ fi
 
 # Test 2: Hook blocks when plan_tracked field is missing
 echo "Test 2: Hook blocks when plan_tracked field is missing"
-cat > "$LOOP_DIR/state.md" << 'EOF'
+cat > "$LOOP_DIR/state.md" << EOF
 ---
 current_round: 0
 max_iterations: 42
 plan_file: "plans/test-plan.md"
-start_branch: main
+start_branch: $DEFAULT_BRANCH
 ---
 EOF
 set +e
@@ -155,13 +164,13 @@ setup_test_loop
 # Test 4: Hook blocks when branch changes
 echo "Test 4: Hook blocks when branch changes"
 git checkout -q -b feature-branch
-cat > "$LOOP_DIR/state.md" << 'EOF'
+cat > "$LOOP_DIR/state.md" << EOF
 ---
 current_round: 0
 max_iterations: 42
 plan_file: "plans/test-plan.md"
 plan_tracked: false
-start_branch: main
+start_branch: $DEFAULT_BRANCH
 ---
 EOF
 set +e
@@ -173,7 +182,7 @@ if [[ $EXIT_CODE -eq 0 ]] && echo "$RESULT" | grep -q "branch"; then
 else
     fail "Hook blocking branch change" "block with branch error" "$RESULT"
 fi
-git checkout -q main
+git checkout -q "$DEFAULT_BRANCH"
 
 echo ""
 echo "=== Test: Write Validator ==="
@@ -333,20 +342,20 @@ echo ""
 echo "Test 8.6: Hook correctly strips quotes from start_branch"
 setup_test_loop
 # Create state with quoted branch name
-cat > "$LOOP_DIR/state.md" << 'EOF'
+cat > "$LOOP_DIR/state.md" << EOF
 ---
 current_round: 0
 max_iterations: 42
 plan_file: "plans/test-plan.md"
 plan_tracked: false
-start_branch: "main"
+start_branch: "$DEFAULT_BRANCH"
 ---
 EOF
 set +e
 RESULT=$(echo '{}' | "$PROJECT_ROOT/hooks/loop-plan-file-validator.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-# Should pass (no output, exit 0) - quotes should be stripped and "main" should match current branch
+# Should pass (no output, exit 0) - quotes should be stripped and branch should match current
 if [[ $EXIT_CODE -eq 0 ]] && [[ -z "$RESULT" ]]; then
     pass "Hook correctly strips quotes from start_branch"
 else
@@ -379,13 +388,13 @@ fi
 # Test 8.8: Stop hook correctly parses both quoted fields
 echo "Test 8.8: Stop hook parses quoted plan_file and start_branch"
 setup_test_loop
-cat > "$LOOP_DIR/state.md" << 'EOF'
+cat > "$LOOP_DIR/state.md" << EOF
 ---
 current_round: 0
 max_iterations: 42
 plan_file: "plans/test-plan.md"
 plan_tracked: false
-start_branch: "main"
+start_branch: "$DEFAULT_BRANCH"
 ---
 EOF
 # Create summary to get past that check
@@ -431,13 +440,13 @@ Test the RLCR loop
 - Requirement 1
 EOF
 cp "$TEST_DIR/my-plans/test-plan.md" "$LOOP_DIR/plan.md"
-cat > "$LOOP_DIR/state.md" << 'EOF'
+cat > "$LOOP_DIR/state.md" << EOF
 ---
 current_round: 0
 max_iterations: 42
 plan_file: "my-plans/test-plan.md"
 plan_tracked: false
-start_branch: "main"
+start_branch: "$DEFAULT_BRANCH"
 ---
 EOF
 set +e
@@ -562,6 +571,8 @@ git config user.name "Test"
 echo "init" > init.txt
 git add init.txt
 git commit -q -m "Initial"
+# Get the default branch name for this new repo
+TEST12_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 # Create tracked plan file
 cat > tracked-plan.md << 'EOF'
 # Tracked Plan
@@ -576,13 +587,13 @@ git commit -q -m "Add plan"
 TRACKED_LOOP_DIR="$PWD/.humanize-loop.local/2024-01-01_12-00-00"
 mkdir -p "$TRACKED_LOOP_DIR"
 cp tracked-plan.md "$TRACKED_LOOP_DIR/plan.md"
-cat > "$TRACKED_LOOP_DIR/state.md" << 'EOF'
+cat > "$TRACKED_LOOP_DIR/state.md" << EOF
 ---
 current_round: 0
 max_iterations: 42
 plan_file: tracked-plan.md
 plan_tracked: true
-start_branch: main
+start_branch: $TEST12_BRANCH
 ---
 EOF
 cat > "$TRACKED_LOOP_DIR/round-0-summary.md" << 'EOF'

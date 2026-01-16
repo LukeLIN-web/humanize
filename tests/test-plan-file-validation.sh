@@ -439,6 +439,8 @@ git config user.name "Test"
 echo "init" > init.txt
 git add init.txt
 git commit -q -m "Initial"
+# Get the default branch name for this repo (main or master)
+BRANCH_TEST_DEFAULT=$(git rev-parse --abbrev-ref HEAD)
 mkdir -p plans
 cat > plans/plan.md << 'EOF'
 # Plan
@@ -462,7 +464,7 @@ if git checkout -q -b "feature:test" 2>/dev/null; then
     else
         fail "Branch with colon rejection" "exit 1 with YAML-unsafe error" "$RESULT"
     fi
-    git checkout -q main 2>/dev/null || true
+    git checkout -q "$BRANCH_TEST_DEFAULT" 2>/dev/null || true
 else
     # Git itself rejected the branch name, which is also fine
     pass "Branch with colon rejected (by git)"
@@ -470,7 +472,7 @@ fi
 
 # Test 9.6: Reject branch names with hash (YAML comment)
 echo "Test 9.6: Reject branch with hash (YAML comment)"
-git checkout -q main 2>/dev/null || true
+git checkout -q "$BRANCH_TEST_DEFAULT" 2>/dev/null || true
 # Try to create a branch with hash - some git versions may not allow this
 if git checkout -q -b "test#comment" 2>/dev/null; then
     set +e
@@ -482,14 +484,14 @@ if git checkout -q -b "test#comment" 2>/dev/null; then
     else
         fail "Branch with hash rejection" "exit 1 with YAML-unsafe error" "$RESULT"
     fi
-    git checkout -q main 2>/dev/null || true
+    git checkout -q "$BRANCH_TEST_DEFAULT" 2>/dev/null || true
 else
     pass "Branch with hash rejected (by git)"
 fi
 
 # Test 9.7: Reject branch names with quotes
 echo "Test 9.7: Reject branch with quotes (YAML-unsafe)"
-git checkout -q main 2>/dev/null || true
+git checkout -q "$BRANCH_TEST_DEFAULT" 2>/dev/null || true
 if git checkout -q -b 'test"quote' 2>/dev/null; then
     set +e
     RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" "plans/plan.md" 2>&1)
@@ -500,7 +502,7 @@ if git checkout -q -b 'test"quote' 2>/dev/null; then
     else
         fail "Branch with quotes rejection" "exit 1 with YAML-unsafe error" "$RESULT"
     fi
-    git checkout -q main 2>/dev/null || true
+    git checkout -q "$BRANCH_TEST_DEFAULT" 2>/dev/null || true
 else
     pass "Branch with quotes rejected (by git)"
 fi
