@@ -418,6 +418,156 @@ is_in_humanize_loop_dir() {
     echo "$path" | grep -q '\.humanize/rlcr/'
 }
 
+# Check if a git add command would add .humanize files to version control
+# Usage: git_adds_humanize "$command_lower"
+# Returns 0 if the command would add .humanize files, 1 otherwise
+#
+# IMPORTANT: This function receives LOWERCASED input from the validator.
+# Git flags like -A become -a after lowercasing, so we match both.
+#
+# Handles:
+# - git -C <dir> add (git options before add subcommand)
+# - Chained commands: cd repo && git add .humanize
+# - Shell operators: ;, &&, ||, |
+#
+# Blocks:
+# - git add .humanize or git add .humanize/
+# - git add .humanize/* or git add .humanize/**
+# - git add -f .humanize* (force add)
+# - git add -f . or git add --force . (force add all - bypasses gitignore)
+# - git add -f -A or git add --force --all (force add all)
+# - git add -fA or similar combined flags
+# - git add -A or git add --all (when .humanize exists)
+# - git add . or git add * (when .humanize exists and not gitignored)
+#
+git_adds_humanize() {
+    local cmd="$1"
+
+    # Split command on shell operators and check each segment
+    # This handles chained commands like: cd repo && git add .humanize
+    local segments
+    segments=$(echo "$cmd" | sed '
+        s/&&/\n/g
+        s/||/\n/g
+        s/|/\n/g
+        s/;/\n/g
+    ')
+
+    while IFS= read -r segment; do
+        [[ -z "$segment" ]] && continue
+
+        # Check if this segment contains a git add command
+        # Pattern: git (with optional flags/options) followed by add
+        # Handles:
+        # - git add
+        # - git -C dir add (short option with separate arg)
+        # - git --git-dir=x add (long option with = arg)
+        # - git -c key=value add (short option with = arg)
+        # The pattern allows any non-add tokens between git and add
+        if ! echo "$segment" | grep -qE '(^|[[:space:]])git[[:space:]]+([^[:space:]]+[[:space:]]+)*add([[:space:]]|$)'; then
+            continue
+        fi
+
+        # Extract the part after "add" for analysis
+        local add_args
+        add_args=$(echo "$segment" | sed -n 's/.*[[:space:]]add[[:space:]]*//p')
+
+        # Normalize add_args: strip quotes for path matching
+        # This handles: git add ".humanize", git add '.humanize'
+        local add_args_normalized
+        add_args_normalized=$(echo "$add_args" | sed "s/[\"']//g")
+
+        # Check for direct .humanize reference (blocked regardless of other flags)
+        # Handles: .humanize, ./.humanize, path/to/.humanize, ".humanize", '.humanize'
+        # Pattern matches .humanize at start, after space, after / or ./ AND followed by end, /, or space
+        # This avoids over-blocking .humanizeconfig or .humanize-backup
+        if echo "$add_args_normalized" | grep -qE '(^|[[:space:]]|/)\.humanize($|/|[[:space:]])'; then
+            return 0
+        fi
+
+        # Check for -f or --force flag (including combined flags like -fa, -af)
+        local has_force=false
+        if echo "$add_args" | grep -qE '(^|[[:space:]])--force([[:space:]]|$)'; then
+            has_force=true
+        elif echo "$add_args" | grep -qE '(^|[[:space:]])-[a-z]*f[a-z]*([[:space:]]|$)'; then
+            has_force=true
+        fi
+
+        # Check for -A/--all flag (including combined flags like -fa, -af)
+        # Note: input is lowercased, so -A becomes -a
+        local has_all=false
+        if echo "$add_args" | grep -qE '(^|[[:space:]])--all([[:space:]]|$)'; then
+            has_all=true
+        elif echo "$add_args" | grep -qE '(^|[[:space:]])-[a-z]*a[a-z]*([[:space:]]|$)'; then
+            has_all=true
+        fi
+
+        # Check for broad scope targets: . or * alone
+        local has_broad_scope=false
+        if echo "$add_args" | grep -qE '(^|[[:space:]])(\.|\*)([[:space:]]|$)'; then
+            has_broad_scope=true
+        fi
+
+        # Force add with any broad scope (force bypasses gitignore entirely)
+        if [[ "$has_force" == "true" ]]; then
+            if [[ "$has_all" == "true" ]] || [[ "$has_broad_scope" == "true" ]]; then
+                return 0
+            fi
+        fi
+
+        # Check if .humanize exists - needed for non-force blocking
+        if [[ ! -d ".humanize" ]]; then
+            continue
+        fi
+
+        # git add -A/--all when .humanize exists (AC-2.3)
+        # Always block because -A adds all changes including untracked files
+        if [[ "$has_all" == "true" ]]; then
+            return 0
+        fi
+
+        # git add . or git add * when .humanize exists and not gitignored
+        # Only block if .humanize is NOT protected by gitignore
+        if [[ "$has_broad_scope" == "true" ]]; then
+            if ! git check-ignore -q .humanize 2>/dev/null; then
+                return 0
+            fi
+        fi
+    done <<< "$segments"
+
+    return 1
+}
+
+# Standard message for blocking git add .humanize commands
+# Usage: git_add_humanize_blocked_message
+git_add_humanize_blocked_message() {
+    local fallback="# Git Add Blocked: .humanize Protection
+
+The \`.humanize/\` directory contains local loop state that should NOT be committed.
+
+Your command was blocked because it would add .humanize files to version control.
+
+## Allowed Commands
+
+Use specific file paths instead of broad patterns:
+
+    git add <specific-file>
+    git add src/
+    git add -p  # patch mode
+
+## Blocked Commands
+
+These commands are blocked when .humanize exists:
+
+    git add .humanize      # direct reference
+    git add -A             # adds all including .humanize
+    git add --all          # adds all including .humanize
+    git add .              # may include .humanize if not gitignored
+    git add -f .           # force bypasses gitignore"
+
+    load_and_render_safe "$TEMPLATE_DIR" "block/git-add-humanize.md" "$fallback"
+}
+
 # Check if a shell command attempts to modify a file matching the given pattern
 # Usage: command_modifies_file "$command_lower" "goal-tracker\.md"
 # Returns 0 if the command tries to modify the file, 1 otherwise

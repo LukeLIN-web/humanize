@@ -7,6 +7,10 @@
 # Automatically switches to newer logs when they appear
 # Features a fixed status bar at the top showing session info
 _humanize_monitor_codex() {
+    # Enable 0-indexed arrays in zsh for bash compatibility
+    # This affects all _split_to_array calls within this function
+    [[ -n "$ZSH_VERSION" ]] && setopt localoptions ksharrays
+
     local loop_dir=".humanize/rlcr"
     local current_file=""
     local current_session_dir=""
@@ -23,11 +27,15 @@ _humanize_monitor_codex() {
     # Function to find the latest session directory
     _find_latest_session() {
         local latest_session=""
-        # Iterate over directories (bash/zsh compatible)
-        for session_dir in "$loop_dir"/*; do
-            # Skip if glob didn't match anything
-            [[ ! -e "$session_dir" ]] && continue
-            # Only process directories
+        # Check if loop_dir exists before glob operation (prevents zsh "no matches found" error)
+        if [[ ! -d "$loop_dir" ]]; then
+            echo ""
+            return
+        fi
+        # Use find instead of glob to avoid zsh "no matches found" errors
+        # find is safe even when directory is empty or has no matching files
+        while IFS= read -r session_dir; do
+            [[ -z "$session_dir" ]] && continue
             [[ ! -d "$session_dir" ]] && continue
 
             local session_name=$(basename "$session_dir")
@@ -36,7 +44,7 @@ _humanize_monitor_codex() {
                     latest_session="$session_dir"
                 fi
             fi
-        done
+        done < <(find "$loop_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null)
         echo "$latest_session"
     }
 
@@ -54,11 +62,16 @@ _humanize_monitor_codex() {
         local sanitized_project=$(echo "$project_root" | sed 's/[^a-zA-Z0-9._-]/-/g' | sed 's/--*/-/g')
         local project_cache_dir="$cache_base/$sanitized_project"
 
-        # First, find valid session timestamps from local .humanize/rlcr
-        for session_dir in "$loop_dir"/*; do
-            # Skip if glob didn't match anything
-            [[ ! -e "$session_dir" ]] && continue
-            # Only process directories
+        # Check if loop_dir exists before iteration (prevents errors on missing dir)
+        if [[ ! -d "$loop_dir" ]]; then
+            echo ""
+            return
+        fi
+
+        # Use find instead of glob to avoid zsh "no matches found" errors
+        # find is safe even when directory is empty or has no matching files
+        while IFS= read -r session_dir; do
+            [[ -z "$session_dir" ]] && continue
             [[ ! -d "$session_dir" ]] && continue
 
             local session_name=$(basename "$session_dir")
@@ -72,25 +85,25 @@ _humanize_monitor_codex() {
                 continue
             fi
 
-            for log_file in "$cache_dir"/round-*-codex-run.log; do
-                # Skip if glob didn't match anything
-                [[ ! -e "$log_file" ]] && continue
+            # Use find instead of glob to avoid zsh "no matches found" errors
+            # find is safe even when directory is empty or has no matching files
+            while IFS= read -r log_file; do
+                [[ -z "$log_file" ]] && continue
+                [[ ! -f "$log_file" ]] && continue
 
-                if [[ -f "$log_file" ]]; then
-                    local log_basename=$(basename "$log_file")
-                    local round_num="${log_basename#round-}"
-                    round_num="${round_num%%-codex-run.log}"
+                local log_basename=$(basename "$log_file")
+                local round_num="${log_basename#round-}"
+                round_num="${round_num%%-codex-run.log}"
 
-                    if [[ -z "$latest" ]] || \
-                       [[ "$session_name" > "$latest_session" ]] || \
-                       [[ "$session_name" == "$latest_session" && "$round_num" -gt "$latest_round" ]]; then
-                        latest="$log_file"
-                        latest_session="$session_name"
-                        latest_round="$round_num"
-                    fi
+                if [[ -z "$latest" ]] || \
+                   [[ "$session_name" > "$latest_session" ]] || \
+                   [[ "$session_name" == "$latest_session" && "$round_num" -gt "$latest_round" ]]; then
+                    latest="$log_file"
+                    latest_session="$session_name"
+                    latest_round="$round_num"
                 fi
-            done
-        done
+            done < <(find "$cache_dir" -maxdepth 1 -name 'round-*-codex-run.log' -type f 2>/dev/null)
+        done < <(find "$loop_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null)
 
         echo "$latest"
     }
@@ -115,10 +128,11 @@ _humanize_monitor_codex() {
 
         # Priority 2: Look for <STOP_REASON>-state.md files
         # Common stop reasons: completed, failed, cancelled, timeout, error
+        # Use find instead of glob to avoid zsh "no matches found" errors
         local state_file=""
         local stop_reason=""
-        for f in "$session_dir"/*-state.md; do
-            [[ ! -e "$f" ]] && continue
+        while IFS= read -r f; do
+            [[ -z "$f" ]] && continue
             if [[ -f "$f" ]]; then
                 state_file="$f"
                 # Extract stop reason from filename (e.g., "completed-state.md" -> "completed")
@@ -126,7 +140,7 @@ _humanize_monitor_codex() {
                 stop_reason="${basename%-state.md}"
                 break
             fi
-        done
+        done < <(find "$session_dir" -maxdepth 1 -name '*-state.md' -type f 2>/dev/null)
 
         if [[ -n "$state_file" ]]; then
             echo "$state_file|$stop_reason"
@@ -301,8 +315,7 @@ _humanize_monitor_codex() {
 
     # Draw the status bar at the top
     _draw_status_bar() {
-        # Enable 0-indexed arrays in zsh for bash compatibility
-        [[ -n "$ZSH_VERSION" ]] && setopt localoptions ksharrays
+        # Note: ksharrays is set at _humanize_monitor_codex() level for zsh compatibility
 
         local session_dir="$1"
         local log_file="$2"
@@ -483,6 +496,21 @@ _humanize_monitor_codex() {
         echo "Stopped monitoring."
     }
 
+    # Graceful stop when loop directory is deleted
+    # Per R1.2: calls _cleanup() to restore terminal state
+    _graceful_stop() {
+        local reason="$1"
+        # Prevent multiple cleanup calls (checked again in _cleanup but check here too)
+        [[ "$cleanup_done" == "true" ]] && return
+
+        # Call _cleanup to do the actual cleanup work (per plan requirement)
+        _cleanup
+
+        # Print the specific graceful stop message after cleanup
+        echo "Monitoring stopped: $reason"
+        echo "The RLCR loop may have been cancelled or the directory was deleted."
+    }
+
     # Set up signal handlers (bash/zsh compatible)
     trap '_cleanup' INT TERM
 
@@ -518,6 +546,12 @@ _humanize_monitor_codex() {
 
     # Main monitoring loop
     while [[ "$monitor_running" == "true" ]]; do
+        # Check if loop directory still exists (graceful exit if deleted)
+        if [[ ! -d "$loop_dir" ]]; then
+            _graceful_stop ".humanize/rlcr directory no longer exists"
+            return 0
+        fi
+
         # Update loop status
         _split_to_array state_file_info "$(_find_state_file "$current_session_dir")"
         current_state_file="${state_file_info[0]}"
@@ -552,6 +586,12 @@ _humanize_monitor_codex() {
                 sleep 0.5
                 [[ "$monitor_running" != "true" ]] && break
 
+                # Check if loop directory still exists (graceful exit if deleted)
+                if [[ ! -d "$loop_dir" ]]; then
+                    _graceful_stop ".humanize/rlcr directory no longer exists"
+                    return 0
+                fi
+
                 # Update loop status and redraw status bar
                 _split_to_array state_file_info "$(_find_state_file "$current_session_dir")"
                 current_loop_status="${state_file_info[1]}"
@@ -576,6 +616,36 @@ _humanize_monitor_codex() {
                 local latest=$(_find_latest_codex_log)
                 local latest_session=$(_find_latest_session)
                 [[ "$monitor_running" != "true" ]] && break
+
+                # Handle session directory deletion
+                if [[ ! -d "$current_session_dir" ]]; then
+                    if [[ -n "$latest_session" ]]; then
+                        # Current session deleted but another exists - switch to it
+                        current_session_dir="$latest_session"
+                        current_file="$latest"
+                        last_no_log_status=""  # Reset to re-render status for new session
+                        tput cup $status_bar_height 0
+                        tput ed
+                        printf "\n==> Session directory deleted, switching to: %s\n" "$(basename "$latest_session")"
+                        if [[ -n "$current_file" ]]; then
+                            printf "==> Log: %s\n\n" "$current_file"
+                            last_size=0
+                            break
+                        else
+                            printf "==> Waiting for log file...\n\n"
+                        fi
+                        continue
+                    else
+                        # No sessions available - wait for new ones
+                        last_no_log_status=""  # Reset to re-render status
+                        tput cup $status_bar_height 0
+                        tput ed
+                        printf "\n==> Session directory deleted, waiting for new sessions...\n"
+                        current_session_dir=""
+                        current_file=""
+                        continue
+                    fi
+                fi
 
                 # Update session dir immediately when a newer one exists (even without log)
                 if [[ -n "$latest_session" && "$latest_session" != "$current_session_dir" ]]; then
@@ -609,6 +679,12 @@ _humanize_monitor_codex() {
             sleep 0.5  # Check more frequently for smoother output
             [[ "$monitor_running" != "true" ]] && break
 
+            # Check if loop directory still exists (graceful exit if deleted)
+            if [[ ! -d "$loop_dir" ]]; then
+                _graceful_stop ".humanize/rlcr directory no longer exists"
+                return 0
+            fi
+
             # Update loop status
             _split_to_array state_file_info "$(_find_state_file "$current_session_dir")"
             current_loop_status="${state_file_info[1]}"
@@ -625,6 +701,17 @@ _humanize_monitor_codex() {
                 [[ "$monitor_running" != "true" ]] && break
                 tail -c +$((last_size + 1)) "$current_file" 2>/dev/null
                 last_size="$file_size"
+            elif [[ "$last_size" -gt 0 ]] && [[ "$file_size" -lt "$last_size" ]]; then
+                # File truncated or rotated (R1.3: detect size becomes 0 unexpectedly)
+                # Only trigger when file previously had content (last_size > 0)
+                # This prevents treating new empty files as truncated
+                tput cup $status_bar_height 0
+                tput ed
+                printf "\n==> Log file truncated/rotated, searching for new log...\n"
+                current_file=""
+                last_size=0
+                last_no_log_status=""
+                break
             fi
             [[ "$monitor_running" != "true" ]] && break
 
@@ -633,6 +720,43 @@ _humanize_monitor_codex() {
             [[ "$monitor_running" != "true" ]] && break
             local latest_session=$(_find_latest_session)
             [[ "$monitor_running" != "true" ]] && break
+
+            # Handle current session directory or log file deletion
+            if [[ ! -d "$current_session_dir" ]] || [[ ! -f "$current_file" ]]; then
+                # Capture deletion state BEFORE reassigning variables
+                local session_was_deleted=false
+                [[ ! -d "$current_session_dir" ]] && session_was_deleted=true
+
+                if [[ -n "$latest_session" ]]; then
+                    # Session or log deleted but another session exists - switch to it
+                    current_session_dir="$latest_session"
+                    current_file="$latest"
+                    tput cup $status_bar_height 0
+                    tput ed
+                    if [[ "$session_was_deleted" == "true" ]]; then
+                        printf "\n==> Session directory deleted, switching to: %s\n" "$(basename "$latest_session")"
+                    else
+                        printf "\n==> Log file deleted, switching to: %s\n" "$(basename "$latest_session")"
+                    fi
+                    if [[ -n "$current_file" ]]; then
+                        printf "==> Log: %s\n\n" "$current_file"
+                    else
+                        printf "==> Waiting for log file...\n\n"
+                        last_no_log_status=""  # Reset to ensure no-log branch re-renders
+                    fi
+                    last_size=0
+                    break
+                else
+                    # No sessions available - wait for new ones (outer loop will handle)
+                    current_session_dir=""
+                    current_file=""
+                    last_no_log_status=""  # Reset to re-render status
+                    tput cup $status_bar_height 0
+                    tput ed
+                    printf "\n==> Session/log deleted, waiting for new sessions...\n"
+                    break
+                fi
+            fi
 
             # Check if a newer session exists (even without log file)
             if [[ -n "$latest_session" && "$latest_session" != "$current_session_dir" ]]; then
