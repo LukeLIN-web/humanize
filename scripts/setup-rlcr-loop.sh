@@ -530,7 +530,8 @@ GOAL_TRACKER_EOF
 GOAL_LINE=$(grep -i -m1 '^##[[:space:]]*\(goal\|objective\|purpose\)' "$FULL_PLAN_PATH" 2>/dev/null || echo "")
 if [[ -n "$GOAL_LINE" ]]; then
     # Get the content after the heading
-    GOAL_SECTION=$(sed -n '/^##[[:space:]]*[Gg]oal\|^##[[:space:]]*[Oo]bjective\|^##[[:space:]]*[Pp]urpose/,/^##/p' "$FULL_PLAN_PATH" | head -20 | tail -n +2 | head -10)
+    # Use || true after sed to ignore SIGPIPE when head closes the pipe early (pipefail mode)
+    GOAL_SECTION=$({ sed -n '/^##[[:space:]]*[Gg]oal\|^##[[:space:]]*[Oo]bjective\|^##[[:space:]]*[Pp]urpose/,/^##/p' "$FULL_PLAN_PATH" || true; } | head -20 | tail -n +2 | head -10)
     echo "$GOAL_SECTION" >> "$GOAL_TRACKER_FILE"
 else
     # Use first non-empty, non-heading paragraph as goal description
@@ -549,7 +550,8 @@ GOAL_TRACKER_EOF
 
 # Extract acceptance criteria from plan file (look for ## Acceptance, ## Criteria, ## Requirements)
 # Use ^## without leading whitespace - markdown headers should start at column 0
-AC_SECTION=$(sed -n '/^##[[:space:]]*[Aa]cceptance\|^##[[:space:]]*[Cc]riteria\|^##[[:space:]]*[Rr]equirements/,/^##/p' "$FULL_PLAN_PATH" 2>/dev/null | head -30 | tail -n +2 | head -25)
+# Use || true after sed to ignore SIGPIPE when head closes the pipe early (pipefail mode)
+AC_SECTION=$({ sed -n '/^##[[:space:]]*[Aa]cceptance\|^##[[:space:]]*[Cc]riteria\|^##[[:space:]]*[Rr]equirements/,/^##/p' "$FULL_PLAN_PATH" 2>/dev/null || true; } | head -30 | tail -n +2 | head -25)
 if [[ -n "$AC_SECTION" ]]; then
     echo "$AC_SECTION" >> "$GOAL_TRACKER_FILE"
 else
@@ -664,6 +666,10 @@ fi
 # Output Setup Message
 # ========================================
 
+# All important work is done. If output fails due to SIGPIPE (pipe closed), exit cleanly.
+# This trap is set here (not at script start) to avoid affecting internal pipelines.
+trap 'exit 0' PIPE
+
 cat << EOF
 === start-rlcr-loop activated ===
 
@@ -718,3 +724,6 @@ echo "   - Any remaining items"
 echo ""
 echo "Codex will review this summary to determine if work is complete."
 echo "==========================================="
+
+# Explicit exit 0 to ensure clean exit code even if final output fails
+exit 0
