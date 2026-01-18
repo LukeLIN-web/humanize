@@ -67,13 +67,16 @@ flowchart LR
 
 ### Quick Start
 
-1. **Create a plan file** with clear description, acceptance criteria, and technical approach
-2. **Run the loop**:
+1. **Create a plan file** or just write down your thoughts in `<name/you/like/for/draft>.md` and use `/humanize:gen-plan`
    ```bash
-   /humanize:start-rlcr-loop docs/my-feature-plan.md
+   /humanize:gen-plan --input <name/you/like/for/draft.md> --output <docs/my-feature-plan.md>
+   ``` 
+3. **Run the loop**:
+   ```bash
+   /humanize:start-rlcr-loop <docs/my-feature-plan.md>
    ```
-3. **Monitor progress** in `.humanize/rlcr/<timestamp>/`
-4. **Cancel if needed**: `/humanize:cancel-rlcr-loop`
+4. **Monitor progress** in `.humanize/rlcr/<timestamp>/`
+5. **Cancel if needed**: `/humanize:cancel-rlcr-loop`
 
 ### Commands
 
