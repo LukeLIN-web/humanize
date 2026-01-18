@@ -48,6 +48,7 @@ TEST_SUITES=(
     "test-zsh-monitor-safety.sh"
     "test-monitor-runtime.sh"
     "test-monitor-e2e-real.sh"
+    "test-gen-plan.sh"
 )
 
 # Tests that must be run with zsh (not bash)
