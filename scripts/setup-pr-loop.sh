@@ -305,18 +305,43 @@ PARENT_REPO=$(run_with_timeout "$GH_TIMEOUT" gh repo view --json parent \
 PR_LOOKUP_REPO=""
 PR_NUMBER=""
 
-# Try current repo first
-if [[ -n "$CURRENT_REPO" ]]; then
-    PR_NUMBER=$(run_with_timeout "$GH_TIMEOUT" gh pr view --repo "$CURRENT_REPO" --json number -q .number 2>/dev/null) || PR_NUMBER=""
-    if [[ -n "$PR_NUMBER" ]]; then
-        PR_LOOKUP_REPO="$CURRENT_REPO"
+# Try to find PR using gh's auto-detection (no --repo flag)
+# This handles cases where local branch name differs from PR head (e.g., renamed branch)
+# IMPORTANT: gh pr view can auto-resolve to upstream repo when in a fork, so we must
+# extract the actual repo from the PR URL rather than assuming it's CURRENT_REPO
+PR_INFO=$(run_with_timeout "$GH_TIMEOUT" gh pr view --json number,url -q '.number,.url' 2>/dev/null) || PR_INFO=""
+if [[ -n "$PR_INFO" ]]; then
+    # Parse number and URL from newline-separated output (jq outputs each field on separate line)
+    PR_NUMBER=$(echo "$PR_INFO" | head -1)
+    PR_URL=$(echo "$PR_INFO" | tail -1)
+    # Validate PR_NUMBER is numeric
+    if ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+        echo "Error: Invalid PR number from gh CLI: $PR_INFO" >&2
+        PR_NUMBER=""
+        PR_URL=""
+    else
+        # Extract repo from URL: https://HOST/OWNER/REPO/pull/NUMBER -> OWNER/REPO
+        # Works with github.com and GitHub Enterprise (any host)
+        if [[ "$PR_URL" =~ https?://[^/]+/([^/]+/[^/]+)/pull/ ]]; then
+            PR_LOOKUP_REPO="${BASH_REMATCH[1]}"
+        else
+            # Fallback to current repo if URL parsing fails
+            PR_LOOKUP_REPO="$CURRENT_REPO"
+        fi
     fi
 fi
 
 # If not found in current repo and we have a parent (fork case), try parent
+# IMPORTANT: For fork PRs, the head branch lives in the fork, so we must use
+# the fork-qualified format (FORK_OWNER:BRANCH) when looking up in parent repo
 if [[ -z "$PR_NUMBER" && -n "$PARENT_REPO" && "$PARENT_REPO" != "null/" && "$PARENT_REPO" != "/" ]]; then
     echo "Checking parent repo for PR (fork detected)..." >&2
-    PR_NUMBER=$(run_with_timeout "$GH_TIMEOUT" gh pr view --repo "$PARENT_REPO" --json number -q .number 2>/dev/null) || PR_NUMBER=""
+    # Extract fork owner from CURRENT_REPO (format: owner/repo)
+    FORK_OWNER="${CURRENT_REPO%%/*}"
+    # Use fork-qualified branch name: FORK_OWNER:BRANCH
+    QUALIFIED_BRANCH="${FORK_OWNER}:${START_BRANCH}"
+    echo "  Using qualified branch: $QUALIFIED_BRANCH" >&2
+    PR_NUMBER=$(run_with_timeout "$GH_TIMEOUT" gh pr view --repo "$PARENT_REPO" "$QUALIFIED_BRANCH" --json number -q .number 2>/dev/null) || PR_NUMBER=""
     if [[ -n "$PR_NUMBER" ]]; then
         PR_LOOKUP_REPO="$PARENT_REPO"
         echo "Found PR #$PR_NUMBER in parent repo: $PARENT_REPO" >&2
@@ -348,15 +373,9 @@ if [[ "$PR_STATE" == "CLOSED" ]]; then
     exit 1
 fi
 
-# IMPORTANT: Use the PR's base repository for API calls (for fork PR support)
-# Comments are on the base repo, not the fork
-PR_BASE_REPO=$(run_with_timeout "$GH_TIMEOUT" gh pr view "$PR_NUMBER" --repo "$PR_LOOKUP_REPO" --json baseRepository \
-    -q '.baseRepository.owner.login + "/" + .baseRepository.name' 2>/dev/null) || PR_BASE_REPO=""
-
-if [[ -z "$PR_BASE_REPO" ]]; then
-    echo "Warning: Could not resolve PR base repository, using lookup repo" >&2
-    PR_BASE_REPO="$PR_LOOKUP_REPO"
-fi
+# IMPORTANT: Use the PR's lookup repository for API calls
+# Since PR_LOOKUP_REPO was already validated to contain this PR, we can use it directly
+PR_BASE_REPO="$PR_LOOKUP_REPO"
 
 # ========================================
 # Validate YAML Safety
