@@ -114,6 +114,7 @@ REVIEW_STARTED="$STATE_REVIEW_STARTED"
 CODEX_MODEL="${STATE_CODEX_MODEL:-$DEFAULT_CODEX_MODEL}"
 CODEX_EFFORT="${STATE_CODEX_EFFORT:-$DEFAULT_CODEX_EFFORT}"
 CODEX_TIMEOUT="${STATE_CODEX_TIMEOUT:-${CODEX_TIMEOUT:-$DEFAULT_CODEX_TIMEOUT}}"
+ASK_CODEX_QUESTION="${STATE_ASK_CODEX_QUESTION:-false}"
 
 # Re-validate Codex Model and Effort for YAML safety (in case state.md was manually edited)
 # Use same validation patterns as setup-rlcr-loop.sh
@@ -337,21 +338,22 @@ fi
 fi  # End of REVIEW_STARTED != true check for plan file integrity
 
 # ========================================
-# Quick Check: Are All Todos Completed?
+# Quick Check: Are All Tasks Completed?
 # ========================================
 # Before running expensive Codex review, check if Claude still has
-# incomplete todos. If yes, block immediately and tell Claude to finish.
+# incomplete tasks. If yes, block immediately and tell Claude to finish.
+# Supports both legacy TodoWrite and new Task system (TaskCreate/TaskUpdate).
 
 TODO_CHECKER="$SCRIPT_DIR/check-todos-from-transcript.py"
 
 if [[ -f "$TODO_CHECKER" ]]; then
-    # Pass hook input to the todo checker
+    # Pass hook input to the task checker
     TODO_RESULT=$(echo "$HOOK_INPUT" | python3 "$TODO_CHECKER" 2>&1) || TODO_EXIT=$?
     TODO_EXIT=${TODO_EXIT:-0}
 
     if [[ "$TODO_EXIT" -eq 2 ]]; then
         # Parse error - block and surface the error
-        REASON="Todo checker encountered a parse error.
+        REASON="Task checker encountered a parse error.
 
 Error: $TODO_RESULT
 
@@ -359,7 +361,7 @@ This may indicate an issue with the hook input or transcript format.
 Please try again or cancel the loop if this persists."
         jq -n \
             --arg reason "$REASON" \
-            --arg msg "Loop: Blocked - todo checker parse error" \
+            --arg msg "Loop: Blocked - task checker parse error" \
             '{
                 "decision": "block",
                 "reason": $reason,
@@ -369,11 +371,11 @@ Please try again or cancel the loop if this persists."
     fi
 
     if [[ "$TODO_EXIT" -eq 1 ]]; then
-        # Incomplete todos found - block immediately without Codex review
-        # Extract the incomplete todo list from the result
+        # Incomplete tasks found - block immediately without Codex review
+        # Extract the incomplete task list from the result
         INCOMPLETE_LIST=$(echo "$TODO_RESULT" | tail -n +2)
 
-        FALLBACK="# Incomplete Todos
+        FALLBACK="# Incomplete Tasks
 
 Complete these tasks before exiting:
 
@@ -383,7 +385,7 @@ Complete these tasks before exiting:
 
         jq -n \
             --arg reason "$REASON" \
-            --arg msg "Loop: Blocked - incomplete todos detected, please finish all tasks first" \
+            --arg msg "Loop: Blocked - incomplete tasks detected, please finish all tasks first" \
             '{
                 "decision": "block",
                 "reason": $reason,
@@ -1533,6 +1535,42 @@ load_and_render_safe "$TEMPLATE_DIR" "claude/next-round-prompt.md" "$NEXT_ROUND_
     "PLAN_FILE=$PLAN_FILE" \
     "REVIEW_CONTENT=$REVIEW_CONTENT" \
     "GOAL_TRACKER_FILE=$GOAL_TRACKER_FILE" > "$NEXT_PROMPT_FILE"
+
+# Check for Open Questions in review content and inject notice if enabled
+# Detection: line containing "Open Question" substring with total length < 40 chars
+if [[ "$ASK_CODEX_QUESTION" == "true" ]]; then
+    HAS_OPEN_QUESTION=false
+    while IFS= read -r line; do
+        if [[ ${#line} -lt 40 ]] && echo "$line" | grep -q "Open Question"; then
+            HAS_OPEN_QUESTION=true
+            break
+        fi
+    done < "$REVIEW_RESULT_FILE"
+
+    if [[ "$HAS_OPEN_QUESTION" == "true" ]]; then
+        echo "Detected Open Question(s) in Codex review - injecting AskUserQuestion notice" >&2
+        OPEN_QUESTION_NOTICE=$(load_template "$TEMPLATE_DIR" "claude/open-question-notice.md" 2>/dev/null)
+        if [[ -z "$OPEN_QUESTION_NOTICE" ]]; then
+            OPEN_QUESTION_NOTICE="**IMPORTANT**: Codex has found Open Question(s). You must use \`AskUserQuestion\` to clarify those questions with user first, before proceeding to resolve any other Codex's findings."
+        fi
+        # Insert notice between "<!-- CODEX's REVIEW RESULT  END  -->" line + "---" line and "## Goal Tracker Reference"
+        TEMP_PROMPT_FILE="${NEXT_PROMPT_FILE}.tmp.$$"
+        awk -v notice="$OPEN_QUESTION_NOTICE" '
+            /<!-- CODEX.*REVIEW RESULT.*END.*-->/ {
+                print
+                getline
+                if (/^---/) {
+                    print
+                    print ""
+                    print notice
+                    next
+                }
+            }
+            { print }
+        ' "$NEXT_PROMPT_FILE" > "$TEMP_PROMPT_FILE"
+        mv "$TEMP_PROMPT_FILE" "$NEXT_PROMPT_FILE"
+    fi
+fi
 
 # Add special instructions for post-Full Alignment Check rounds
 if [[ "$FULL_ALIGNMENT_CHECK" == "true" ]]; then
