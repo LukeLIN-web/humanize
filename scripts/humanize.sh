@@ -239,15 +239,24 @@ _humanize_monitor_codex() {
         monitor_find_latest_session "$loop_dir"
     }
 
-    # Function to find the latest codex log file
+    # Function to find the latest codex log file for a specific session
     # Log files are now in $HOME/.cache/humanize/<sanitized-project-path>/<timestamp>/ to avoid context pollution
     # Respects XDG_CACHE_HOME for testability in restricted environments
     # Searches for both implementation phase logs (codex-run.log) and review phase logs (codex-review.log)
+    # Usage: _find_latest_codex_log [session_dir]
+    #   If session_dir is provided, only search within that session's cache directory
+    #   If not provided, returns empty (we now require explicit session)
     _find_latest_codex_log() {
+        local target_session_dir="$1"
         local latest=""
-        local latest_session=""
         local latest_round=-1
         local cache_base="${XDG_CACHE_HOME:-$HOME/.cache}/humanize"
+
+        # Require explicit session directory to avoid showing logs from wrong session
+        if [[ -z "$target_session_dir" || ! -d "$target_session_dir" ]]; then
+            echo ""
+            return
+        fi
 
         # Get current project's absolute path and sanitize it
         # This matches the sanitization in loop-codex-stop-hook.sh
@@ -255,11 +264,7 @@ _humanize_monitor_codex() {
         local sanitized_project=$(echo "$project_root" | sed 's/[^a-zA-Z0-9._-]/-/g' | sed 's/--*/-/g')
         local project_cache_dir="$cache_base/$sanitized_project"
 
-        # Check if loop_dir exists before iteration (prevents errors on missing dir)
-        if [[ ! -d "$loop_dir" ]]; then
-            echo ""
-            return
-        fi
+        local session_name=$(basename "$target_session_dir")
 
         # Helper to extract round number from log filename
         # Handles both codex-run.log and codex-review.log patterns
@@ -277,66 +282,52 @@ _humanize_monitor_codex() {
             [[ "$1" == *-codex-review.log ]]
         }
 
-        # Use find instead of glob to avoid zsh "no matches found" errors
-        # find is safe even when directory is empty or has no matching files
-        while IFS= read -r session_dir; do
-            [[ -z "$session_dir" ]] && continue
-            [[ ! -d "$session_dir" ]] && continue
+        # Look for log files in the project-specific cache directory for this session
+        local cache_dir="$project_cache_dir/$session_name"
+        if [[ ! -d "$cache_dir" ]]; then
+            echo ""
+            return
+        fi
 
-            local session_name=$(basename "$session_dir")
-            if [[ ! "$session_name" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}$ ]]; then
-                continue
-            fi
+        # Track max round numbers for each log type (for consistency check)
+        local max_run_round=-1
+        local min_review_round=-1
 
-            # Look for log files in the project-specific cache directory with matching timestamp
-            local cache_dir="$project_cache_dir/$session_name"
-            if [[ ! -d "$cache_dir" ]]; then
-                continue
-            fi
+        # Search for both implementation phase (codex-run) and review phase (codex-review) logs
+        # Use find with -o (OR) to match both patterns
+        while IFS= read -r log_file; do
+            [[ -z "$log_file" ]] && continue
+            [[ ! -f "$log_file" ]] && continue
 
-            # Track max round numbers for each log type (for consistency check)
-            local max_run_round=-1
-            local min_review_round=-1
+            local log_basename=$(basename "$log_file")
+            local round_num=$(_extract_round_num "$log_basename")
 
-            # Search for both implementation phase (codex-run) and review phase (codex-review) logs
-            # Use find with -o (OR) to match both patterns
-            while IFS= read -r log_file; do
-                [[ -z "$log_file" ]] && continue
-                [[ ! -f "$log_file" ]] && continue
-
-                local log_basename=$(basename "$log_file")
-                local round_num=$(_extract_round_num "$log_basename")
-
-                # Track round numbers by type for consistency check
-                if _is_review_log "$log_basename"; then
-                    if [[ "$min_review_round" -eq -1 ]] || [[ "$round_num" -lt "$min_review_round" ]]; then
-                        min_review_round="$round_num"
-                    fi
-                else
-                    if [[ "$round_num" -gt "$max_run_round" ]]; then
-                        max_run_round="$round_num"
-                    fi
+            # Track round numbers by type for consistency check
+            if _is_review_log "$log_basename"; then
+                if [[ "$min_review_round" -eq -1 ]] || [[ "$round_num" -lt "$min_review_round" ]]; then
+                    min_review_round="$round_num"
                 fi
-
-                if [[ -z "$latest" ]] || \
-                   [[ "$session_name" > "$latest_session" ]] || \
-                   [[ "$session_name" == "$latest_session" && "$round_num" -gt "$latest_round" ]]; then
-                    latest="$log_file"
-                    latest_session="$session_name"
-                    latest_round="$round_num"
-                fi
-            done < <(find "$cache_dir" -maxdepth 1 \( -name 'round-*-codex-run.log' -o -name 'round-*-codex-review.log' \) -type f 2>/dev/null)
-
-            # Defensive check: codex-run round must be strictly less than codex-review round
-            # If review phase exists, all review rounds must be > all run rounds
-            if [[ "$max_run_round" -ge 0 ]] && [[ "$min_review_round" -ge 0 ]]; then
-                if [[ "$max_run_round" -ge "$min_review_round" ]]; then
-                    echo "ERROR: Inconsistent log state in session $session_name: codex-run round ($max_run_round) >= codex-review round ($min_review_round)" >&2
-                    echo ""
-                    return 1
+            else
+                if [[ "$round_num" -gt "$max_run_round" ]]; then
+                    max_run_round="$round_num"
                 fi
             fi
-        done < <(find "$loop_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null)
+
+            if [[ -z "$latest" ]] || [[ "$round_num" -gt "$latest_round" ]]; then
+                latest="$log_file"
+                latest_round="$round_num"
+            fi
+        done < <(find "$cache_dir" -maxdepth 1 \( -name 'round-*-codex-run.log' -o -name 'round-*-codex-review.log' \) -type f 2>/dev/null)
+
+        # Defensive check: codex-run round must be strictly less than codex-review round
+        # If review phase exists, all review rounds must be > all run rounds
+        if [[ "$max_run_round" -ge 0 ]] && [[ "$min_review_round" -ge 0 ]]; then
+            if [[ "$max_run_round" -ge "$min_review_round" ]]; then
+                echo "ERROR: Inconsistent log state in session $session_name: codex-run round ($max_run_round) >= codex-review round ($min_review_round)" >&2
+                echo ""
+                return 1
+            fi
+        fi
 
         echo "$latest"
     }
@@ -350,12 +341,13 @@ _humanize_monitor_codex() {
     _parse_state_md() {
         local state_file="$1"
         if [[ ! -f "$state_file" ]]; then
-            echo "N/A|N/A|N/A|N/A|N/A|N/A|false|false"
+            echo "N/A|N/A|N/A|N/A|N/A|N/A|N/A|false|false"
             return
         fi
 
         local current_round=$(grep -E "^current_round:" "$state_file" 2>/dev/null | sed 's/current_round: *//')
         local max_iterations=$(grep -E "^max_iterations:" "$state_file" 2>/dev/null | sed 's/max_iterations: *//')
+        local full_review_round=$(grep -E "^full_review_round:" "$state_file" 2>/dev/null | sed 's/full_review_round: *//')
         local codex_model=$(grep -E "^codex_model:" "$state_file" 2>/dev/null | sed 's/codex_model: *//')
         local codex_effort=$(grep -E "^codex_effort:" "$state_file" 2>/dev/null | sed 's/codex_effort: *//')
         local started_at=$(grep -E "^started_at:" "$state_file" 2>/dev/null | sed 's/started_at: *//')
@@ -363,7 +355,7 @@ _humanize_monitor_codex() {
         local ask_codex_question=$(grep -E "^ask_codex_question:" "$state_file" 2>/dev/null | sed 's/ask_codex_question: *//' | tr -d ' ')
         local review_started=$(grep -E "^review_started:" "$state_file" 2>/dev/null | sed 's/review_started: *//' | tr -d ' ')
 
-        echo "${current_round:-N/A}|${max_iterations:-N/A}|${codex_model:-N/A}|${codex_effort:-N/A}|${started_at:-N/A}|${plan_file:-N/A}|${ask_codex_question:-false}|${review_started:-false}"
+        echo "${current_round:-N/A}|${max_iterations:-N/A}|${full_review_round:-N/A}|${codex_model:-N/A}|${codex_effort:-N/A}|${started_at:-N/A}|${plan_file:-N/A}|${ask_codex_question:-false}|${review_started:-false}"
     }
 
     # Internal wrappers that call top-level functions
@@ -394,12 +386,13 @@ _humanize_monitor_codex() {
         _split_to_array state_parts "$(_parse_state_md "$state_file")"
         local current_round="${state_parts[0]}"
         local max_iterations="${state_parts[1]}"
-        local codex_model="${state_parts[2]}"
-        local codex_effort="${state_parts[3]}"
-        local started_at="${state_parts[4]}"
-        local plan_file="${state_parts[5]}"
-        local ask_codex_question="${state_parts[6]:-false}"
-        local review_started="${state_parts[7]:-false}"
+        local full_review_round="${state_parts[2]}"
+        local codex_model="${state_parts[3]}"
+        local codex_effort="${state_parts[4]}"
+        local started_at="${state_parts[5]}"
+        local plan_file="${state_parts[6]}"
+        local ask_codex_question="${state_parts[7]:-false}"
+        local review_started="${state_parts[8]:-false}"
 
         # Parse goal-tracker.md
         local -a goal_parts
@@ -422,11 +415,14 @@ _humanize_monitor_codex() {
         local git_insertions="${git_parts[4]}"
         local git_deletions="${git_parts[5]}"
 
-        # Format started_at for display
+        # Format started_at for display (convert UTC to local time)
         local start_display="$started_at"
         if [[ "$started_at" != "N/A" ]]; then
-            # Convert ISO format to more readable format
-            start_display=$(echo "$started_at" | sed 's/T/ /; s/Z/ UTC/')
+            # Convert ISO UTC format to local time
+            # Input: 2026-01-29T18:45:46Z
+            # Output: 2026-01-29 10:45:46 (local time)
+            local utc_time=$(echo "$started_at" | sed 's/T/ /; s/Z//')
+            start_display=$(date -d "$utc_time UTC" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "$started_at")
         fi
 
         # Truncate strings for display (label column is ~10 chars)
@@ -456,10 +452,14 @@ _humanize_monitor_codex() {
 
         # Move to top and draw directly (no pre-clearing to avoid flicker)
         tput cup 0 0
-        local session_basename=$(basename "$session_dir")
         printf "${bg}${bold}%-${term_width}s${reset}${clr_eol}\n" " Humanize Loop Monitor"
-        printf "${cyan}Session:${reset}  ${session_basename}    ${cyan}Started:${reset} ${start_display}${clr_eol}\n"
-        printf "${green}Round:${reset}    ${bold}${current_round}${reset} / ${max_iterations}    ${yellow}Model:${reset} ${codex_model} (${codex_effort})${clr_eol}\n"
+        printf "${cyan}Session Started:${reset} ${start_display}${clr_eol}\n"
+        # Format full_review_round display (show in parentheses if available)
+        local full_review_display=""
+        if [[ "$full_review_round" != "N/A" && -n "$full_review_round" ]]; then
+            full_review_display=" (${full_review_round})"
+        fi
+        printf "${green}Round:${reset}    ${bold}${current_round}${reset} / ${max_iterations}${full_review_display}    ${yellow}Model:${reset} ${codex_model} (${codex_effort})${clr_eol}\n"
 
         # Loop status line with color based on status
         # Colors: Active=yellow, Complete=green, Finalize=cyan, Stop states=red, Others=orange
@@ -552,12 +552,74 @@ _humanize_monitor_codex() {
         tput cup $status_bar_height 0
     }
 
+    # Check if terminal is too small for the monitor
+    # Returns 0 if OK, 1 if too small
+    _check_terminal_size() {
+        local term_height=$(tput lines)
+        local min_height=$((status_bar_height + 3))  # status bar + at least 3 lines for content
+        if [[ "$term_height" -lt "$min_height" ]]; then
+            return 1
+        fi
+        return 0
+    }
+
+    # Display terminal too small message
+    _display_terminal_too_small() {
+        local term_width=$(tput cols)
+        local term_height=$(tput lines)
+        local min_height=$((status_bar_height + 3))
+        local message="This Humanize Monitor requires at least $min_height lines to work"
+        local msg_len=${#message}
+        local center_row=$((term_height / 2))
+        local start_col=$(( (term_width - msg_len) / 2 ))
+        [[ "$start_col" -lt 0 ]] && start_col=0
+
+        # Reset scroll region and clear screen
+        printf "\033[r"
+        clear
+        tput cup $center_row $start_col
+        printf "%s" "$message"
+    }
+
+    # Update scroll region on terminal resize
+    _update_scroll_region() {
+        local new_lines=$(tput lines)
+        # Update scroll region to new terminal height
+        printf "\033[${status_bar_height};%dr" "$new_lines"
+        # Clear the log area to remove any status bar remnants
+        tput cup $status_bar_height 0
+        tput ed  # Clear from cursor to end of screen
+    }
+
+    # Get the number of lines available for log display
+    _get_log_area_height() {
+        local term_height=$(tput lines)
+        echo $((term_height - status_bar_height))
+    }
+
     # Restore terminal to normal
     _restore_terminal() {
         # Reset scroll region to full screen
         printf "\033[r"
         # Move to bottom
         tput cup $(tput lines) 0
+    }
+
+    # Display centered message in the log area (for waiting states)
+    _display_centered_message() {
+        local message="$1"
+        local term_width=$(tput cols)
+        local term_height=$(tput lines)
+        local content_height=$((term_height - status_bar_height))
+        local center_row=$((status_bar_height + content_height / 2))
+        local msg_len=${#message}
+        local start_col=$(( (term_width - msg_len) / 2 ))
+        [[ "$start_col" -lt 0 ]] && start_col=0
+
+        tput cup $status_bar_height 0
+        tput ed  # Clear log area
+        tput cup $center_row $start_col
+        printf "%s" "$message"
     }
 
     # Track PIDs for cleanup
@@ -575,7 +637,7 @@ _humanize_monitor_codex() {
 
         # Reset traps to prevent re-triggering
         # Use explicit signal numbers for better zsh compatibility
-        trap - INT TERM 2>/dev/null || true
+        trap - INT TERM WINCH 2>/dev/null || true
 
         # Kill background processes more robustly
         if [[ -n "$tail_pid" ]]; then
@@ -608,6 +670,11 @@ _humanize_monitor_codex() {
         echo "The RLCR loop may have been cancelled or the directory was deleted."
     }
 
+    # Track if resize happened (for main loop to detect)
+    # IMPORTANT: SIGWINCH handler must only set flag, not call functions that output escape sequences
+    # Otherwise it can race with _draw_status_bar and corrupt math expressions
+    local resize_needed=false
+
     # Set up signal handlers (bash/zsh compatible)
     # Use function name without quotes for zsh compatibility
     # In zsh, traps in functions are local by default when using POSIX_TRAPS option
@@ -615,14 +682,16 @@ _humanize_monitor_codex() {
         # zsh: use TRAPINT and TRAPTERM for better handling
         TRAPINT() { _cleanup; return 130; }
         TRAPTERM() { _cleanup; return 143; }
+        TRAPWINCH() { resize_needed=true; }
     else
         # bash: use standard trap
         trap '_cleanup' INT TERM
+        trap 'resize_needed=true' WINCH
     fi
 
-    # Find initial session and log file
+    # Find initial session and log file (only search within the current session)
     current_session_dir=$(_find_latest_session)
-    current_file=$(_find_latest_codex_log)
+    current_file=$(_find_latest_codex_log "$current_session_dir")
 
     # Check if we have a valid session directory
     if [[ -z "$current_session_dir" ]]; then
@@ -636,6 +705,16 @@ _humanize_monitor_codex() {
     _split_to_array state_file_info "$(_find_state_file "$current_session_dir")"
     local current_state_file="${state_file_info[0]}"
     local current_loop_status="${state_file_info[1]}"
+
+    # Check initial terminal size
+    if ! _check_terminal_size; then
+        _display_terminal_too_small
+        # Wait for resize to a larger size
+        while ! _check_terminal_size; do
+            sleep 0.5
+            [[ "$resize_needed" == "true" ]] && resize_needed=false
+        done
+    fi
 
     # Setup terminal
     _setup_terminal
@@ -663,6 +742,30 @@ _humanize_monitor_codex() {
         current_state_file="${state_file_info[0]}"
         current_loop_status="${state_file_info[1]}"
 
+        # Handle terminal resize at a safe point (before drawing)
+        if [[ "$resize_needed" == "true" ]]; then
+            resize_needed=false
+            # Check if terminal is too small
+            if ! _check_terminal_size; then
+                _display_terminal_too_small
+                # Wait for resize to a larger size
+                while [[ "$monitor_running" == "true" ]] && ! _check_terminal_size; do
+                    sleep 0.5
+                    [[ "$resize_needed" == "true" ]] && resize_needed=false
+                done
+                [[ "$monitor_running" != "true" ]] && break
+                # Terminal is now big enough, reinitialize
+                _setup_terminal
+            else
+                _update_scroll_region
+            fi
+            # Re-display recent log content after resize (fill the log area)
+            if [[ -n "$current_file" && -f "$current_file" ]]; then
+                local log_lines=$(_get_log_area_height)
+                tail -n "$log_lines" "$current_file" 2>/dev/null
+            fi
+        fi
+
         # Draw status bar (check flag before expensive operation)
         [[ "$monitor_running" != "true" ]] && break
         _draw_status_bar "$current_session_dir" "${current_file:-N/A}" "$current_loop_status"
@@ -671,23 +774,19 @@ _humanize_monitor_codex() {
         # Move cursor to scroll region
         tput cup $status_bar_height 0
 
-        # Handle case when no log file exists
+        # Handle case when no log file exists for current session
         if [[ -z "$current_file" ]]; then
-            # Render no-log message if status changed or not yet shown
+            # Render centered no-log message if status changed or not yet shown
             if [[ "$last_no_log_status" != "$current_loop_status" ]]; then
-                tput cup $status_bar_height 0
-                tput ed  # Clear scroll region
                 if [[ "$current_loop_status" == "active" ]]; then
-                    printf "\nWaiting for log file...\n"
-                    printf "Status bar will update as session progresses.\n"
+                    _display_centered_message "No Codex run or review started, please wait for the first run/review"
                 else
-                    printf "\nNo log file available for this session.\n"
-                    printf "Loop status: %s\n" "$current_loop_status"
+                    _display_centered_message "No log file available for this session (status: $current_loop_status)"
                 fi
                 last_no_log_status="$current_loop_status"
             fi
 
-            # Poll for new log files
+            # Poll for new log files (only within current session)
             while [[ "$monitor_running" == "true" ]]; do
                 sleep 0.5
                 [[ "$monitor_running" != "true" ]] && break
@@ -698,28 +797,44 @@ _humanize_monitor_codex() {
                     return 0
                 fi
 
+                # Handle terminal resize at a safe point
+                local redraw_centered_msg=false
+                if [[ "$resize_needed" == "true" ]]; then
+                    resize_needed=false
+                    redraw_centered_msg=true
+                    # Check if terminal is too small
+                    if ! _check_terminal_size; then
+                        _display_terminal_too_small
+                        # Wait for resize to a larger size
+                        while [[ "$monitor_running" == "true" ]] && ! _check_terminal_size; do
+                            sleep 0.5
+                            [[ "$resize_needed" == "true" ]] && resize_needed=false
+                        done
+                        [[ "$monitor_running" != "true" ]] && break
+                        # Terminal is now big enough, reinitialize
+                        _setup_terminal
+                    else
+                        _update_scroll_region
+                    fi
+                fi
+
                 # Update loop status and redraw status bar
                 _split_to_array state_file_info "$(_find_state_file "$current_session_dir")"
                 current_loop_status="${state_file_info[1]}"
                 _draw_status_bar "$current_session_dir" "N/A" "$current_loop_status"
                 [[ "$monitor_running" != "true" ]] && break
 
-                # Re-render no-log message if loop status changed
-                if [[ "$last_no_log_status" != "$current_loop_status" ]]; then
-                    tput cup $status_bar_height 0
-                    tput ed
+                # Re-render no-log message if loop status changed or terminal resized
+                if [[ "$last_no_log_status" != "$current_loop_status" ]] || [[ "$redraw_centered_msg" == "true" ]]; then
                     if [[ "$current_loop_status" == "active" ]]; then
-                        printf "\nWaiting for log file...\n"
-                        printf "Status bar will update as session progresses.\n"
+                        _display_centered_message "No Codex run or review started, please wait for the first run/review"
                     else
-                        printf "\nNo log file available for this session.\n"
-                        printf "Loop status: %s\n" "$current_loop_status"
+                        _display_centered_message "No log file available for this session (status: $current_loop_status)"
                     fi
                     last_no_log_status="$current_loop_status"
                 fi
 
-                # Check for new log files and session directories
-                local latest=$(_find_latest_codex_log)
+                # Check for new log files within current session only
                 local latest_session=$(_find_latest_session)
                 [[ "$monitor_running" != "true" ]] && break
 
@@ -728,7 +843,7 @@ _humanize_monitor_codex() {
                     if [[ -n "$latest_session" ]]; then
                         # Current session deleted but another exists - switch to it
                         current_session_dir="$latest_session"
-                        current_file="$latest"
+                        current_file=$(_find_latest_codex_log "$current_session_dir")
                         last_no_log_status=""  # Reset to re-render status for new session
                         tput cup $status_bar_height 0
                         tput ed
@@ -738,15 +853,13 @@ _humanize_monitor_codex() {
                             last_size=0
                             break
                         else
-                            printf "==> Waiting for log file...\n\n"
+                            _display_centered_message "No Codex run or review started, please wait for the first run/review"
                         fi
                         continue
                     else
                         # No sessions available - wait for new ones
                         last_no_log_status=""  # Reset to re-render status
-                        tput cup $status_bar_height 0
-                        tput ed
-                        printf "\n==> Session directory deleted, waiting for new sessions...\n"
+                        _display_centered_message "Session directory deleted, waiting for new sessions..."
                         current_session_dir=""
                         current_file=""
                         continue
@@ -759,9 +872,12 @@ _humanize_monitor_codex() {
                     last_no_log_status=""  # Reset to re-render status for new session
                 fi
 
+                # Check for log files within the current session only
+                local latest=$(_find_latest_codex_log "$current_session_dir")
+                [[ "$monitor_running" != "true" ]] && break
+
                 if [[ -n "$latest" ]]; then
                     current_file="$latest"
-                    current_session_dir="$latest_session"
                     last_no_log_status=""  # Reset for next no-log scenario
                     tput cup $status_bar_height 0
                     tput ed
@@ -776,9 +892,10 @@ _humanize_monitor_codex() {
         # Get initial file size
         last_size=$(_get_file_size "$current_file")
 
-        # Show existing content (last 50 lines)
+        # Show existing content (fill the log area)
         [[ "$monitor_running" != "true" ]] && break
-        tail -n 50 "$current_file" 2>/dev/null
+        local log_lines=$(_get_log_area_height)
+        tail -n "$log_lines" "$current_file" 2>/dev/null
 
         # Incremental monitoring loop
         while [[ "$monitor_running" == "true" ]]; do
@@ -789,6 +906,30 @@ _humanize_monitor_codex() {
             if [[ ! -d "$loop_dir" ]]; then
                 _graceful_stop ".humanize/rlcr directory no longer exists"
                 return 0
+            fi
+
+            # Handle terminal resize at a safe point
+            if [[ "$resize_needed" == "true" ]]; then
+                resize_needed=false
+                # Check if terminal is too small
+                if ! _check_terminal_size; then
+                    _display_terminal_too_small
+                    # Wait for resize to a larger size
+                    while [[ "$monitor_running" == "true" ]] && ! _check_terminal_size; do
+                        sleep 0.5
+                        [[ "$resize_needed" == "true" ]] && resize_needed=false
+                    done
+                    [[ "$monitor_running" != "true" ]] && break
+                    # Terminal is now big enough, reinitialize
+                    _setup_terminal
+                else
+                    _update_scroll_region
+                fi
+                # Re-display recent log content after resize (fill the log area)
+                if [[ -n "$current_file" && -f "$current_file" ]]; then
+                    local log_lines=$(_get_log_area_height)
+                    tail -n "$log_lines" "$current_file" 2>/dev/null
+                fi
             fi
 
             # Update loop status
@@ -821,9 +962,7 @@ _humanize_monitor_codex() {
             fi
             [[ "$monitor_running" != "true" ]] && break
 
-            # Check for newer log files and session directories
-            local latest=$(_find_latest_codex_log)
-            [[ "$monitor_running" != "true" ]] && break
+            # Check for newer session directories first
             local latest_session=$(_find_latest_session)
             [[ "$monitor_running" != "true" ]] && break
 
@@ -836,7 +975,7 @@ _humanize_monitor_codex() {
                 if [[ -n "$latest_session" ]]; then
                     # Session or log deleted but another session exists - switch to it
                     current_session_dir="$latest_session"
-                    current_file="$latest"
+                    current_file=$(_find_latest_codex_log "$current_session_dir")
                     tput cup $status_bar_height 0
                     tput ed
                     if [[ "$session_was_deleted" == "true" ]]; then
@@ -847,7 +986,7 @@ _humanize_monitor_codex() {
                     if [[ -n "$current_file" ]]; then
                         printf "==> Log: %s\n\n" "$current_file"
                     else
-                        printf "==> Waiting for log file...\n\n"
+                        _display_centered_message "No Codex run or review started, please wait for the first run/review"
                         last_no_log_status=""  # Reset to ensure no-log branch re-renders
                     fi
                     last_size=0
@@ -857,9 +996,7 @@ _humanize_monitor_codex() {
                     current_session_dir=""
                     current_file=""
                     last_no_log_status=""  # Reset to re-render status
-                    tput cup $status_bar_height 0
-                    tput ed
-                    printf "\n==> Session/log deleted, waiting for new sessions...\n"
+                    _display_centered_message "Session/log deleted, waiting for new sessions..."
                     break
                 fi
             fi
@@ -868,27 +1005,34 @@ _humanize_monitor_codex() {
             if [[ -n "$latest_session" && "$latest_session" != "$current_session_dir" ]]; then
                 # New session found - switch to it
                 current_session_dir="$latest_session"
+                local new_session_log=$(_find_latest_codex_log "$current_session_dir")
 
                 # Clear scroll region and notify
                 tput cup $status_bar_height 0
                 tput ed
                 printf "\n==> Switching to newer session: %s\n" "$(basename "$latest_session")"
 
-                if [[ -n "$latest" ]]; then
+                if [[ -n "$new_session_log" ]]; then
                     # New session has a log file
-                    current_file="$latest"
+                    current_file="$new_session_log"
                     printf "==> Log: %s\n\n" "$current_file"
                 else
                     # New session has no log file yet - let outer loop handle it
                     current_file=""
                     last_no_log_status=""  # Reset to ensure no-log branch re-renders
-                    printf "==> Waiting for log file...\n\n"
+                    _display_centered_message "No Codex run or review started, please wait for the first run/review"
                 fi
 
                 # Reset for new session
                 last_size=0
                 break
-            elif [[ "$latest" != "$current_file" && -n "$latest" ]]; then
+            fi
+
+            # Check for newer log files within current session
+            local latest=$(_find_latest_codex_log "$current_session_dir")
+            [[ "$monitor_running" != "true" ]] && break
+
+            if [[ "$latest" != "$current_file" && -n "$latest" ]]; then
                 # Same session, but new log file (e.g., new round)
                 current_file="$latest"
 
@@ -907,9 +1051,9 @@ _humanize_monitor_codex() {
     # Reset trap handlers (zsh and bash)
     if [[ -n "${ZSH_VERSION:-}" ]]; then
         # zsh: undefine the TRAP* functions
-        unfunction TRAPINT TRAPTERM 2>/dev/null || true
+        unfunction TRAPINT TRAPTERM TRAPWINCH 2>/dev/null || true
     else
-        trap - INT TERM
+        trap - INT TERM WINCH
     fi
 }
 
