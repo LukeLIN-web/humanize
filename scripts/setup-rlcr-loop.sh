@@ -931,8 +931,8 @@ Before starting implementation, you MUST initialize the Goal Tracker:
 
 ## Implementation Plan
 
-For all tasks that need to be completed, please create Todos to track each item in order of importance.
-You are strictly prohibited from only addressing the most important issues - you MUST create Todos for ALL discovered issues and attempt to resolve each one.
+For all tasks that need to be completed, please use the Task system (TaskCreate, TaskUpdate, TaskList) to track each item in order of importance.
+You are strictly prohibited from only addressing the most important issues - you MUST create Tasks for ALL discovered issues and attempt to resolve each one.
 
 EOF
 
