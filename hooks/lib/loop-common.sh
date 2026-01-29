@@ -241,7 +241,7 @@ parse_state_file() {
     STATE_MAX_ITERATIONS="${STATE_MAX_ITERATIONS:-10}"
     STATE_PUSH_EVERY_ROUND="${STATE_PUSH_EVERY_ROUND:-false}"
     STATE_FULL_REVIEW_ROUND="${STATE_FULL_REVIEW_ROUND:-5}"
-    STATE_ASK_CODEX_QUESTION="${STATE_ASK_CODEX_QUESTION:-false}"
+    STATE_ASK_CODEX_QUESTION="${STATE_ASK_CODEX_QUESTION:-true}"
     # STATE_REVIEW_STARTED left as-is (empty if missing, to allow schema validation)
 
     return 0
@@ -330,7 +330,7 @@ parse_state_file_strict() {
     # Apply defaults for optional fields only
     STATE_PUSH_EVERY_ROUND="${STATE_PUSH_EVERY_ROUND:-false}"
     STATE_FULL_REVIEW_ROUND="${STATE_FULL_REVIEW_ROUND:-5}"
-    STATE_ASK_CODEX_QUESTION="${STATE_ASK_CODEX_QUESTION:-false}"
+    STATE_ASK_CODEX_QUESTION="${STATE_ASK_CODEX_QUESTION:-true}"
 
     return 0
 }

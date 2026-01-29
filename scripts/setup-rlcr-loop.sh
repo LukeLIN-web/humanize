@@ -44,7 +44,7 @@ BASE_BRANCH=""
 FULL_REVIEW_ROUND="$DEFAULT_FULL_REVIEW_ROUND"
 SKIP_IMPL="false"
 SKIP_IMPL_NO_PLAN="false"
-ASK_CODEX_QUESTION="false"
+ASK_CODEX_QUESTION="true"
 
 show_help() {
     cat << 'HELP_EOF'
@@ -74,8 +74,12 @@ OPTIONS:
                        Full Alignment Checks occur at rounds N-1, 2N-1, 3N-1, etc.
   --skip-impl          Skip implementation phase and go directly to code review
                        Plan file is optional when using this flag
-  --ask-codex-question When Codex finds Open Questions, require Claude to use
-                       AskUserQuestion tool to clarify before fixing other issues
+  --claude-answer-codex
+                       When Codex finds Open Questions, let Claude answer them
+                       directly instead of asking user via AskUserQuestion.
+                       NOT RECOMMENDED: Open Questions usually indicate gaps in
+                       your plan that deserve human clarification. By default,
+                       Claude asks user for clarification, which is preferred.
   -h, --help           Show this help message
 
 DESCRIPTION:
@@ -208,8 +212,8 @@ while [[ $# -gt 0 ]]; do
             SKIP_IMPL="true"
             shift
             ;;
-        --ask-codex-question)
-            ASK_CODEX_QUESTION="true"
+        --claude-answer-codex)
+            ASK_CODEX_QUESTION="false"
             shift
             ;;
         -*)
@@ -1023,7 +1027,7 @@ Codex Model: $CODEX_MODEL
 Codex Effort: $CODEX_EFFORT
 Codex Timeout: ${CODEX_TIMEOUT}s
 Full Review Round: $FULL_REVIEW_ROUND (Full Alignment Checks at rounds $((FULL_REVIEW_ROUND - 1)), $((2 * FULL_REVIEW_ROUND - 1)), $((3 * FULL_REVIEW_ROUND - 1)), ...)
-Ask Codex Question: $ASK_CODEX_QUESTION
+Ask User for Codex Questions: $ASK_CODEX_QUESTION
 Loop Directory: $LOOP_DIR
 
 The loop is now active. When you try to exit:
