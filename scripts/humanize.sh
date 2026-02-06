@@ -9,6 +9,12 @@ if [[ -f "$HUMANIZE_SCRIPT_DIR/lib/monitor-common.sh" ]]; then
     source "$HUMANIZE_SCRIPT_DIR/lib/monitor-common.sh"
 fi
 
+# Source shared loop library (provides DEFAULT_CODEX_MODEL and other constants)
+HUMANIZE_HOOKS_LIB_DIR="$(cd "$HUMANIZE_SCRIPT_DIR/../hooks/lib" && pwd)"
+if [[ -f "$HUMANIZE_HOOKS_LIB_DIR/loop-common.sh" ]]; then
+    source "$HUMANIZE_HOOKS_LIB_DIR/loop-common.sh"
+fi
+
 # ========================================
 # Public helper functions (can be called directly for testing)
 # ========================================
@@ -1229,7 +1235,7 @@ _humanize_monitor_pr() {
         start_branch=${start_branch:-"?"}
         configured_bots=${configured_bots:-"none"}
         active_bots=${active_bots:-"none"}
-        codex_model=${codex_model:-"gpt-5.2-codex"}
+        codex_model=${codex_model:-"$DEFAULT_CODEX_MODEL"}
         codex_effort=${codex_effort:-"medium"}
         started_at=${started_at:-"N/A"}
 

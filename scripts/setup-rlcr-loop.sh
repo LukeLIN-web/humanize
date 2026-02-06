@@ -14,9 +14,7 @@ set -euo pipefail
 # Default Configuration
 # ========================================
 
-# Default Codex model and reasoning effort
-DEFAULT_CODEX_MODEL="gpt-5.2-codex"
-DEFAULT_CODEX_EFFORT="high"
+# DEFAULT_CODEX_MODEL and DEFAULT_CODEX_EFFORT are provided by loop-common.sh
 DEFAULT_CODEX_TIMEOUT=5400
 DEFAULT_MAX_ITERATIONS=42
 DEFAULT_FULL_REVIEW_ROUND=5
@@ -27,6 +25,10 @@ GIT_TIMEOUT=30
 # Source portable timeout wrapper
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 source "$SCRIPT_DIR/portable-timeout.sh"
+
+# Source shared loop library (provides DEFAULT_CODEX_MODEL and other constants)
+HOOKS_LIB_DIR="$(cd "$SCRIPT_DIR/../hooks/lib" && pwd)"
+source "$HOOKS_LIB_DIR/loop-common.sh"
 
 # ========================================
 # Parse Arguments
@@ -62,7 +64,7 @@ OPTIONS:
   --track-plan-file    Indicate plan file should be tracked in git (must be clean)
   --max <N>            Maximum iterations before auto-stop (default: 42)
   --codex-model <MODEL:EFFORT>
-                       Codex model and reasoning effort (default: gpt-5.2-codex:high)
+                       Codex model and reasoning effort (default: gpt-5.3-codex:xhigh)
   --codex-timeout <SECONDS>
                        Timeout for each Codex review in seconds (default: 5400)
   --push-every-round   Require git push after each round (default: commits stay local)
@@ -103,7 +105,7 @@ DESCRIPTION:
 EXAMPLES:
   /humanize:start-rlcr-loop docs/feature-plan.md
   /humanize:start-rlcr-loop docs/impl.md --max 20
-  /humanize:start-rlcr-loop plan.md --codex-model gpt-5.2-codex:high
+  /humanize:start-rlcr-loop plan.md --codex-model gpt-5.3-codex:xhigh
   /humanize:start-rlcr-loop plan.md --codex-timeout 7200  # 2 hour timeout
 
 STOPPING:
@@ -240,9 +242,7 @@ done
 
 PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 
-# Source loop-common.sh for find_active_loop and find_active_pr_loop functions
-HOOKS_LIB_DIR="$(cd "$SCRIPT_DIR/../hooks/lib" && pwd)"
-source "$HOOKS_LIB_DIR/loop-common.sh"
+# loop-common.sh already sourced above (provides find_active_loop, find_active_pr_loop, etc.)
 
 # ========================================
 # Mutual Exclusion Check

@@ -14,7 +14,7 @@ set -euo pipefail
 # Default Configuration
 # ========================================
 
-# Default Codex model and reasoning effort (different from RLCR - uses medium instead of high)
+# Override defaults before sourcing loop-common.sh (PR loop uses different model/effort than RLCR)
 DEFAULT_CODEX_MODEL="gpt-5.2-codex"
 DEFAULT_CODEX_EFFORT="medium"
 DEFAULT_CODEX_TIMEOUT=900
@@ -34,9 +34,10 @@ GH_TIMEOUT=60
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 source "$SCRIPT_DIR/portable-timeout.sh"
 
-# Source template loader
+# Source template loader and shared loop library (provides DEFAULT_CODEX_MODEL and other constants)
 HOOKS_LIB_DIR="$(cd "$SCRIPT_DIR/../hooks/lib" && pwd)"
 source "$HOOKS_LIB_DIR/template-loader.sh"
+source "$HOOKS_LIB_DIR/loop-common.sh"
 
 # Initialize template directory
 TEMPLATE_DIR="${TEMPLATE_DIR:-$(get_template_dir "$HOOKS_LIB_DIR")}"
@@ -207,8 +208,7 @@ fi
 
 PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 
-# Source loop-common.sh for find_active_loop, find_active_pr_loop, and helper functions
-source "$HOOKS_LIB_DIR/loop-common.sh"
+# loop-common.sh already sourced above (provides find_active_loop, find_active_pr_loop, etc.)
 
 # Build dynamic mention string from active bots (using shared helper)
 BOT_MENTION_STRING=$(build_bot_mention_string "${ACTIVE_BOTS_ARRAY[@]}")

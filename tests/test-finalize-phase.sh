@@ -191,8 +191,8 @@ setup_loop_dir() {
 ---
 current_round: $round
 max_iterations: $max_iter
-codex_model: gpt-5.2-codex
-codex_effort: high
+codex_model: gpt-5.3-codex
+codex_effort: xhigh
 codex_timeout: 5400
 push_every_round: false
 plan_file: plans/test-plan.md

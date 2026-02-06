@@ -71,7 +71,7 @@ cat > "$TEST_PROJECT/.humanize/rlcr/2026-01-16_10-00-00/state.md" << 'STATE'
 current_round: 1
 max_iterations: 5
 codex_model: o3
-codex_effort: high
+codex_effort: xhigh
 started_at: 2026-01-16T10:00:00Z
 plan_file: temp/plan.md
 plan_tracked: false
@@ -250,7 +250,7 @@ else
 current_round: 1
 max_iterations: 5
 codex_model: o3
-codex_effort: high
+codex_effort: xhigh
 started_at: 2026-01-16T11:00:00Z
 plan_file: temp/plan.md
 plan_tracked: false
@@ -389,7 +389,7 @@ cat > "$TEST_PROJECT_SIGINT/.humanize/rlcr/2026-01-16_12-00-00/state.md" << 'STA
 current_round: 1
 max_iterations: 5
 codex_model: o3
-codex_effort: high
+codex_effort: xhigh
 started_at: 2026-01-16T12:00:00Z
 plan_file: temp/plan.md
 plan_tracked: false
@@ -568,7 +568,7 @@ else
 current_round: 1
 max_iterations: 5
 codex_model: o3
-codex_effort: high
+codex_effort: xhigh
 started_at: 2026-01-16T13:00:00Z
 plan_file: temp/plan.md
 plan_tracked: false

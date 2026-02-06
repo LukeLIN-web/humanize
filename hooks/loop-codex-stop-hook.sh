@@ -18,8 +18,7 @@ set -euo pipefail
 # Default Configuration
 # ========================================
 
-DEFAULT_CODEX_MODEL="gpt-5.2-codex"
-DEFAULT_CODEX_EFFORT="high"
+# DEFAULT_CODEX_MODEL and DEFAULT_CODEX_EFFORT are provided by loop-common.sh (sourced below)
 DEFAULT_CODEX_TIMEOUT=5400
 
 # ========================================

@@ -28,6 +28,11 @@ readonly FIELD_REVIEW_STARTED="review_started"
 readonly FIELD_FULL_REVIEW_ROUND="full_review_round"
 readonly FIELD_ASK_CODEX_QUESTION="ask_codex_question"
 
+# Default Codex configuration (single source of truth - all scripts reference this)
+# Both use :- so scripts can override before sourcing (e.g. PR loop sets different model/effort)
+DEFAULT_CODEX_MODEL="${DEFAULT_CODEX_MODEL:-gpt-5.3-codex}"
+DEFAULT_CODEX_EFFORT="${DEFAULT_CODEX_EFFORT:-xhigh}"
+
 # Codex review markers
 readonly MARKER_COMPLETE="COMPLETE"
 readonly MARKER_STOP="STOP"
