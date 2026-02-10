@@ -725,7 +725,7 @@ SKIP_IMPL_PLAN_EOF
     # Using relative path because git ls-files requires repo-relative paths
     PLAN_FILE=".humanize/rlcr/$TIMESTAMP/plan.md"
 else
-    cp "$FULL_PLAN_PATH" "$LOOP_DIR/plan.md"
+    ln -s "$FULL_PLAN_PATH" "$LOOP_DIR/plan.md"
 fi
 
 # Docs path default

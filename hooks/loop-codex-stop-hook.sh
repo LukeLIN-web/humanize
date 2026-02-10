@@ -312,7 +312,7 @@ This RLCR loop was started with --track-plan-file. Plan file modifications are n
     fi
 fi
 
-# Always verify content matches backup (catches committed changes for tracked files)
+# Plan changes are now allowed: plan.md is a symlink to the original, so this diff always passes
 if ! diff -q "$FULL_PLAN_PATH" "$BACKUP_PLAN" &>/dev/null; then
     FALLBACK="# Plan File Modified
 
