@@ -86,20 +86,20 @@ else
     fail "Many sessions detection" "$TEST_DIR/rlcr/2026-01-15_10-00-00" "$RESULT"
 fi
 
-# Test 4: Only newest directory is checked
+# Test 4: Only newest directory is checked (zombie-loop protection)
 echo ""
 echo "Test 4: Only newest directory is checked (older sessions with state.md ignored)"
 rm -rf "$TEST_DIR/rlcr"
 mkdir -p "$TEST_DIR/rlcr/2026-01-15_10-00-00"
 mkdir -p "$TEST_DIR/rlcr/2026-01-17_10-00-00"
 touch "$TEST_DIR/rlcr/2026-01-15_10-00-00/state.md"
-# Newest directory has no state.md
+# Newest directory has no state.md -- older stale loop must NOT be revived
 
 RESULT=$(find_active_loop "$TEST_DIR/rlcr")
 if [[ -z "$RESULT" ]]; then
-    pass "Returns empty when newest session has no state.md"
+    pass "Zombie-loop protection: returns empty when newest dir has no state.md"
 else
-    fail "Newest-only check" "empty" "$RESULT"
+    fail "Zombie-loop protection" "empty" "$RESULT"
 fi
 
 # Test 5: Session with both state.md and finalize-state.md
@@ -293,10 +293,10 @@ mkdir -p "$TEST_DIR/rlcr/2026-01-17_10-00-00"
 touch "$TEST_DIR/rlcr/2026-01-15_10-00-00/state.md"
 touch "$TEST_DIR/rlcr/2026-01-17_10-00-00/complete-state.md"
 
-# Newest is finished, older has state.md - should return empty (only checks newest)
+# Newest is finished, older has state.md -- zombie-loop protection returns empty
 RESULT=$(find_active_loop "$TEST_DIR/rlcr")
 if [[ -z "$RESULT" ]]; then
-    pass "Returns empty when newest session is finished"
+    pass "Zombie-loop protection: returns empty when newest dir is finished"
 else
     fail "Newest finished" "empty" "$RESULT"
 fi
