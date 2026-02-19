@@ -1628,13 +1628,26 @@ fi
 echo "$GOAL_UPDATE_REQUEST" >> "$NEXT_PROMPT_FILE"
 
 # Add agent-teams continuation instructions (only during implementation phase, not review phase)
+# Loads both continuation header and shared core template for full team leader guidance
 if [[ "$AGENT_TEAMS" == "true" ]] && [[ "$REVIEW_STARTED" != "true" ]]; then
     AGENT_TEAMS_CONTINUE=$(load_template "$TEMPLATE_DIR" "claude/agent-teams-continue.md" 2>/dev/null)
-    if [[ -z "$AGENT_TEAMS_CONTINUE" ]]; then
-        AGENT_TEAMS_CONTINUE="Continue using **Agent Teams mode**. You are the team leader - split remaining work among team members and coordinate their efforts. Do not do implementation work yourself."
+    AGENT_TEAMS_CORE=$(load_template "$TEMPLATE_DIR" "claude/agent-teams-core.md" 2>/dev/null)
+    if [[ -n "$AGENT_TEAMS_CONTINUE" ]] && [[ -n "$AGENT_TEAMS_CORE" ]]; then
+        echo "" >> "$NEXT_PROMPT_FILE"
+        echo "$AGENT_TEAMS_CONTINUE" >> "$NEXT_PROMPT_FILE"
+        echo "" >> "$NEXT_PROMPT_FILE"
+        echo "$AGENT_TEAMS_CORE" >> "$NEXT_PROMPT_FILE"
+    else
+        # Fallback if templates are missing
+        cat >> "$NEXT_PROMPT_FILE" << 'AGENT_TEAMS_FALLBACK_EOF'
+
+## Agent Teams Continuation
+
+Continue using **Agent Teams mode** as the **Team Leader**.
+Split remaining work among team members and coordinate their efforts.
+Do NOT do implementation work yourself - delegate all coding to team members.
+AGENT_TEAMS_FALLBACK_EOF
     fi
-    echo "" >> "$NEXT_PROMPT_FILE"
-    echo "$AGENT_TEAMS_CONTINUE" >> "$NEXT_PROMPT_FILE"
 fi
 
 # Build system message

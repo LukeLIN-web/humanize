@@ -295,20 +295,41 @@ else
 fi
 
 # ========================================
-# Test: agent-teams prompt template file exists
+# Test: agent-teams prompt template files exist
 # ========================================
 
 TEMPLATE_FILE="$SCRIPT_DIR/../prompt-template/claude/agent-teams-instructions.md"
 if [[ -f "$TEMPLATE_FILE" ]]; then
-    # Check it has meaningful content (at least 100 bytes)
     FILE_SIZE=$(wc -c < "$TEMPLATE_FILE")
-    if [[ $FILE_SIZE -ge 100 ]]; then
+    if [[ $FILE_SIZE -ge 50 ]]; then
         pass "agent-teams-instructions.md template exists with content"
     else
-        fail "agent-teams-instructions.md template exists with content" ">=100 bytes" "$FILE_SIZE bytes"
+        fail "agent-teams-instructions.md template exists with content" ">=50 bytes" "$FILE_SIZE bytes"
     fi
 else
     skip "agent-teams-instructions.md template exists with content" "template file not yet created"
+fi
+
+# ========================================
+# Test: agent-teams core template file exists (shared guidelines)
+# ========================================
+
+CORE_TEMPLATE="$SCRIPT_DIR/../prompt-template/claude/agent-teams-core.md"
+if [[ -f "$CORE_TEMPLATE" ]]; then
+    FILE_SIZE=$(wc -c < "$CORE_TEMPLATE")
+    if [[ $FILE_SIZE -ge 500 ]]; then
+        pass "agent-teams-core.md template exists with content"
+    else
+        fail "agent-teams-core.md template exists with content" ">=500 bytes" "$FILE_SIZE bytes"
+    fi
+    # Verify core contains essential team leader guidance
+    if grep -q "Your Role" "$CORE_TEMPLATE" && grep -q "Guidelines" "$CORE_TEMPLATE" && grep -q "Important" "$CORE_TEMPLATE"; then
+        pass "agent-teams-core.md contains role, guidelines, and important sections"
+    else
+        fail "agent-teams-core.md contains role, guidelines, and important sections" "all sections present" "missing sections"
+    fi
+else
+    skip "agent-teams-core.md template exists with content" "template file not yet created"
 fi
 
 # ========================================
@@ -318,10 +339,16 @@ fi
 CONTINUE_TEMPLATE="$SCRIPT_DIR/../prompt-template/claude/agent-teams-continue.md"
 if [[ -f "$CONTINUE_TEMPLATE" ]]; then
     FILE_SIZE=$(wc -c < "$CONTINUE_TEMPLATE")
-    if [[ $FILE_SIZE -ge 50 ]]; then
+    if [[ $FILE_SIZE -ge 200 ]]; then
         pass "agent-teams-continue.md template exists with content"
     else
-        fail "agent-teams-continue.md template exists with content" ">=50 bytes" "$FILE_SIZE bytes"
+        fail "agent-teams-continue.md template exists with content" ">=200 bytes" "$FILE_SIZE bytes"
+    fi
+    # Verify continuation template has continuation-specific context
+    if grep -q "Continuation Context" "$CONTINUE_TEMPLATE"; then
+        pass "agent-teams-continue.md contains continuation-specific guidance"
+    else
+        fail "agent-teams-continue.md contains continuation-specific guidance" "Continuation Context section" "not found"
     fi
 else
     skip "agent-teams-continue.md template exists with content" "template file not yet created"

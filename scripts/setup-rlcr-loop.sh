@@ -999,12 +999,15 @@ EOF
 # Append plan content directly (avoids command substitution size limits for large files)
 cat "$LOOP_DIR/plan.md" >> "$LOOP_DIR/round-0-prompt.md"
 
-# Inject agent-teams instructions if enabled
+# Inject agent-teams instructions if enabled (header + shared core)
 if [[ "$AGENT_TEAMS" == "true" ]]; then
-    AGENT_TEAMS_TEMPLATE="$TEMPLATE_DIR/claude/agent-teams-instructions.md"
-    if [[ -f "$AGENT_TEAMS_TEMPLATE" ]]; then
+    AGENT_TEAMS_HEADER="$TEMPLATE_DIR/claude/agent-teams-instructions.md"
+    AGENT_TEAMS_CORE="$TEMPLATE_DIR/claude/agent-teams-core.md"
+    if [[ -f "$AGENT_TEAMS_HEADER" ]] && [[ -f "$AGENT_TEAMS_CORE" ]]; then
         echo "" >> "$LOOP_DIR/round-0-prompt.md"
-        cat "$AGENT_TEAMS_TEMPLATE" >> "$LOOP_DIR/round-0-prompt.md"
+        cat "$AGENT_TEAMS_HEADER" >> "$LOOP_DIR/round-0-prompt.md"
+        echo "" >> "$LOOP_DIR/round-0-prompt.md"
+        cat "$AGENT_TEAMS_CORE" >> "$LOOP_DIR/round-0-prompt.md"
     else
         cat >> "$LOOP_DIR/round-0-prompt.md" << 'AGENT_TEAMS_EOF'
 
