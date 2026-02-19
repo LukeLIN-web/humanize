@@ -1,8 +1,11 @@
 #!/bin/bash
 #
-# Run all test suites for the Humanize plugin
+# Run all test suites for the Humanize plugin (parallel execution)
 #
 # Usage: ./tests/run-all-tests.sh
+#
+# Each test suite runs in its own isolated temp directory, so parallel
+# execution is safe with no shared state or resource contention.
 #
 # Exit codes:
 #   0 - All tests passed
@@ -25,11 +28,7 @@ echo "Running All Humanize Plugin Tests"
 echo "========================================"
 echo ""
 
-TOTAL_PASSED=0
-TOTAL_FAILED=0
-FAILED_SUITES=()
-
-# Test suites to run (in order)
+# Test suites to run
 TEST_SUITES=(
     "test-template-loader.sh"
     "test-bash-validator-patterns.sh"
@@ -48,9 +47,12 @@ TEST_SUITES=(
     "test-humanize-escape.sh"
     "test-zsh-monitor-safety.sh"
     "test-monitor-runtime.sh"
-    "test-monitor-e2e-real.sh"
+    "test-monitor-e2e-deletion.sh"
+    "test-monitor-e2e-sigint.sh"
     "test-gen-plan.sh"
-    "test-pr-loop.sh"
+    "test-pr-loop-1-scripts.sh"
+    "test-pr-loop-2-hooks.sh"
+    "test-pr-loop-3-stophook.sh"
     "test-pr-loop-system.sh"
     # Session ID and Agent Teams tests
     "test-session-id.sh"
@@ -72,7 +74,8 @@ TEST_SUITES=(
     "robustness/test-hook-system-robustness.sh"
     "robustness/test-template-error-robustness.sh"
     "robustness/test-state-transition-robustness.sh"
-    "robustness/test-pr-loop-api-robustness.sh"
+    "robustness/test-pr-loop-api-fetch.sh"
+    "robustness/test-pr-loop-api-poll.sh"
 )
 
 # Tests that must be run with zsh (not bash)
@@ -80,49 +83,93 @@ ZSH_TESTS=(
     "test-zsh-monitor-safety.sh"
 )
 
+# Temp directory for per-suite output files
+OUTPUT_DIR=$(mktemp -d)
+trap "rm -rf $OUTPUT_DIR" EXIT
+
+# Check if a suite needs zsh
+needs_zsh() {
+    local suite="$1"
+    for zsh_test in "${ZSH_TESTS[@]}"; do
+        if [[ "$suite" == "$zsh_test" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Format milliseconds as human-readable duration
+format_ms() {
+    local ms="$1"
+    local s=$((ms / 1000))
+    local frac=$(( (ms % 1000) / 100 ))  # tenths of a second
+    echo "${s}.${frac}s"
+}
+
+# Launch all test suites in parallel
+declare -A PIDS          # suite -> PID
+declare -A SKIPPED       # suite -> reason
+
 for suite in "${TEST_SUITES[@]}"; do
     suite_path="$SCRIPT_DIR/$suite"
+    safe_name="$(echo "$suite" | tr '/' '_')"
+    out_file="$OUTPUT_DIR/${safe_name}.out"
+    exit_file="$OUTPUT_DIR/${safe_name}.exit"
+    time_file="$OUTPUT_DIR/${safe_name}.time"
 
     if [[ ! -f "$suite_path" ]]; then
-        echo -e "${YELLOW}SKIP${NC}: $suite (not found)"
+        SKIPPED["$suite"]="not found"
         continue
     fi
 
-    # Check if this test needs to run under zsh
-    needs_zsh=false
-    for zsh_test in "${ZSH_TESTS[@]}"; do
-        if [[ "$suite" == "$zsh_test" ]]; then
-            needs_zsh=true
-            break
-        fi
-    done
-
-    if [[ "$needs_zsh" == "true" ]]; then
-        echo -e "${BOLD}Running: $suite (zsh)${NC}"
-    else
-        echo -e "${BOLD}Running: $suite${NC}"
-    fi
-    echo "----------------------------------------"
-
-    # Run the test suite and capture output
-    set +e
-    if [[ "$needs_zsh" == "true" ]]; then
-        # Run zsh tests with zsh interpreter
-        if command -v zsh &>/dev/null; then
-            output=$(zsh "$suite_path" 2>&1)
-            exit_code=$?
-        else
-            echo -e "${YELLOW}SKIP${NC}: $suite (zsh not available)"
+    if needs_zsh "$suite"; then
+        if ! command -v zsh &>/dev/null; then
+            SKIPPED["$suite"]="zsh not available"
             continue
         fi
+        (
+            t_start=$(date +%s%3N)
+            zsh "$suite_path" >"$out_file" 2>&1
+            echo $? >"$exit_file"
+            echo $(( $(date +%s%3N) - t_start )) >"$time_file"
+        ) &
     else
-        output=$("$suite_path" 2>&1)
-        exit_code=$?
+        (
+            t_start=$(date +%s%3N)
+            "$suite_path" >"$out_file" 2>&1
+            echo $? >"$exit_file"
+            echo $(( $(date +%s%3N) - t_start )) >"$time_file"
+        ) &
     fi
-    set -e
+    PIDS["$suite"]=$!
+done
+
+# Wait for all and collect results
+TOTAL_PASSED=0
+TOTAL_FAILED=0
+FAILED_SUITES=()
+# Sortable file: elapsed_ms<TAB>display_line
+SORT_FILE="$OUTPUT_DIR/sortable.txt"
+: > "$SORT_FILE"
+
+esc=$'\033'
+for suite in "${TEST_SUITES[@]}"; do
+    [[ -n "${SKIPPED[$suite]+x}" ]] && continue
+
+    pid="${PIDS[$suite]}"
+    wait "$pid" 2>/dev/null
+
+    safe_name="$(echo "$suite" | tr '/' '_')"
+    out_file="$OUTPUT_DIR/${safe_name}.out"
+    exit_file="$OUTPUT_DIR/${safe_name}.exit"
+    time_file="$OUTPUT_DIR/${safe_name}.time"
+
+    exit_code=$(cat "$exit_file" 2>/dev/null || echo "1")
+    output=$(cat "$out_file" 2>/dev/null || echo "")
+    elapsed_ms=$(cat "$time_file" 2>/dev/null || echo "0")
+    elapsed_display=$(format_ms "$elapsed_ms")
 
     # Strip ANSI escape codes and extract pass/fail counts
-    esc=$'\033'
     output_stripped=$(echo "$output" | sed "s/${esc}\\[[0-9;]*m//g")
     passed=$(echo "$output_stripped" | grep -oE 'Passed:[[:space:]]*[0-9]+' | grep -oE '[0-9]+$' | tail -1 || echo "0")
     failed=$(echo "$output_stripped" | grep -oE 'Failed:[[:space:]]*[0-9]+' | grep -oE '[0-9]+$' | tail -1 || echo "0")
@@ -131,16 +178,30 @@ for suite in "${TEST_SUITES[@]}"; do
     TOTAL_FAILED=$((TOTAL_FAILED + failed))
 
     if [[ $exit_code -ne 0 ]] || [[ "$failed" -gt 0 ]]; then
-        echo -e "${RED}FAILED${NC}: $suite (exit code: $exit_code, failed: $failed)"
         FAILED_SUITES+=("$suite")
-        # Show the output for failed suites
-        echo "$output" | tail -30
+        line=$(echo -e "${RED}FAILED${NC}: $suite (exit code: $exit_code, failed: $failed, ${elapsed_display})")
+        printf '%d\t%s\n' "$elapsed_ms" "$line" >> "$SORT_FILE"
+        # Save failure detail for later display
+        echo "$output" | tail -30 > "$OUTPUT_DIR/${safe_name}.detail"
     else
-        echo -e "${GREEN}PASSED${NC}: $suite ($passed tests)"
+        zsh_label=""
+        needs_zsh "$suite" && zsh_label=" (zsh)"
+        line=$(echo -e "${GREEN}PASSED${NC}: $suite${zsh_label} ($passed tests, ${elapsed_display})")
+        printf '%d\t%s\n' "$elapsed_ms" "$line" >> "$SORT_FILE"
     fi
-    echo ""
 done
 
+# Print skipped suites first
+for suite in "${TEST_SUITES[@]}"; do
+    if [[ -n "${SKIPPED[$suite]+x}" ]]; then
+        echo -e "${YELLOW}SKIP${NC}: $suite (${SKIPPED[$suite]})"
+    fi
+done
+
+# Print results sorted by elapsed time (fastest first)
+sort -t$'\t' -k1,1n "$SORT_FILE" | cut -f2-
+
+echo ""
 echo "========================================"
 echo "Test Summary"
 echo "========================================"
@@ -152,8 +213,14 @@ if [[ ${#FAILED_SUITES[@]} -gt 0 ]]; then
     echo -e "${RED}Failed Test Suites:${NC}"
     for suite in "${FAILED_SUITES[@]}"; do
         echo "  - $suite"
+        safe_name="$(echo "$suite" | tr '/' '_')"
+        detail_file="$OUTPUT_DIR/${safe_name}.detail"
+        if [[ -f "$detail_file" ]]; then
+            echo "    ----------------------------------------"
+            sed 's/^/    /' "$detail_file"
+            echo ""
+        fi
     done
-    echo ""
     echo -e "${RED}Some tests failed!${NC}"
     exit 1
 else

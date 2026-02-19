@@ -4,12 +4,12 @@
 #
 # Tests that detect_review_issues() correctly:
 # - Detects [P0-9] patterns in first 10 characters of each line
-# - Scans the ENTIRE log file (not just last N lines)
+# - Scans only the last 50 lines of the log file
 # - Extracts content from the first matching line to the end
 # - Returns appropriate exit codes
 #
 # Algorithm being tested:
-# 1. Scan the entire log file from line 1
+# 1. Scan the last 50 lines of the log file
 # 2. Find the first line where [P?] (? is a digit) appears in the first 10 characters
 # 3. If found: extract from that line to the end and output it
 # 4. If not found: no issues, return 1
@@ -197,13 +197,13 @@ else
 fi
 
 # ========================================
-# Test 7: Log file with >50 lines, [P?] early in file - should detect
+# Test 7: Log file with >50 lines, [P?] early in file - should NOT detect
 # ========================================
-echo "Test 7: detect_review_issues finds [P?] early in a long log (full file scan)"
+echo "Test 7: detect_review_issues ignores [P?] early in a long log (outside last 50 lines)"
 setup_test_env
 
 # Create a log file with 70 lines, [P1] at line 5 (early in the file)
-# This tests that we scan the full file, not just the last N lines
+# Since we only scan the last 50 lines, line 5 of 70 is outside the window
 {
     for i in $(seq 1 4); do
         echo "Debug line $i"
@@ -219,11 +219,11 @@ OUTPUT=$(detect_review_issues 7 2>/dev/null)
 RESULT=$?
 set -e
 
-# [P1] is at line 5 - full file scan should find it
-if [[ $RESULT -eq 0 ]] && echo "$OUTPUT" | grep -q '\[P1\]'; then
-    pass "[P?] early in file detected (full scan)"
+# [P1] is at line 5 of 70 - outside the last-50-line window, should return 1
+if [[ $RESULT -eq 1 ]]; then
+    pass "[P?] early in file ignored (outside last 50 lines)"
 else
-    fail "[P?] early in file" "return 0, output contains [P1]" "return $RESULT, output: $OUTPUT"
+    fail "[P?] early in file" "return 1 (no issues)" "return $RESULT, output: $OUTPUT"
 fi
 
 # ========================================

@@ -458,10 +458,14 @@ parse_state_file_strict() {
 # Required globals: LOOP_DIR, CACHE_DIR
 #
 # Algorithm:
-# 1. Scan the entire log file for [P?] markers in the first 10 characters of each line
-# 2. Find the first line where [P?] (? is a digit) appears in the first 10 characters
-# 3. If found: extract from that line to the end and output it
-# 4. If not found: no issues, return 1
+# 1. Scan the last 50 lines of the log file for [P?] markers in the first 10
+#    characters of each line. Real review issues only appear near the end of the
+#    log; scanning the full file risks false positives from earlier debug output
+#    and can hit argument-list-too-long limits on very large logs.
+# 2. Find the first such line where [P?] (? is a digit) appears in the first 10
+#    characters.
+# 3. If found: extract from that line to the end and output it.
+# 4. If not found: no issues, return 1.
 #
 # Note: codex review outputs to stderr, so we analyze the combined log file
 # which contains both stdout and stderr (redirected with 2>&1).
@@ -480,17 +484,22 @@ detect_review_issues() {
     total_lines=$(wc -l < "$log_file")
     echo "Analyzing log file: $log_file ($total_lines lines)" >&2
 
-    # Use awk to find the first line where [P?] appears in the first 10 characters
-    # This is more efficient than a shell while loop with sed per line
-    local found_line
-    found_line=$(awk '
+    # Only scan the last 50 lines - real issues always appear near the end
+    local scan_lines=50
+    local start_line=$((total_lines > scan_lines ? total_lines - scan_lines + 1 : 1))
+
+    # Use awk on the tail to find the first line where [P?] appears in first 10 chars
+    local relative_line
+    relative_line=$(tail -n "$scan_lines" "$log_file" | awk '
         substr($0, 1, 10) ~ /\[P[0-9]\]/ {
             print NR
             exit
         }
-    ' "$log_file")
+    ')
 
-    if [[ -n "$found_line" && "$found_line" -gt 0 ]]; then
+    if [[ -n "$relative_line" && "$relative_line" -gt 0 ]]; then
+        # Convert relative line (within tail) to absolute line in the full file
+        local found_line=$((start_line + relative_line - 1))
         echo "Found [P?] issue at line $found_line" >&2
 
         # Extract from found_line to end
