@@ -1,13 +1,13 @@
 ---
 name: ask-codex
-description: One-shot consultation with Codex as an independent expert. Sends a question or task to codex exec and returns the response.
+description: Consult Codex as an independent expert. Sends a question or task to codex exec and returns the response.
 argument-hint: "[--codex-model MODEL:EFFORT] [--codex-timeout SECONDS] [question or task]"
 allowed-tools: "Bash(${CLAUDE_PLUGIN_ROOT}/scripts/ask-codex.sh:*)"
 ---
 
 # Ask Codex
 
-Send a one-shot question or task to Codex and return the response.
+Send a question or task to Codex and return the response.
 
 ## How to Use
 
@@ -34,6 +34,5 @@ Execute the ask-codex script with the user's arguments:
 
 ## Notes
 
-- This is a one-shot consultation, not an iterative loop
 - The response is saved to `.humanize/skill/<timestamp>/output.md` for reference
 - Default model is `gpt-5.3-codex:xhigh` with a 600-second timeout
