@@ -78,7 +78,7 @@ $question
 
 - Model: $model
 - Effort: $effort
-- Timeout: 600s
+- Timeout: 3600s
 - Timestamp: $(echo "$unique_id" | cut -d- -f1-3 | tr '_' ' ')
 EOF
 
@@ -88,7 +88,7 @@ EOF
 ---
 model: $model
 effort: $effort
-timeout: 600
+timeout: 3600
 exit_code: $( [[ "$status" == "success" ]] && echo 0 || echo 1 )
 duration: $duration
 status: $status
@@ -201,7 +201,7 @@ setup_test_env
 mkdir -p .humanize/skill
 create_skill_invocation "2026-02-19_20-00-00-111-aaa" "success" "gpt-5.3-codex" "high" "10s" "First question"
 create_skill_invocation "2026-02-19_20-30-00-222-bbb" "error" "gpt-5.3-codex" "xhigh" "5s" "Second question"
-create_skill_invocation "2026-02-19_21-00-00-333-ccc" "timeout" "gpt-5.3-codex" "xhigh" "600s" "Third question"
+create_skill_invocation "2026-02-19_21-00-00-333-ccc" "timeout" "gpt-5.3-codex" "xhigh" "3600s" "Third question"
 create_skill_invocation "2026-02-19_21-30-00-444-ddd" "success" "gpt-5.3-codex" "xhigh" "20s" "Latest question"
 
 output=$(_humanize_monitor_skill --once 2>&1) && rc=0 || rc=$?
@@ -316,13 +316,13 @@ Additional context about the question.
 
 - Model: gpt-5.3-codex
 - Effort: xhigh
-- Timeout: 600s
+- Timeout: 3600s
 EOF
 cat > "$local_dir/metadata.md" << 'EOF'
 ---
 model: gpt-5.3-codex
 effort: xhigh
-timeout: 600
+timeout: 3600
 exit_code: 0
 duration: 25s
 status: success

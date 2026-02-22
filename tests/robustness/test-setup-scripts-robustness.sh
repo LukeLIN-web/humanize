@@ -702,13 +702,13 @@ git -C "$TEST_DIR/repo29" add .gitignore && git -C "$TEST_DIR/repo29" commit -q 
 
 mkdir -p "$TEST_DIR/repo29/bin"
 
-OUTPUT=$(PATH="$TEST_DIR/repo29/bin:$PATH" run_rlcr_setup "$TEST_DIR/repo29" plan.md --max 10 --codex-timeout 600 2>&1) || EXIT_CODE=$?
+OUTPUT=$(PATH="$TEST_DIR/repo29/bin:$PATH" run_rlcr_setup "$TEST_DIR/repo29" plan.md --max 10 --codex-timeout 3600 2>&1) || EXIT_CODE=$?
 EXIT_CODE=${EXIT_CODE:-0}
 # Should NOT fail at argument parsing - should fail later (codex check)
 if echo "$OUTPUT" | grep -qi "positive integer"; then
     fail "Valid numeric args" "accepted" "rejected as invalid"
 else
-    pass "Valid numeric arguments accepted (--max 10, --codex-timeout 600)"
+    pass "Valid numeric arguments accepted (--max 10, --codex-timeout 3600)"
 fi
 
 # Test 30: Valid PR loop setup proceeds past argument validation

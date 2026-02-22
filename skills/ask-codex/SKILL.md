@@ -35,4 +35,4 @@ Execute the ask-codex script with the user's arguments:
 ## Notes
 
 - The response is saved to `.humanize/skill/<timestamp>/output.md` for reference
-- Default model is `gpt-5.3-codex:xhigh` with a 600-second timeout
+- Default model is `gpt-5.3-codex:xhigh` with a 3600-second timeout

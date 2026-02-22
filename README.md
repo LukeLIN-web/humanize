@@ -1,6 +1,6 @@
 # Humanize
 
-**Current Version: 1.10.3**
+**Current Version: 1.10.4**
 
 > Derived from the [GAAC (GitHub-as-a-Context)](https://github.com/SihaoLiu/gaac) project.
 
@@ -209,7 +209,7 @@ OPTIONS:
   --codex-model <MODEL:EFFORT>
                          Codex model and reasoning effort (default: gpt-5.3-codex:xhigh)
   --codex-timeout <SECONDS>
-                         Timeout for the Codex query in seconds (default: 600)
+                         Timeout for the Codex query in seconds (default: 3600)
   -h, --help             Show help message
 ```
 

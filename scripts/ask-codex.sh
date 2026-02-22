@@ -36,7 +36,7 @@ source "$HOOKS_LIB_DIR/loop-common.sh"
 # Default Configuration
 # ========================================
 
-DEFAULT_ASK_CODEX_TIMEOUT=600
+DEFAULT_ASK_CODEX_TIMEOUT=3600
 
 CODEX_MODEL="$DEFAULT_CODEX_MODEL"
 CODEX_EFFORT="$DEFAULT_CODEX_EFFORT"
@@ -57,7 +57,7 @@ OPTIONS:
   --codex-model <MODEL:EFFORT>
                        Codex model and reasoning effort (default: gpt-5.3-codex:xhigh)
   --codex-timeout <SECONDS>
-                       Timeout for the Codex query in seconds (default: 600)
+                       Timeout for the Codex query in seconds (default: 3600)
   -h, --help           Show this help message
 
 DESCRIPTION:
