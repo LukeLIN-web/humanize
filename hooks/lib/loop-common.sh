@@ -40,8 +40,23 @@ readonly FIELD_SESSION_ID="session_id"
 readonly FIELD_AGENT_TEAMS="agent_teams"
 
 # Default Codex configuration (single source of truth - all scripts reference this)
-# Both use :- so scripts can override before sourcing (e.g. PR loop sets different model/effort)
-DEFAULT_CODEX_MODEL="${DEFAULT_CODEX_MODEL:-gpt-5.3-codex}"
+# Both use :- so scripts can override before sourcing (e.g. PR loop sets different model/effort).
+#
+# Runtime-aware model selection:
+# Detect Claude Code plugin mode by checking if this script lives under
+# .claude/plugins/cache/ (CLAUDE_PLUGIN_ROOT is a config-time template
+# variable, not a runtime env var, so we cannot check it directly).
+#   - Claude Code plugin mode -> gpt-5.3-codex
+#   - Skill mode (Codex/Kimi) -> gpt-5.2
+if [[ -z "${DEFAULT_CODEX_MODEL:-}" ]]; then
+    _LOOP_COMMON_SELF="${BASH_SOURCE[0]:-$0}"
+    if [[ "$_LOOP_COMMON_SELF" == */.claude/plugins/cache/* ]]; then
+        DEFAULT_CODEX_MODEL="gpt-5.3-codex"
+    else
+        DEFAULT_CODEX_MODEL="gpt-5.2"
+    fi
+    unset _LOOP_COMMON_SELF
+fi
 DEFAULT_CODEX_EFFORT="${DEFAULT_CODEX_EFFORT:-xhigh}"
 
 # Codex review markers
