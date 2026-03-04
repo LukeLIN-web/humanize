@@ -1,6 +1,6 @@
 # Humanize
 
-**Current Version: 1.12.1**
+**Current Version: 1.12.2**
 
 > Derived from the [GAAC (GitHub-as-a-Context)](https://github.com/SihaoLiu/gaac) project.
 
@@ -151,7 +151,7 @@ OPTIONS:
   --plan-file <path>     Explicit plan file path (alternative to positional arg)
   --max <N>              Maximum iterations before auto-stop (default: 42)
   --codex-model <MODEL:EFFORT>
-                         Codex model and reasoning effort (default: gpt-5.3-codex:xhigh)
+                         Codex model and reasoning effort (default: gpt-5.2-codex:xhigh)
   --codex-timeout <SECONDS>
                          Timeout for each Codex review in seconds (default: 5400)
   --track-plan-file      Indicate plan file should be tracked in git (must be clean)
@@ -216,7 +216,7 @@ OPTIONS:
 
 OPTIONS:
   --codex-model <MODEL:EFFORT>
-                         Codex model and reasoning effort (default: gpt-5.3-codex:xhigh)
+                         Codex model and reasoning effort (default: gpt-5.2-codex:xhigh)
   --codex-timeout <SECONDS>
                          Timeout for the Codex query in seconds (default: 3600)
   -h, --help             Show help message
