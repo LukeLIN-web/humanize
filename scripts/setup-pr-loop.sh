@@ -15,7 +15,7 @@ set -euo pipefail
 # ========================================
 
 # Override defaults before sourcing loop-common.sh (PR loop uses different model/effort than RLCR)
-DEFAULT_CODEX_MODEL="gpt-5.2-codex"
+DEFAULT_CODEX_MODEL="gpt-5.4"
 DEFAULT_CODEX_EFFORT="medium"
 DEFAULT_CODEX_TIMEOUT=900
 DEFAULT_MAX_ITERATIONS=42
@@ -69,7 +69,7 @@ BOT FLAGS (at least one required):
 OPTIONS:
   --max <N>            Maximum iterations before auto-stop (default: 42)
   --codex-model <MODEL:EFFORT>
-                       Codex model and reasoning effort (default: gpt-5.2-codex:medium)
+                       Codex model and reasoning effort (default: gpt-5.4:medium)
   --codex-timeout <SECONDS>
                        Timeout for each Codex review in seconds (default: 900)
   -h, --help           Show this help message

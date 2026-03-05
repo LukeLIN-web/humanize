@@ -1561,7 +1561,7 @@ configured_bots:
   - codex
 active_bots:
   - codex
-codex_model: gpt-5.2-codex
+codex_model: gpt-5.4
 codex_effort: medium
 codex_timeout: 900
 poll_interval: 1

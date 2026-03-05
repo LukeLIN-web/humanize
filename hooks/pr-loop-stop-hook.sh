@@ -26,7 +26,7 @@ set -euo pipefail
 # ========================================
 
 # Override defaults before sourcing loop-common.sh (PR loop uses different model/effort than RLCR)
-DEFAULT_CODEX_MODEL="gpt-5.2-codex"
+DEFAULT_CODEX_MODEL="gpt-5.4"
 DEFAULT_CODEX_EFFORT="medium"
 DEFAULT_CODEX_TIMEOUT=900
 DEFAULT_POLL_INTERVAL=30

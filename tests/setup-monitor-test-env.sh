@@ -34,7 +34,7 @@ configured_bots:
 active_bots:
   - claude
   - codex
-codex_model: gpt-5.2-codex
+codex_model: gpt-5.4
 codex_effort: medium
 started_at: 2026-01-18T16:00:00Z
 ---
@@ -55,7 +55,7 @@ configured_bots:
   - codex
 active_bots:
   - codex
-codex_model: gpt-5.2-codex
+codex_model: gpt-5.4
 codex_effort: medium
 started_at: 2026-01-18T16:00:00Z
 ---
@@ -75,7 +75,7 @@ configured_bots:
   - claude
   - codex
 active_bots:
-codex_model: gpt-5.2-codex
+codex_model: gpt-5.4
 codex_effort: medium
 started_at: 2026-01-18T16:00:00Z
 ---

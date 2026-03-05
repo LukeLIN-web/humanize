@@ -55,7 +55,7 @@ USAGE:
 
 OPTIONS:
   --codex-model <MODEL:EFFORT>
-                       Codex model and reasoning effort (default: gpt-5.2-codex:xhigh)
+                       Codex model and reasoning effort (default: gpt-5.4:xhigh)
   --codex-timeout <SECONDS>
                        Timeout for the Codex query in seconds (default: 3600)
   -h, --help           Show this help message
@@ -68,7 +68,7 @@ DESCRIPTION:
 
 EXAMPLES:
   /humanize:ask-codex How should I structure the authentication module?
-  /humanize:ask-codex --codex-model gpt-5.2-codex:high What are the performance bottlenecks?
+  /humanize:ask-codex --codex-model gpt-5.4:high What are the performance bottlenecks?
   /humanize:ask-codex --codex-timeout 300 Review the error handling in src/api/
 
 ENVIRONMENT:

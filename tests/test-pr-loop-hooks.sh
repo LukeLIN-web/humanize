@@ -45,7 +45,7 @@ start_branch: test-branch
 active_bots:
   - claude
   - codex
-codex_model: gpt-5.2-codex
+codex_model: gpt-5.4
 codex_effort: medium
 codex_timeout: 900
 poll_interval: 30
@@ -294,7 +294,7 @@ configured_bots:
   - codex
 active_bots:
   - claude
-codex_model: gpt-5.2-codex
+codex_model: gpt-5.4
 ---"
 
     # Extract configured_bots using same logic as stop hook
@@ -779,7 +779,7 @@ configured_bots:
   - claude
 active_bots:
   - claude
-codex_model: gpt-5.2-codex
+codex_model: gpt-5.4
 codex_effort: medium
 codex_timeout: 900
 poll_interval: 30
@@ -858,7 +858,7 @@ configured_bots:
   - claude
 active_bots:
   - claude
-codex_model: gpt-5.2-codex
+codex_model: gpt-5.4
 codex_effort: medium
 codex_timeout: 900
 poll_interval: 30
@@ -960,7 +960,7 @@ configured_bots:
   - claude
 active_bots:
   - claude
-codex_model: gpt-5.2-codex
+codex_model: gpt-5.4
 codex_effort: medium
 codex_timeout: 900
 poll_interval: 30
@@ -1067,7 +1067,7 @@ configured_bots:
   - claude
 active_bots:
   - claude
-codex_model: gpt-5.2-codex
+codex_model: gpt-5.4
 codex_effort: medium
 codex_timeout: 900
 poll_interval: 30

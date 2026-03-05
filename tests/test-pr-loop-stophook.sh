@@ -34,7 +34,7 @@ configured_bots:
   - claude
 active_bots:
   - claude
-codex_model: gpt-5.2-codex
+codex_model: gpt-5.4
 codex_effort: medium
 codex_timeout: 900
 poll_interval: 30
@@ -153,7 +153,7 @@ configured_bots:
   - codex
 active_bots:
   - codex
-codex_model: gpt-5.2-codex
+codex_model: gpt-5.4
 codex_effort: medium
 codex_timeout: 900
 poll_interval: 1
@@ -258,7 +258,7 @@ start_branch: test-branch
 configured_bots:
   - codex
 active_bots:
-codex_model: gpt-5.2-codex
+codex_model: gpt-5.4
 codex_effort: medium
 codex_timeout: 900
 poll_interval: 30
@@ -342,7 +342,7 @@ configured_bots:
 active_bots:
   - claude
   - codex
-codex_model: gpt-5.2-codex
+codex_model: gpt-5.4
 codex_effort: medium
 codex_timeout: 900
 poll_interval: 1
@@ -465,7 +465,7 @@ configured_bots:
   - codex
 active_bots:
   - codex
-codex_model: gpt-5.2-codex
+codex_model: gpt-5.4
 codex_effort: medium
 codex_timeout: 900
 poll_interval: 30
@@ -551,7 +551,7 @@ configured_bots:
   - codex
 active_bots:
   - codex
-codex_model: gpt-5.2-codex
+codex_model: gpt-5.4
 codex_effort: medium
 codex_timeout: 900
 poll_interval: 30
@@ -655,7 +655,7 @@ configured_bots:
   - codex
 active_bots:
   - codex
-codex_model: gpt-5.2-codex
+codex_model: gpt-5.4
 codex_effort: medium
 codex_timeout: 900
 poll_interval: 30
@@ -767,7 +767,7 @@ configured_bots:
   - codex
 active_bots:
   - codex
-codex_model: gpt-5.2-codex
+codex_model: gpt-5.4
 codex_effort: medium
 codex_timeout: 900
 poll_interval: 1
@@ -909,7 +909,7 @@ configured_bots:
   - codex
 active_bots:
   - codex
-codex_model: gpt-5.2-codex
+codex_model: gpt-5.4
 codex_effort: medium
 codex_timeout: 900
 poll_interval: 1
@@ -1024,7 +1024,7 @@ configured_bots:
   - claude
 active_bots:
   - claude
-codex_model: gpt-5.2-codex
+codex_model: gpt-5.4
 codex_effort: medium
 codex_timeout: 900
 poll_interval: 1
@@ -1169,7 +1169,7 @@ configured_bots:
   - codex
 active_bots:
   - codex
-codex_model: gpt-5.2-codex
+codex_model: gpt-5.4
 codex_effort: medium
 codex_timeout: 900
 poll_interval: 1
@@ -1402,7 +1402,7 @@ start_branch: test-branch
 configured_bots:
   - codex
 active_bots:
-codex_model: gpt-5.2-codex
+codex_model: gpt-5.4
 codex_effort: medium
 codex_timeout: 900
 poll_interval: 30
@@ -1546,7 +1546,7 @@ configured_bots:
 active_bots:
   - claude
   - codex
-codex_model: gpt-5.2-codex
+codex_model: gpt-5.4
 codex_effort: medium
 codex_timeout: 900
 poll_interval: 1
