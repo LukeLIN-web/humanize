@@ -28,9 +28,9 @@ Parse `$ARGUMENTS` to find the plan file path:
 ### Basic path safety gate
 
 Only proceed with the pre-check if the extracted path meets ALL of these conditions:
-- Is a relative path (does not start with `/`)
-- Does not contain `..` path components
-- Does not contain shell metacharacters (`;`, `&`, `|`, `$`, backtick, `<`, `>`, `(`, `)`, `{`, `}`, `!`, `#`, `~`, `*`, `?`, `\`)
+- Is a relative path (does not start with forward slash)
+- Does not contain parent directory traversal (double dot path components)
+- Contains only safe path characters: letters, digits, hyphen, underscore, dot, and forward slash
 
 If any condition fails, skip the pre-check and let the setup script handle path validation.
 
