@@ -32,6 +32,8 @@ This command transforms a user's draft document into a well-structured implement
 
 ## Workflow Overview
 
+> **Sequential Execution Constraint**: All phases below MUST execute strictly in order. Do NOT parallelize tool calls across different phases. Each phase must fully complete before the next one begins.
+
 1. **Execution Mode Setup**: Parse optional behaviors from command arguments
 2. **Load Project Config**: Read `.humanize/config.json` and extract `chinese_plan` flag
 3. **IO Validation**: Validate input and output paths
