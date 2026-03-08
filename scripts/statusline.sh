@@ -1,4 +1,18 @@
 #!/bin/bash
+#
+# DISCLAIMER
+# ----------
+# Author: Sihao Liu
+#
+# This is a status line script for the CLI tool that happens to include
+# an RLCR status field tied to the Humanize plugin. It is included in
+# this repository solely for community sharing purposes.
+#
+# Provided AS-IS -- it serves as a reference and template only.
+# Only the final field (RLCR) is related to this repository; the rest
+# is generic session information. Future updates to the Humanize plugin
+# will generally not involve changes to this script.
+#
 # Claude Code Status Line - Display usage information
 # Format: <model> [<cwd>] <branch> | $X.XX @ Xh:Ym:Zs | lines: +X, -X | Session: <name> | Fast: <On/Off> | RLCR: <status>
 
