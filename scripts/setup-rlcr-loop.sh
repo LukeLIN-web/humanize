@@ -100,8 +100,8 @@ DESCRIPTION:
 
   The flow:
   1. Claude executes plan tasks with tag-based routing (Implementation Phase)
-     - `coding` tasks: Claude implements directly
-     - `analyze` tasks: Claude delegates execution via `/humanize:ask-codex`
+     - \`coding\` tasks: Claude implements directly
+     - \`analyze\` tasks: Claude delegates execution via \`/humanize:ask-codex\`
   2. Claude writes a summary to round-N-summary.md
   3. On exit attempt, Codex reviews the summary
   4. If Codex finds issues, it blocks exit and sends feedback
