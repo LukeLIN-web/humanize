@@ -150,7 +150,7 @@ EOF
 current_round: 0
 max_iterations: 10
 codex_model: reviewer-model-placeholder
-codex_effort: xhigh
+codex_effort: high
 codex_timeout: 5400
 push_every_round: false
 plan_file: plans/plan.md

@@ -343,10 +343,10 @@ reset_mock
 export MOCK_CODEX_STDOUT="effort-default-test"
 run_ask_codex --codex-model "solo-model" "effort default test" > /dev/null 2>&1
 LATEST_DIR=$(find "$MOCK_PROJECT/.humanize/skill" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort | tail -1)
-if [[ -n "$LATEST_DIR" ]] && grep -q "Model: solo-model" "$LATEST_DIR/input.md" && grep -q "Effort: xhigh" "$LATEST_DIR/input.md"; then
-    pass "--codex-model MODEL without effort uses default xhigh"
+if [[ -n "$LATEST_DIR" ]] && grep -q "Model: solo-model" "$LATEST_DIR/input.md" && grep -q "Effort: high" "$LATEST_DIR/input.md"; then
+    pass "--codex-model MODEL without effort uses default high"
 else
-    fail "--codex-model MODEL without effort uses default xhigh"
+    fail "--codex-model MODEL without effort uses default high"
 fi
 
 # Test: -- separator treats remaining args as question

@@ -86,7 +86,7 @@ Transforms a rough draft document into a structured implementation plan with:
 
 **Common Options:**
 - `--max N` - Maximum iterations before auto-stop (default: 42)
-- `--codex-model MODEL:EFFORT` - Codex model and reasoning effort for `codex exec` (default: gpt-5.4:xhigh)
+- `--codex-model MODEL:EFFORT` - Codex model and reasoning effort for `codex exec` (default: gpt-5.4:high)
 - Review phase `codex review` uses `gpt-5.4:high`
 - `--codex-timeout SECONDS` - Timeout for each Codex review (default: 5400)
 - `--base-branch BRANCH` - Base branch for code review (auto-detects if not specified)

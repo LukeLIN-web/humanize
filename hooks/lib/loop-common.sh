@@ -44,7 +44,7 @@ readonly FIELD_AGENT_TEAMS="agent_teams"
 #
 # Default model for Codex operations (same model for both plugin and skill mode)
 DEFAULT_CODEX_MODEL="${DEFAULT_CODEX_MODEL:-gpt-5.4}"
-DEFAULT_CODEX_EFFORT="${DEFAULT_CODEX_EFFORT:-xhigh}"
+DEFAULT_CODEX_EFFORT="${DEFAULT_CODEX_EFFORT:-high}"
 
 # Codex review markers
 readonly MARKER_COMPLETE="COMPLETE"

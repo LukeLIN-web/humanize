@@ -53,4 +53,4 @@ because the shell will re-parse the question text and can fail before `ask-codex
 ## Notes
 
 - The response is saved to `.humanize/skill/<timestamp>/output.md` for reference
-- Default model is `gpt-5.4:xhigh` with a 3600-second timeout
+- Default model is `gpt-5.4:high` with a 3600-second timeout
