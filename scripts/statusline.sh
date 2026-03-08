@@ -48,8 +48,12 @@ _resolve_rlcr_display() {
             local bname
             bname=$(basename "$terminal_file")
             local reason="${bname%-state.md}"
-            # Capitalize first letter
-            echo "${reason^}"
+            # Capitalize first letter (Bash 3 compatible)
+            local first_char
+            first_char=$(printf '%s' "$reason" | cut -c1 | tr '[:lower:]' '[:upper:]')
+            local rest
+            rest=$(printf '%s' "$reason" | cut -c2-)
+            echo "${first_char}${rest}"
         else
             echo "Off"
         fi
