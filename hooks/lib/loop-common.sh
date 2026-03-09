@@ -1195,6 +1195,20 @@ IMPORTANT: The commit message must NOT contain the literal string \".humanize\" 
     load_and_render_safe "$TEMPLATE_DIR" "block/git-add-humanize.md" "$fallback"
 }
 
+# Standard message for blocking direct execution of hook scripts
+# Usage: stop_hook_direct_execution_blocked_message
+stop_hook_direct_execution_blocked_message() {
+    local fallback="# Direct Execution of Hook Scripts Blocked
+
+You are attempting to directly execute a hook script via Bash. This is not allowed during an active loop.
+
+Hook scripts are managed by the hooks system and are triggered automatically at the appropriate time. You should NOT execute them manually.
+
+Simply complete your work and end your response. The hooks system will handle the rest automatically."
+
+    load_and_render_safe "$TEMPLATE_DIR" "block/stop-hook-direct-execution.md" "$fallback"
+}
+
 # Check if a shell command attempts to modify a file matching the given pattern
 # Usage: command_modifies_file "$command_lower" "goal-tracker\.md"
 # Returns 0 if the command tries to modify the file, 1 otherwise
