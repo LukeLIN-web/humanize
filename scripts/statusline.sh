@@ -337,7 +337,8 @@ if [[ -n "$TMUX" && -n "$SESSION_DISPLAY" ]]; then
 fi
 
 # Shorten CWD: replace $HOME with ~
-CWD_SHORT="${CWD/#$HOME/\~}"
+TILDE='~'
+CWD_SHORT="${CWD/#$HOME/$TILDE}"
 
 # Line 1: model | cost @ duration
 printf "%b%s%b | %b\$%s%b @ %s\n" \
@@ -357,7 +358,7 @@ printf "%b%s%b [%b%s%b] | lines: %b+%s%b, %b-%s%b\n" \
 
 # Line 3: session | fast | rlcr
 printf "%bSession:%b %b%s%b | %bFast:%b %b%s%b | %bRLCR:%b %b%s%b\n" \
-    "$BLUE" "$RESET" \
+    "$MAGENTA" "$RESET" \
     "$CYAN" "${SESSION_DISPLAY:-?}" "$RESET" \
     "$MAGENTA" "$RESET" \
     "$FAST_COLOR" "$FAST_MODE" "$RESET" \
