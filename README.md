@@ -23,7 +23,11 @@ The loop has two phases: **Implementation** (Claude works, Codex reviews summari
 ## Install
 
 ```bash
-/plugin marketplace add git@github.com:humania-org/humanize.git
+# Add humania marketplace
+/plugin marketplace add humania-org/humanize
+# If you want to use development branch for experimental features
+/plugin marketplace add humania-org/humanize#dev
+# Then install humanize plugin
 /plugin install humanize@humania
 ```
 
