@@ -14,7 +14,7 @@
 # will generally not involve changes to this script.
 #
 # Claude Code Status Line - Display usage information
-# Format: <model> [<cwd>] <branch> | $X.XX @ Xh:Ym:Zs | lines: +X, -X | Session: <name> | Fast: <On/Off> | RLCR: <status>
+# Format: <model> | [context bar] | $X.XX @ Xh:Ym:Zs
 
 input=$(cat)
 
@@ -104,7 +104,7 @@ get_rlcr_status() {
             fi
             [[ -z "$any_state" ]] && continue
             local stored_sid
-            stored_sid=$(sed -n '/^---$/,/^---$/{ /^session_id:/{ s/session_id: *//; p; } }' "$any_state" 2>/dev/null | tr -d ' ')
+            stored_sid=$(awk '/^---$/{n++; next} n==1 && /^session_id:/{sub(/^session_id: */, ""); gsub(/ /, ""); print; exit}' "$any_state" 2>/dev/null)
             if [[ -n "$stored_sid" ]]; then
                 _resolve_rlcr_display "$trimmed"
                 return
@@ -133,7 +133,7 @@ get_rlcr_status() {
 
         # Extract stored session_id from YAML frontmatter
         local stored_sid
-        stored_sid=$(sed -n '/^---$/,/^---$/{ /^session_id:/{ s/session_id: *//; p; } }' "$any_state" 2>/dev/null | tr -d ' ')
+        stored_sid=$(awk '/^---$/{n++; next} n==1 && /^session_id:/{sub(/^session_id: */, ""); gsub(/ /, ""); print; exit}' "$any_state" 2>/dev/null)
 
         # Skip session-unaware entries when session-aware ones exist
         if [[ -z "$stored_sid" ]]; then
@@ -328,28 +328,18 @@ BLUE="\e[34m"             # Label - for Session
 MAGENTA="\e[35m"          # Label - for RLCR and Fast
 RESET="\e[0m"
 
-# Auto-rename tmux window to session customTitle if inside tmux
-if [[ -n "$TMUX" && -n "$SESSION_DISPLAY" ]]; then
-    # UUID pattern: 8-4-4-4-12 hex chars
-    if [[ ! "$SESSION_DISPLAY" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
-        tmux rename-window "$SESSION_DISPLAY" 2>/dev/null
-    fi
-fi
-
 # Shorten CWD: replace $HOME with ~
 TILDE='~'
 CWD_SHORT="${CWD/#$HOME/$TILDE}"
 
-# Line 1: model | cost @ duration
-printf "%b%s%b | %b\$%s%b @ %s\n" \
+# Line 1: model | context bar | cost @ duration
+printf "%b%s%b | %b | %b\$%s%b @ %s\n" \
     "$CORAL" "${MODEL:-?}" "$RESET" \
+    "$CONTEXT_BAR" \
     "$GREEN" "$COST_STR" "$RESET" \
     "$DURATION_STR"
 
-# Line 2: context bar
-printf "%b\n" "$CONTEXT_BAR"
-
-# Line 3: cwd [branch] | lines
+# Line 2: cwd [branch] | lines
 printf "%b%s%b [%b%s%b] | lines: %b+%s%b, %b-%s%b\n" \
     "$CYAN" "${CWD_SHORT:-?}" "$RESET" \
     "$YELLOW" "$BRANCH" "$RESET" \
