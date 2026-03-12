@@ -52,11 +52,11 @@ humanize_parse_goal_tracker() {
     }
 
     # Count Acceptance Criteria (supports both table and list formats)
-    # Table format: | AC-1 | or | **AC-1** |
-    # List format: - **AC-1**: or - AC-1:
+    # Extracts unique AC identifiers (AC-1, AC-2.5, etc.) from the section,
+    # using the same methodology as completed_acs to keep counts consistent
     local total_acs
     total_acs=$(sed -n '/### Acceptance Criteria/,/^---$/p' "$tracker_file" \
-        | grep -cE '(^\|\s*\*{0,2}AC-?[0-9]+|^-\s*\*{0,2}AC-?[0-9]+)' || true)
+        | grep -oE 'AC-?[0-9]+(\.[0-9]+)?' | sort -u | wc -l | tr -d ' ')
     total_acs=${total_acs:-0}
 
     # Count Active Tasks (tasks that are NOT completed AND NOT deferred)
@@ -93,10 +93,12 @@ humanize_parse_goal_tracker() {
     local completed_tasks
     completed_tasks=$(_count_table_data_rows '### Completed and Verified' '^###')
 
-    # Count verified ACs (unique AC entries in Completed section, handles | AC-1 | and | AC1 | formats)
+    # Count verified ACs (unique AC entries in Completed section)
+    # Extracts all AC identifiers (AC-1, AC1, AC-2.5, etc.) from anywhere in the section,
+    # not just line-start, to handle rows with multiple comma-separated ACs (e.g. swarm mode)
     local completed_acs
     completed_acs=$(sed -n '/### Completed and Verified/,/^###/p' "$tracker_file" \
-        | grep -oE '^\|\s*AC-?[0-9]+' | sort -u | wc -l | tr -d ' ')
+        | grep -oE 'AC-?[0-9]+(\.[0-9]+)?' | sort -u | wc -l | tr -d ' ')
     completed_acs=${completed_acs:-0}
 
     # Count Deferred tasks
