@@ -33,7 +33,7 @@ OPTIONS:
   --plan-file <path>     Explicit plan file path (alternative to positional arg)
   --max <N>              Maximum iterations before auto-stop (default: 42)
   --codex-model <MODEL:EFFORT>
-                         Codex model and reasoning effort (default: gpt-5.4:high)
+                         Codex model and reasoning effort (default from config, fallback gpt-5.4:high)
   --codex-timeout <SECONDS>
                          Timeout for each Codex review in seconds (default: 5400)
   --track-plan-file      Indicate plan file should be tracked in git (must be clean)
@@ -91,7 +91,7 @@ BOT FLAGS (at least one required):
 OPTIONS:
   --max <N>              Maximum iterations before auto-stop (default: 42)
   --codex-model <MODEL:EFFORT>
-                         Codex model and reasoning effort (default: gpt-5.4:medium)
+                         Codex model and reasoning effort (default from config, effort: medium)
   --codex-timeout <SECONDS>
                          Timeout for each Codex review in seconds (default: 900)
   -h, --help             Show help message
@@ -119,7 +119,7 @@ The PR loop automates the process of handling GitHub PR reviews from remote bots
 
 OPTIONS:
   --codex-model <MODEL:EFFORT>
-                         Codex model and reasoning effort (default: gpt-5.4:high)
+                         Codex model and reasoning effort (default from config, fallback gpt-5.4:high)
   --codex-timeout <SECONDS>
                          Timeout for the Codex query in seconds (default: 3600)
   -h, --help             Show help message
@@ -131,6 +131,55 @@ for getting a second opinion, reviewing a design, or asking domain-specific ques
 
 Responses are saved to `.humanize/skill/<timestamp>/` with `input.md`, `output.md`,
 and `metadata.md` for reference.
+
+## Configuration
+
+Humanize uses a 4-layer config hierarchy (lowest to highest priority):
+1. **Plugin defaults**: `config/default_config.json`
+2. **User config**: `~/.config/humanize/config.json`
+3. **Project config**: `.humanize/config.json`
+4. **CLI flags**: Command-line arguments (where available)
+
+Current built-in keys:
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `codex_model` | `gpt-5.4` | Shared default model for Codex-backed review and analysis |
+| `codex_effort` | `high` | Shared default reasoning effort (`xhigh`, `high`, `medium`, `low`) |
+| `bitlesson_model` | `haiku` | Model used by the BitLesson selector agent |
+| `agent_teams` | `false` | Project-level default for agent teams workflow |
+| `chinese_plan` | `false` | Project preference for Chinese plan generation |
+| `gen_plan_mode` | `discussion` | Default plan-generation mode |
+
+### Codex Model Configuration
+
+All Codex-using features (RLCR loop, PR loop, ask-codex) share the same model configuration:
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `codex_model` | `gpt-5.4` | Model used for Codex operations (reviews, analysis, queries) |
+| `codex_effort` | `high` | Reasoning effort (`xhigh`, `high`, `medium`, `low`) |
+
+To override, add to `.humanize/config.json`:
+
+```json
+{
+  "codex_model": "gpt-5.2",
+  "codex_effort": "xhigh",
+  "bitlesson_model": "sonnet"
+}
+```
+
+Codex model is resolved with this precedence:
+1. CLI `--codex-model` flag (highest priority)
+2. Feature-specific defaults (e.g., PR loop defaults to `medium` effort)
+3. Config-backed defaults from the 4-layer hierarchy above
+4. Hardcoded fallback (`gpt-5.4:high`)
+
+**Migration note**: If your `.humanize/config.json` contains the legacy keys
+`loop_reviewer_model` or `loop_reviewer_effort`, they are silently ignored.
+Use `codex_model` and `codex_effort` instead.
+
 
 ## Monitoring
 
