@@ -79,7 +79,8 @@ PROJECT_ROOT="${PROJECT_ROOT:-${CLAUDE_PROJECT_DIR:-$(pwd)}}"
 LOOP_BASE_DIR="${LOOP_BASE_DIR:-$PROJECT_ROOT/.humanize/rlcr}"
 # Use only the session-matched loop. Do NOT fall back to an unfiltered search,
 # as that would incorrectly restrict unrelated sessions opened in the same repo.
-# Spawned agents (with different session_ids) are guided by their prompt instead.
+# Limitation: Spawned agents (different session_id) are not restricted by hooks;
+# their sanitization is enforced by the analysis prompt.
 ACTIVE_LOOP_DIR="${LOOP_DIR:-$(find_active_loop "$LOOP_BASE_DIR" "$HOOK_SESSION_ID")}"
 _MA_CHECK_DIR="$ACTIVE_LOOP_DIR"
 

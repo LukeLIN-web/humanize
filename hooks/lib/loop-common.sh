@@ -332,43 +332,6 @@ find_active_loop() {
     echo ""
 }
 
-# Find any active loop directory currently in methodology analysis phase.
-# Unlike find_active_loop() which returns the newest active loop (possibly the
-# wrong one when multiple concurrent sessions exist), this function specifically
-# searches for a loop with methodology-analysis-state.md present.
-# This ensures spawned agents (which have different session_ids) always bind to
-# the correct originating loop during methodology analysis.
-#
-# Limitation: If two loops are simultaneously in methodology analysis, this
-# returns the newest one. The older session's spawned agents would bind to the
-# wrong loop. This is accepted because concurrent methodology analyses are
-# extremely unlikely (the phase is short-lived and requires two active RLCR
-# sessions to overlap at this specific point).
-#
-# Args:
-#   $1 - loop_base_dir: path to .humanize/rlcr
-#
-# Outputs the directory path to stdout, or empty string if none found
-find_methodology_analysis_loop() {
-    local loop_base_dir="$1"
-
-    if [[ ! -d "$loop_base_dir" ]]; then
-        echo ""
-        return
-    fi
-
-    local dir
-    while IFS= read -r dir; do
-        [[ -z "$dir" ]] && continue
-        local trimmed_dir="${dir%/}"
-        if [[ -f "$trimmed_dir/methodology-analysis-state.md" ]]; then
-            echo "$trimmed_dir"
-            return
-        fi
-    done < <(ls -1d "$loop_base_dir"/*/ 2>/dev/null | sort -r)
-
-    echo ""
-}
 
 # Extract current round number from state.md
 # Outputs the round number to stdout, defaults to 0

@@ -68,18 +68,22 @@ ACTIVE_PR_LOOP_DIR=$(find_active_pr_loop "$PR_LOOP_BASE_DIR")
 # Methodology Analysis Phase Bash Restriction
 # ========================================
 # During methodology analysis, block file-modifying bash commands.
-# Only gh commands and read-only operations are allowed.
+# Only read-only operations and cancel-rlcr-loop.sh are allowed.
 # This prevents source code modifications after Codex has signed off.
-# Uses unfiltered search to also apply to spawned agents with different session_id.
-
+#
 # Use only the session-matched loop. Do NOT fall back to an unfiltered search,
 # as that would incorrectly restrict unrelated sessions opened in the same repo.
-# Spawned agents (with different session_ids) are guided by their prompt instead.
+# Limitation: Spawned agents (different session_id) are not restricted by hooks;
+# their sanitization is enforced by the analysis prompt. This is an inherent
+# limitation of the hook architecture which cannot distinguish spawned agents
+# from unrelated sessions.
 _MA_BASH_DIR="$ACTIVE_LOOP_DIR"
 
 if [[ -n "$_MA_BASH_DIR" ]] && [[ -f "$_MA_BASH_DIR/methodology-analysis-state.md" ]]; then
     # Allow cancel-rlcr-loop.sh (user must be able to cancel during this phase)
-    if echo "$COMMAND_LOWER" | grep -qE '(^|[[:space:]])([^[:space:]]*/)?cancel-rlcr-loop\.sh'; then
+    # Only allow standalone invocation -- reject if chained with shell operators
+    if echo "$COMMAND_LOWER" | grep -qE '(^|[[:space:]])([^[:space:]]*/)?cancel-rlcr-loop\.sh' && \
+       ! echo "$COMMAND_LOWER" | grep -qE '[;|&]'; then
         exit 0
     fi
     # Block git commands that modify the working tree
