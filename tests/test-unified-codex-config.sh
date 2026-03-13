@@ -42,6 +42,13 @@ assert_no_grep() {
     if grep -q "$pattern" "$file"; then fail "$desc"; else pass "$desc"; fi
 }
 
+# Helper: assert_contains DESCRIPTION PATTERN STRING
+# Passes if PATTERN is found in STRING
+assert_contains() {
+    local desc="$1" pattern="$2" text="$3"
+    if grep -q -- "$pattern" <<< "$text"; then pass "$desc"; else fail "$desc"; fi
+}
+
 echo "=========================================="
 echo "Unified Codex Config Tests"
 echo "=========================================="
@@ -169,6 +176,49 @@ else
 
     assert_eq "config merge: project override feeds into DEFAULT_CODEX_EFFORT" \
         "low" "$(echo "$result" | cut -d'|' -f2)"
+
+    # Caller-provided defaults must continue to override config values
+    result=$(bash -c "
+        export DEFAULT_CODEX_MODEL='preset-model'
+        export DEFAULT_CODEX_EFFORT='medium'
+        export CLAUDE_PROJECT_DIR='$OVERRIDE_PROJECT'
+        export XDG_CONFIG_HOME='$TEST_DIR/no-user-config'
+        source '$LOOP_COMMON' 2>/dev/null
+        echo \"\$DEFAULT_CODEX_MODEL|\$DEFAULT_CODEX_EFFORT\"
+    " 2>/dev/null || echo "ERROR")
+
+    assert_eq "caller preset: DEFAULT_CODEX_MODEL wins over config" \
+        "preset-model" "$(echo "$result" | cut -d'|' -f1)"
+
+    assert_eq "caller preset: DEFAULT_CODEX_EFFORT wins over config" \
+        "medium" "$(echo "$result" | cut -d'|' -f2)"
+
+    # Invalid config values should warn and fall back to hardcoded defaults
+    setup_test_dir
+    INVALID_PROJECT="$TEST_DIR/invalid-project"
+    mkdir -p "$INVALID_PROJECT/.humanize"
+    printf '{"codex_model": "haiku!", "codex_effort": "superhigh"}' > "$INVALID_PROJECT/.humanize/config.json"
+
+    result=$(bash -c "
+        export CLAUDE_PROJECT_DIR='$INVALID_PROJECT'
+        export XDG_CONFIG_HOME='$TEST_DIR/no-user-config-invalid'
+        source '$LOOP_COMMON'
+        printf 'RESULT:%s|%s\n' \"\$DEFAULT_CODEX_MODEL\" \"\$DEFAULT_CODEX_EFFORT\"
+    " 2>&1 || echo "ERROR")
+
+    result_line="$(printf '%s\n' "$result" | grep '^RESULT:' | tail -n 1)"
+
+    assert_eq "invalid config: codex_model falls back to gpt-5.4" \
+        "gpt-5.4" "$(echo "$result_line" | cut -d':' -f2 | cut -d'|' -f1)"
+
+    assert_eq "invalid config: codex_effort falls back to high" \
+        "high" "$(echo "$result_line" | cut -d'|' -f2)"
+
+    assert_contains "invalid config: warns on invalid codex_model" \
+        "Warning: Invalid codex_model in merged config: haiku!" "$result"
+
+    assert_contains "invalid config: warns on invalid codex_effort" \
+        "Warning: Invalid codex_effort in merged config: superhigh" "$result"
 fi
 
 echo ""
