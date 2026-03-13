@@ -85,9 +85,9 @@ ACTIVE_PR_LOOP_DIR=$(find_active_pr_loop "$PR_LOOP_BASE_DIR")
 _MA_BASH_DIR="$ACTIVE_LOOP_DIR"
 
 if [[ -n "$_MA_BASH_DIR" ]] && [[ -f "$_MA_BASH_DIR/methodology-analysis-state.md" ]]; then
-    # Allow cancel-rlcr-loop.sh (user must be able to cancel during this phase)
-    # Only allow standalone invocation -- reject if chained with shell operators
-    if echo "$COMMAND_LOWER" | grep -qE '(^|[[:space:]])([^[:space:]]*/)?cancel-rlcr-loop\.sh' && \
+    # Allow cancel-rlcr-loop.sh only as the leading command (not as an argument
+    # to another command like cp/mv). Reject if chained with shell operators.
+    if echo "$COMMAND_LOWER" | grep -qE '^[[:space:]]*("?[^"]*/?)?cancel-rlcr-loop\.sh' && \
        ! echo "$COMMAND_LOWER" | grep -qE '[;|&]'; then
         exit 0
     fi

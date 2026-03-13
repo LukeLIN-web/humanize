@@ -583,6 +583,28 @@ Split these into smaller modules before continuing."
 fi
 
 # ========================================
+# Methodology Analysis Phase Completion Handler
+# ========================================
+# When in methodology analysis phase, check if the analysis is done.
+# If done, rename state to the original exit reason's terminal state.
+# If not done, block and ask Claude to complete the analysis.
+# All other checks (summary, bitlesson, goal tracker, max iterations) are skipped.
+# IMPORTANT: This MUST run before the git-clean check, because methodology
+# artifacts (.humanize/rlcr/...) may make the working tree appear dirty
+# if .humanize is tracked, which would block exit before reaching this handler.
+
+if [[ "$IS_METHODOLOGY_ANALYSIS_PHASE" == "true" ]]; then
+    if complete_methodology_analysis; then
+        # Analysis complete, allow exit
+        exit 0
+    else
+        # Analysis not yet complete, block
+        block_methodology_analysis_incomplete
+        exit 0
+    fi
+fi
+
+# ========================================
 # Quick Check: Git Clean and Pushed?
 # ========================================
 # Before running expensive Codex review, check if all changes have been
@@ -679,25 +701,6 @@ Please push before exiting."
                 }'
             exit 0
         fi
-    fi
-fi
-
-# ========================================
-# Methodology Analysis Phase Completion Handler
-# ========================================
-# When in methodology analysis phase, check if the analysis is done.
-# If done, rename state to the original exit reason's terminal state.
-# If not done, block and ask Claude to complete the analysis.
-# All other checks (summary, bitlesson, goal tracker, max iterations) are skipped.
-
-if [[ "$IS_METHODOLOGY_ANALYSIS_PHASE" == "true" ]]; then
-    if complete_methodology_analysis; then
-        # Analysis complete, allow exit
-        exit 0
-    else
-        # Analysis not yet complete, block
-        block_methodology_analysis_incomplete
-        exit 0
     fi
 fi
 
