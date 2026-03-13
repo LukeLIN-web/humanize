@@ -1242,6 +1242,27 @@ fi
 
 chmod 0755 "$READ_ONLY_OUTPUT_DIR"
 
+READ_ONLY_INPUT_DIR="$TEST_FIXTURES_DIR/read-only-input"
+READ_ONLY_INPUT_PLAN="$READ_ONLY_INPUT_DIR/valid-plan.md"
+READ_ONLY_INPUT_QA_DIR="$TEST_FIXTURES_DIR/read-only-input-qa"
+mkdir -p "$READ_ONLY_INPUT_DIR"
+make_valid_annotated_plan "$READ_ONLY_INPUT_PLAN"
+chmod 0555 "$READ_ONLY_INPUT_DIR"
+run_validator_capture --input "$READ_ONLY_INPUT_PLAN" --qa-dir "$READ_ONLY_INPUT_QA_DIR"
+if [[ "$VALIDATOR_EXIT_CODE" -eq 5 ]]; then
+    pass "validate-refine-plan-io: non-writable input directory in in-place mode exits 5"
+else
+    fail "validate-refine-plan-io: non-writable input directory in in-place mode exits 5" "5" "$VALIDATOR_EXIT_CODE"
+fi
+
+if echo "$VALIDATOR_OUTPUT" | grep -q "VALIDATION_ERROR: INPUT_DIR_NOT_WRITABLE"; then
+    pass "validate-refine-plan-io: non-writable input directory reports the specific in-place validation error"
+else
+    fail "validate-refine-plan-io: non-writable input directory reports the specific in-place validation error" "VALIDATION_ERROR: INPUT_DIR_NOT_WRITABLE" "$VALIDATOR_OUTPUT"
+fi
+
+chmod 0755 "$READ_ONLY_INPUT_DIR"
+
 REAL_AND_IGNORED_PLAN="$TEST_FIXTURES_DIR/real-and-ignored-sections-plan.md"
 make_plan_with_real_and_ignored_sections "$REAL_AND_IGNORED_PLAN"
 REAL_AND_IGNORED_QA_DIR="$TEST_FIXTURES_DIR/real-and-ignored-qa"

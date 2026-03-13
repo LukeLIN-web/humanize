@@ -383,6 +383,59 @@ else
 fi
 
 echo ""
+echo "=== Test: Bash Validator Hook Wrapper Blocking ==="
+echo ""
+
+assert_hook_wrapper_blocked() {
+    local test_name="$1"
+    local command="$2"
+    local hook_input
+
+    hook_input=$(jq -nc --arg command "$command" '{tool_name: "Bash", tool_input: {command: $command}}')
+
+    set +e
+    RESULT=$(echo "$hook_input" | "$PROJECT_ROOT/hooks/loop-bash-validator.sh" 2>&1)
+    EXIT_CODE=$?
+    set -e
+
+    if [[ $EXIT_CODE -eq 2 ]] && echo "$RESULT" | grep -qi "direct execution"; then
+        pass "$test_name"
+    else
+        fail "$test_name" "exit 2 with direct execution block" "exit $EXIT_CODE, output: $RESULT, command: $command"
+    fi
+}
+
+echo "Test 26: Bash validator blocks bare bash hook execution"
+assert_hook_wrapper_blocked \
+    "Bash validator blocks bare bash hook execution" \
+    "bash hooks/loop-codex-stop-hook.sh"
+
+echo "Test 27: Bash validator blocks env-wrapped hook execution"
+assert_hook_wrapper_blocked \
+    "Bash validator blocks env-wrapped hook execution" \
+    "env FOO=1 bash hooks/loop-codex-stop-hook.sh"
+
+echo "Test 28: Bash validator blocks command-wrapped hook execution"
+assert_hook_wrapper_blocked \
+    "Bash validator blocks command-wrapped hook execution" \
+    "command bash hooks/loop-codex-stop-hook.sh"
+
+echo "Test 29: Bash validator blocks assignment-prefixed hook execution"
+assert_hook_wrapper_blocked \
+    "Bash validator blocks assignment-prefixed hook execution" \
+    "VAR=1 bash hooks/loop-codex-stop-hook.sh"
+
+echo "Test 30: Bash validator blocks combined wrapper hook execution"
+assert_hook_wrapper_blocked \
+    "Bash validator blocks combined wrapper hook execution" \
+    "VAR=1 env FOO=2 bash hooks/loop-codex-stop-hook.sh"
+
+echo "Test 31: Bash validator blocks assignment-prefixed stop gate execution"
+assert_hook_wrapper_blocked \
+    "Bash validator blocks assignment-prefixed stop gate execution" \
+    "VAR=1 ./scripts/rlcr-stop-gate.sh"
+
+echo ""
 echo "========================================="
 echo "Test Results"
 echo "========================================="

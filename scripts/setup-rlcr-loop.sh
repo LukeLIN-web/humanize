@@ -1027,11 +1027,6 @@ SUMMARY_TMPL_EOF
 
 SUMMARY_PATH="$LOOP_DIR/round-0-summary.md"
 
-# Create the round-0 summary template with BitLesson Delta section
-if [[ "$SKIP_IMPL" != "true" ]]; then
-    write_summary_template "$SUMMARY_PATH"
-fi
-
 if [[ "$SKIP_IMPL" == "true" ]]; then
     # Skip-impl mode: create a prompt for code review only
     cat > "$LOOP_DIR/round-0-prompt.md" << EOF

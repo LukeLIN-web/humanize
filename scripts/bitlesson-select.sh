@@ -175,9 +175,9 @@ if [[ "$BITLESSON_PROVIDER" == "codex" ]]; then
     fi
     CODEX_EXEC_ARGS+=("$CODEX_AUTO_FLAG" "-C" "$CODEX_PROJECT_ROOT")
 
-    RAW_OUTPUT="$(printf '%s' "$PROMPT" | run_with_timeout "$SELECTOR_TIMEOUT" codex exec "${CODEX_EXEC_ARGS[@]}" -)" || CODEX_EXIT_CODE=$?
+    RAW_OUTPUT="$(printf '%s' "$PROMPT" | run_with_timeout "$SELECTOR_TIMEOUT" codex exec "${CODEX_EXEC_ARGS[@]}")" || CODEX_EXIT_CODE=$?
 elif [[ "$BITLESSON_PROVIDER" == "claude" ]]; then
-    RAW_OUTPUT="$(printf '%s' "$PROMPT" | run_with_timeout "$SELECTOR_TIMEOUT" claude --print --model "$BITLESSON_MODEL" -)" || CODEX_EXIT_CODE=$?
+    RAW_OUTPUT="$(printf '%s' "$PROMPT" | run_with_timeout "$SELECTOR_TIMEOUT" claude --print --model "$BITLESSON_MODEL")" || CODEX_EXIT_CODE=$?
 fi
 
 if [[ $CODEX_EXIT_CODE -eq 124 ]]; then

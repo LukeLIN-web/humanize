@@ -76,7 +76,12 @@ fi
 # These scripts should only be invoked by the hooks system, not via Bash.
 
 BLOCKED_HOOK_SCRIPTS="(loop-codex-stop-hook\.sh|pr-loop-stop-hook\.sh|rlcr-stop-gate\.sh)"
-if echo "$COMMAND_LOWER" | grep -qE "(^|[;&|])[[:space:]]*(([^[:space:]]*/)?|(bash|sh|source|\.)[[:space:]].*)$BLOCKED_HOOK_SCRIPTS"; then
+HOOK_ASSIGNMENT_PREFIX="[[:alpha:]_][[:alnum:]_]*=[^[:space:];&|]+"
+HOOK_COMMAND_PREFIX="command([[:space:]]+(-[^[:space:];&|]+|--))*"
+HOOK_ENV_PREFIX="env([[:space:]]+(-[^[:space:];&|]+|--|${HOOK_ASSIGNMENT_PREFIX}))*"
+HOOK_WRAPPER_PREFIX_PATTERN="((${HOOK_ASSIGNMENT_PREFIX}|${HOOK_COMMAND_PREFIX}|${HOOK_ENV_PREFIX})[[:space:]]+)*"
+HOOK_LAUNCH_PATTERN="(([^[:space:]]*/)?|(bash|sh|source|\.)[[:space:]].*)$BLOCKED_HOOK_SCRIPTS"
+if echo "$COMMAND_LOWER" | grep -qE "(^|[;&|])[[:space:]]*${HOOK_WRAPPER_PREFIX_PATTERN}${HOOK_LAUNCH_PATTERN}"; then
     stop_hook_direct_execution_blocked_message >&2
     exit 2
 fi

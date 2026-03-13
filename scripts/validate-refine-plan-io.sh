@@ -7,7 +7,7 @@
 #   2 - Input file is empty
 #   3 - Input file has no valid CMT:/ENDCMT blocks or has malformed CMT syntax
 #   4 - Input file missing required gen-plan sections
-#   5 - Output directory does not exist or is not writable (when --output differs from --input)
+#   5 - Output directory does not exist or is not writable, or input directory is not writable for in-place mode
 #   6 - QA directory not writable
 #   7 - Invalid arguments
 
@@ -456,6 +456,7 @@ fi
 # Get absolute paths
 INPUT_FILE=$(realpath -m "$INPUT_FILE" 2>/dev/null || echo "$INPUT_FILE")
 OUTPUT_FILE=$(realpath -m "$OUTPUT_FILE" 2>/dev/null || echo "$OUTPUT_FILE")
+INPUT_DIR=$(dirname "$INPUT_FILE")
 OUTPUT_DIR=$(dirname "$OUTPUT_FILE")
 
 echo "=== refine-plan IO Validation ==="
@@ -528,7 +529,7 @@ if [[ ${#MISSING_SECTIONS[@]} -gt 0 ]]; then
     exit 4
 fi
 
-# Check 5: Output directory exists and is writable (only when output differs from input)
+# Check 5: Write target directory is writable
 if [[ "$OUTPUT_FILE" != "$INPUT_FILE" ]]; then
     if [[ ! -d "$OUTPUT_DIR" ]]; then
         echo "VALIDATION_ERROR: OUTPUT_DIR_NOT_FOUND"
@@ -540,6 +541,13 @@ if [[ "$OUTPUT_FILE" != "$INPUT_FILE" ]]; then
         echo "VALIDATION_ERROR: OUTPUT_DIR_NOT_WRITABLE"
         echo "The output directory is not writable: $OUTPUT_DIR"
         echo "Please check permissions: chmod u+w $OUTPUT_DIR"
+        exit 5
+    fi
+else
+    if [[ ! -w "$INPUT_DIR" ]]; then
+        echo "VALIDATION_ERROR: INPUT_DIR_NOT_WRITABLE"
+        echo "The input directory is not writable for in-place refine-plan mode: $INPUT_DIR"
+        echo "Please check permissions: chmod u+w $INPUT_DIR"
         exit 5
     fi
 fi
