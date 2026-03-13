@@ -109,10 +109,11 @@ When done, write a completion note to $LOOP_DIR/methodology-analysis-done.md."
 #
 # Returns:
 #   0 - completion successful, caller should exit 0 (allow exit)
-#   1 - completion artifact missing or empty, caller should block
+#   1 - incomplete (done marker missing/empty, report missing, or exit reason invalid)
 #
 complete_methodology_analysis() {
     local done_file="$LOOP_DIR/methodology-analysis-done.md"
+    local report_file="$LOOP_DIR/methodology-analysis-report.md"
 
     # Check completion artifact has actual content (not just empty placeholder)
     if [[ ! -f "$done_file" ]]; then
@@ -125,20 +126,29 @@ complete_methodology_analysis() {
         return 1
     fi
 
-    # Read exit reason
-    local exit_reason="complete"
-    if [[ -f "$LOOP_DIR/.methodology-exit-reason" ]]; then
-        exit_reason=$(cat "$LOOP_DIR/.methodology-exit-reason" 2>/dev/null || echo "complete")
-        exit_reason=$(echo "$exit_reason" | tr -d '[:space:]')
+    # Require the analysis report to exist (ensures the Opus agent actually ran)
+    if [[ ! -f "$report_file" ]]; then
+        echo "Warning: methodology-analysis-report.md missing, blocking completion" >&2
+        return 1
     fi
 
-    # Validate exit reason
+    # Read exit reason (fail closed: missing marker blocks completion)
+    if [[ ! -f "$LOOP_DIR/.methodology-exit-reason" ]]; then
+        echo "Error: .methodology-exit-reason marker missing, cannot determine terminal state" >&2
+        return 1
+    fi
+
+    local exit_reason
+    exit_reason=$(cat "$LOOP_DIR/.methodology-exit-reason" 2>/dev/null || echo "")
+    exit_reason=$(echo "$exit_reason" | tr -d '[:space:]')
+
+    # Validate exit reason (fail closed on invalid values)
     case "$exit_reason" in
         complete|stop|maxiter)
             ;;
         *)
-            echo "Warning: Invalid methodology exit reason '$exit_reason', defaulting to complete" >&2
-            exit_reason="complete"
+            echo "Error: Invalid methodology exit reason '$exit_reason', blocking completion" >&2
+            return 1
             ;;
     esac
 
