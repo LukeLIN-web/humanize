@@ -73,8 +73,11 @@ ACTIVE_PR_LOOP_DIR=$(find_active_pr_loop "$PR_LOOP_BASE_DIR")
 # Uses unfiltered search to also apply to spawned agents with different session_id.
 
 _MA_BASH_DIR="$ACTIVE_LOOP_DIR"
-if [[ -z "$_MA_BASH_DIR" ]]; then
-    _MA_BASH_DIR=$(find_active_loop "$LOOP_BASE_DIR" "")
+if [[ -z "$_MA_BASH_DIR" ]] || [[ ! -f "$_MA_BASH_DIR/methodology-analysis-state.md" ]]; then
+    # Spawned agents have a different session_id, so session-filtered search may
+    # miss the originating loop. Use targeted search that scans ALL loops for
+    # methodology-analysis-state.md to avoid binding to a wrong concurrent session.
+    _MA_BASH_DIR=$(find_methodology_analysis_loop "$LOOP_BASE_DIR")
 fi
 
 if [[ -n "$_MA_BASH_DIR" ]] && [[ -f "$_MA_BASH_DIR/methodology-analysis-state.md" ]]; then
@@ -109,6 +112,34 @@ In-place file editing is not allowed during the methodology analysis phase." >&2
         echo "# Bash Blocked During Methodology Analysis
 
 Running interpreters is not allowed during the methodology analysis phase." >&2
+        exit 2
+    fi
+    # Block shell script entry points (bash script.sh, sh script.sh, source, .)
+    if echo "$COMMAND_LOWER" | grep -qE '(^|[[:space:];|&])(/usr/bin/env[[:space:]]+)?(bash|sh|zsh|/bin/bash|/bin/sh|/bin/zsh)[[:space:]]'; then
+        echo "# Bash Blocked During Methodology Analysis
+
+Running shell scripts is not allowed during the methodology analysis phase." >&2
+        exit 2
+    fi
+    # Block build tools that execute arbitrary commands
+    if echo "$COMMAND_LOWER" | grep -qE '(^|[[:space:];|&])(make|cmake|ninja|gradle|mvn|ant|cargo|go[[:space:]]+run|go[[:space:]]+generate|npm[[:space:]]+run|yarn[[:space:]]+run|npx|pnpm)[[:space:]]'; then
+        echo "# Bash Blocked During Methodology Analysis
+
+Build tools are not allowed during the methodology analysis phase." >&2
+        exit 2
+    fi
+    # Block source/dot commands (source script.sh, . script.sh)
+    if echo "$COMMAND_LOWER" | grep -qE '(^|[[:space:];|&])(source|\.)[ 	]+[^[:space:]]'; then
+        echo "# Bash Blocked During Methodology Analysis
+
+Sourcing scripts is not allowed during the methodology analysis phase." >&2
+        exit 2
+    fi
+    # Block direct script execution (./script.sh, ../script.sh, /path/to/script)
+    if echo "$COMMAND_LOWER" | grep -qE '(^|[[:space:];|&])\.{0,2}/[^[:space:]>|&;]*\.(sh|bash|py|rb|pl|js)'; then
+        echo "# Bash Blocked During Methodology Analysis
+
+Direct script execution is not allowed during the methodology analysis phase." >&2
         exit 2
     fi
     # Block output redirection to files (catches cat > file, echo > file, etc.)
