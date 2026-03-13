@@ -71,12 +71,17 @@ ACTIVE_PR_LOOP_DIR=$(find_active_pr_loop "$PR_LOOP_BASE_DIR")
 # Only read-only operations and cancel-rlcr-loop.sh are allowed.
 # This prevents source code modifications after Codex has signed off.
 #
+# Accepted limitations:
+# - Read-only bash commands (cat, grep, find, etc.) are NOT blocked. Blocking
+#   them would break basic Claude operations. The analysis prompt directs Claude
+#   to derive user-facing content only from methodology-analysis-report.md.
+# - Spawned agents (different session_id) are not restricted by hooks; their
+#   sanitization is enforced by the analysis prompt. This is an inherent
+#   limitation of the hook architecture which cannot distinguish spawned agents
+#   from unrelated sessions.
+#
 # Use only the session-matched loop. Do NOT fall back to an unfiltered search,
 # as that would incorrectly restrict unrelated sessions opened in the same repo.
-# Limitation: Spawned agents (different session_id) are not restricted by hooks;
-# their sanitization is enforced by the analysis prompt. This is an inherent
-# limitation of the hook architecture which cannot distinguish spawned agents
-# from unrelated sessions.
 _MA_BASH_DIR="$ACTIVE_LOOP_DIR"
 
 if [[ -n "$_MA_BASH_DIR" ]] && [[ -f "$_MA_BASH_DIR/methodology-analysis-state.md" ]]; then

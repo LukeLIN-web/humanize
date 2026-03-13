@@ -100,14 +100,15 @@ if [[ -n "$_MA_CHECK_DIR" ]]; then
         [[ -z "$_ma_real_loop" ]] && _ma_real_loop="$_MA_CHECK_DIR"
         if [[ "$_ma_real_path" == "$_ma_real_loop/"* ]]; then
             _ma_basename=$(basename "$_ma_real_path")
-            # Allowlist: only files the analysis agent needs
-            # - round-*-summary.md: development record summaries
-            # - round-*-review-result.md: review feedback
-            # - methodology-analysis-report.md: the agent's own output
-            # - methodology-analysis-done.md: completion marker
-            # - methodology-analysis-state.md: state file (for parsing)
+            # Allowlist: only methodology artifacts (not raw development records).
+            # Raw records (round-*-summary.md, round-*-review-result.md) are
+            # intentionally excluded so the originating session cannot read
+            # project-specific content and must rely solely on the sanitized
+            # methodology-analysis-report.md for all user-facing output.
+            # The spawned Opus agent reads raw records directly (not restricted
+            # by hooks due to different session_id -- see limitation comment above).
             case "$_ma_basename" in
-                round-*-summary.md|round-*-review-result.md|methodology-analysis-report.md|methodology-analysis-done.md|methodology-analysis-state.md)
+                methodology-analysis-report.md|methodology-analysis-done.md|methodology-analysis-state.md)
                     exit 0
                     ;;
                 *)
