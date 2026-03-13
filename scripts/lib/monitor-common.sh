@@ -159,7 +159,11 @@ monitor_find_state_file() {
         return
     fi
 
-    # Priority 1: state.md indicates active loop
+    # Priority 1: Active state files indicate running loop
+    if [[ -f "$session_dir/methodology-analysis-state.md" ]]; then
+        echo "$session_dir/methodology-analysis-state.md|methodology-analysis"
+        return
+    fi
     if [[ -f "$session_dir/state.md" ]]; then
         echo "$session_dir/state.md|active"
         return

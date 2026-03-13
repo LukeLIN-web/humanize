@@ -148,6 +148,15 @@ if [[ -n "$ACTIVE_LOOP_DIR" ]]; then
 # 1. command_modifies_file checks if DESTINATION contains state.md
 # 2. Additional check below catches if SOURCE contains state.md (e.g., mv state.md /tmp/foo)
 
+if command_modifies_file "$COMMAND_LOWER" "methodology-analysis-state\.md"; then
+    # Check for cancel signal file - allow authorized cancel operation
+    if is_cancel_authorized "$ACTIVE_LOOP_DIR" "$COMMAND_LOWER"; then
+        exit 0
+    fi
+    methodology_analysis_state_file_blocked_message >&2
+    exit 2
+fi
+
 if command_modifies_file "$COMMAND_LOWER" "finalize-state\.md"; then
     # Check for cancel signal file - allow authorized cancel operation
     if is_cancel_authorized "$ACTIVE_LOOP_DIR" "$COMMAND_LOWER"; then
@@ -182,6 +191,7 @@ fi
 # This catches chained commands like: true; mv state.md /tmp/foo
 MV_CP_SOURCE_PATTERN="^[[:space:]]*(sudo([[:space:]]+-?[^[:space:];&|]+)*[[:space:]]+)?(env[[:space:]]+[^;&|]*[[:space:]]+)?(command([[:space:]]+-?[^[:space:];&|]+)*[[:space:]]+)?(mv|cp)[[:space:]].*[[:space:]/\"']state\.md"
 MV_CP_FINALIZE_SOURCE_PATTERN="^[[:space:]]*(sudo([[:space:]]+-?[^[:space:];&|]+)*[[:space:]]+)?(env[[:space:]]+[^;&|]*[[:space:]]+)?(command([[:space:]]+-?[^[:space:];&|]+)*[[:space:]]+)?(mv|cp)[[:space:]].*[[:space:]/\"']finalize-state\.md"
+MV_CP_METHODOLOGY_SOURCE_PATTERN="^[[:space:]]*(sudo([[:space:]]+-?[^[:space:];&|]+)*[[:space:]]+)?(env[[:space:]]+[^;&|]*[[:space:]]+)?(command([[:space:]]+-?[^[:space:];&|]+)*[[:space:]]+)?(mv|cp)[[:space:]].*[[:space:]/\"']methodology-analysis-state\.md"
 
 # Replace shell operators with newlines, then check each segment
 # Order matters: |& before |, && before single &
@@ -295,7 +305,17 @@ while IFS= read -r SEGMENT; do
         t again
     ')
 
-    # Check for finalize-state.md as SOURCE first (more specific pattern)
+    # Check for methodology-analysis-state.md as SOURCE first (most specific pattern)
+    if echo "$SEGMENT_CLEANED" | grep -qE "$MV_CP_METHODOLOGY_SOURCE_PATTERN"; then
+        # Check for cancel signal file - allow authorized cancel operation
+        if is_cancel_authorized "$ACTIVE_LOOP_DIR" "$COMMAND_LOWER"; then
+            exit 0
+        fi
+        methodology_analysis_state_file_blocked_message >&2
+        exit 2
+    fi
+
+    # Check for finalize-state.md as SOURCE (more specific than state.md)
     if echo "$SEGMENT_CLEANED" | grep -qE "$MV_CP_FINALIZE_SOURCE_PATTERN"; then
         # Check for cancel signal file - allow authorized cancel operation
         if is_cancel_authorized "$ACTIVE_LOOP_DIR" "$COMMAND_LOWER"; then
@@ -319,6 +339,14 @@ done <<< "$COMMAND_SEGMENTS"
 # This catches bypass attempts like: sh -c 'mv state.md /tmp/foo'
 # Pattern: look for sh/bash with -c flag and state.md or finalize-state.md in the payload
 if echo "$COMMAND_LOWER" | grep -qE "(^|[[:space:]/])(sh|bash)[[:space:]]+-c[[:space:]]"; then
+    # Shell wrapper detected - check if payload contains mv/cp methodology-analysis-state.md (most specific)
+    if echo "$COMMAND_LOWER" | grep -qE "(mv|cp)[[:space:]].*methodology-analysis-state\.md"; then
+        if is_cancel_authorized "$ACTIVE_LOOP_DIR" "$COMMAND_LOWER"; then
+            exit 0
+        fi
+        methodology_analysis_state_file_blocked_message >&2
+        exit 2
+    fi
     # Shell wrapper detected - check if payload contains mv/cp finalize-state.md (check first, more specific)
     if echo "$COMMAND_LOWER" | grep -qE "(mv|cp)[[:space:]].*finalize-state\.md"; then
         # Check for cancel signal file - allow authorized cancel operation

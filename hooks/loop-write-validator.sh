@@ -109,12 +109,12 @@ if [[ "$IS_SUMMARY_FILE" == "false" ]] && [[ "$IS_FINALIZE_SUMMARY" == "false" ]
     exit 0
 fi
 
-# For state.md, finalize-state.md, goal-tracker.md, and plan.md in .humanize/rlcr, we need further validation
+# For state.md, finalize-state.md, methodology-analysis-state.md, goal-tracker.md, and plan.md in .humanize/rlcr, we need further validation
 # For other files in .humanize/rlcr that aren't summaries, allow them
 FILENAME=$(basename "$FILE_PATH")
 IS_PLAN_BACKUP=$([[ "$FILENAME" == "plan.md" ]] && echo "true" || echo "false")
 if [[ "$IN_HUMANIZE_LOOP_DIR" == "true" ]] && [[ "$IS_SUMMARY_FILE" == "false" ]] && [[ "$IS_FINALIZE_SUMMARY" == "false" ]]; then
-    if ! is_state_file_path "$FILE_PATH_LOWER" && ! is_finalize_state_file_path "$FILE_PATH_LOWER" && ! is_goal_tracker_path "$FILE_PATH_LOWER" && [[ "$IS_PLAN_BACKUP" != "true" ]]; then
+    if ! is_state_file_path "$FILE_PATH_LOWER" && ! is_finalize_state_file_path "$FILE_PATH_LOWER" && ! is_methodology_analysis_state_file_path "$FILE_PATH_LOWER" && ! is_goal_tracker_path "$FILE_PATH_LOWER" && [[ "$IS_PLAN_BACKUP" != "true" ]]; then
         exit 0
     fi
 fi
@@ -147,9 +147,14 @@ fi
 CURRENT_ROUND="$STATE_CURRENT_ROUND"
 
 # ========================================
-# Block State File Writes (state.md and finalize-state.md)
+# Block State File Writes (state.md, finalize-state.md, methodology-analysis-state.md)
 # ========================================
-# NOTE: Check finalize-state.md FIRST because is_state_file_path also matches finalize-state.md
+# NOTE: Check most specific patterns first because is_state_file_path matches any *state.md
+
+if is_methodology_analysis_state_file_path "$FILE_PATH_LOWER"; then
+    methodology_analysis_state_file_blocked_message >&2
+    exit 2
+fi
 
 if is_finalize_state_file_path "$FILE_PATH_LOWER"; then
     finalize_state_file_blocked_message >&2

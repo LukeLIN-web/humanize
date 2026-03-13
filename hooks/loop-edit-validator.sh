@@ -110,9 +110,14 @@ fi
 CURRENT_ROUND="$STATE_CURRENT_ROUND"
 
 # ========================================
-# Block State File Edits (state.md and finalize-state.md)
+# Block State File Edits (state.md, finalize-state.md, methodology-analysis-state.md)
 # ========================================
-# NOTE: Check finalize-state.md FIRST because is_state_file_path also matches finalize-state.md
+# NOTE: Check most specific patterns first because is_state_file_path matches any *state.md
+
+if is_methodology_analysis_state_file_path "$FILE_PATH_LOWER"; then
+    methodology_analysis_state_file_blocked_message >&2
+    exit 2
+fi
 
 if is_finalize_state_file_path "$FILE_PATH_LOWER"; then
     finalize_state_file_blocked_message >&2

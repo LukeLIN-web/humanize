@@ -96,6 +96,7 @@ Transforms a rough draft document into a structured implementation plan with:
 - `--push-every-round` - Require git push after each round
 - `--claude-answer-codex` - Let Claude answer Codex Open Questions directly (default is AskUserQuestion)
 - `--agent-teams` - Enable Agent Teams mode
+- `--privacy` - Disable methodology analysis at loop exit (default: analysis enabled)
 
 ### Cancel RLCR Loop
 
@@ -226,6 +227,9 @@ Humanize stores all data in `.humanize/`:
 │       ├── round-N-review-result.md
 │       ├── finalize-state.md
 │       ├── finalize-summary.md
+│       ├── methodology-analysis-state.md
+│       ├── methodology-analysis-report.md
+│       ├── methodology-analysis-done.md
 │       └── complete-state.md
 ├── pr-loop/        # PR loop data
 │   └── <timestamp>/
