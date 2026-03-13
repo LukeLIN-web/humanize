@@ -837,14 +837,17 @@ assert_file_contains "$KIMI_INSTALL_DOC" "humanize-refine-plan" "install-for-kim
 
 # Kimi manual-install runtime bundle copy assertions (6 directories)
 for bundle_dir in scripts hooks prompt-template templates config agents; do
-    assert_file_contains "$KIMI_INSTALL_DOC" "cp -r $bundle_dir " \
-        "install-for-kimi.md manual install copies $bundle_dir/"
+    assert_file_contains "$KIMI_INSTALL_DOC" "cp -r $bundle_dir ~/.config/agents/skills/humanize/" \
+        "install-for-kimi.md manual install copies $bundle_dir/ to skills/humanize/"
 done
 
-# Kimi manual-install user-invocable stripping loop includes humanize-refine-plan
-assert_file_contains_regex "$KIMI_INSTALL_DOC" \
-    'for skill in .* humanize-refine-plan .*; do' \
-    "install-for-kimi.md user-invocable stripping loop includes humanize-refine-plan"
+# Kimi manual-install user-invocable stripping section
+assert_file_contains "$KIMI_INSTALL_DOC" \
+    "# Strip user-invocable flag from SKILL.md files for runtime visibility" \
+    "install-for-kimi.md has user-invocable stripping section comment"
+assert_file_contains "$KIMI_INSTALL_DOC" \
+    'in_fm && $0 ~ /^user-invocable:' \
+    "install-for-kimi.md stripping section contains awk user-invocable filter"
 
 # Kimi uninstall section includes humanize-refine-plan
 assert_file_contains "$KIMI_INSTALL_DOC" \
