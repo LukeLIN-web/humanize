@@ -77,15 +77,11 @@ fi
 
 PROJECT_ROOT="${PROJECT_ROOT:-${CLAUDE_PROJECT_DIR:-$(pwd)}}"
 LOOP_BASE_DIR="${LOOP_BASE_DIR:-$PROJECT_ROOT/.humanize/rlcr}"
+# Use only the session-matched loop. Do NOT fall back to an unfiltered search,
+# as that would incorrectly restrict unrelated sessions opened in the same repo.
+# Spawned agents (with different session_ids) are guided by their prompt instead.
 ACTIVE_LOOP_DIR="${LOOP_DIR:-$(find_active_loop "$LOOP_BASE_DIR" "$HOOK_SESSION_ID")}"
-
-# Only fall back when NO session-matched loop was found (spawned agent case).
-# If the session has its own active loop, do NOT search for another session's
-# methodology analysis -- that would incorrectly restrict the current session.
 _MA_CHECK_DIR="$ACTIVE_LOOP_DIR"
-if [[ -z "$_MA_CHECK_DIR" ]]; then
-    _MA_CHECK_DIR=$(find_methodology_analysis_loop "$LOOP_BASE_DIR")
-fi
 
 if [[ -n "$_MA_CHECK_DIR" ]]; then
     _MA_STATE=$(resolve_active_state_file "$_MA_CHECK_DIR")
@@ -98,8 +94,10 @@ if [[ -n "$_MA_CHECK_DIR" ]]; then
             [[ -n "$_ma_parent" ]] && _ma_real_path="$_ma_parent/$(basename "$FILE_PATH")"
         fi
         _ma_real_loop=$(realpath "$_MA_CHECK_DIR" 2>/dev/null || echo "")
-        if [[ -n "$_ma_real_path" ]] && [[ -n "$_ma_real_loop" ]] && \
-           [[ "$_ma_real_path" == "$_ma_real_loop/"* ]]; then
+        # Fallback to raw paths when realpath is unavailable (older macOS/BSD)
+        [[ -z "$_ma_real_path" ]] && _ma_real_path="$FILE_PATH"
+        [[ -z "$_ma_real_loop" ]] && _ma_real_loop="$_MA_CHECK_DIR"
+        if [[ "$_ma_real_path" == "$_ma_real_loop/"* ]]; then
             _ma_basename=$(basename "$_ma_real_path")
             # Allowlist: only files the analysis agent needs
             # - round-*-summary.md: development record summaries
@@ -122,7 +120,7 @@ Allowed: round-*-summary.md, round-*-review-result.md, methodology-analysis-*.md
         fi
         # Files within the project root are blocked (project-specific information)
         # Files outside the project root are allowed (system files, config, etc.)
-        _ma_project_real=$(realpath "$PROJECT_ROOT" 2>/dev/null || echo "")
+        _ma_project_real=$(realpath "$PROJECT_ROOT" 2>/dev/null || echo "$PROJECT_ROOT")
         if [[ -n "$_ma_project_real" ]]; then
             _ma_path_check="${_ma_real_path:-$FILE_PATH}"
             if [[ "$_ma_path_check" == "$_ma_project_real/"* ]] || \

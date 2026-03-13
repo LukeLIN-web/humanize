@@ -72,13 +72,10 @@ ACTIVE_PR_LOOP_DIR=$(find_active_pr_loop "$PR_LOOP_BASE_DIR")
 # This prevents source code modifications after Codex has signed off.
 # Uses unfiltered search to also apply to spawned agents with different session_id.
 
+# Use only the session-matched loop. Do NOT fall back to an unfiltered search,
+# as that would incorrectly restrict unrelated sessions opened in the same repo.
+# Spawned agents (with different session_ids) are guided by their prompt instead.
 _MA_BASH_DIR="$ACTIVE_LOOP_DIR"
-if [[ -z "$_MA_BASH_DIR" ]]; then
-    # Only fall back when NO session-matched loop was found (spawned agent case).
-    # If the session has its own active loop, do NOT search for another session's
-    # methodology analysis -- that would incorrectly restrict the current session.
-    _MA_BASH_DIR=$(find_methodology_analysis_loop "$LOOP_BASE_DIR")
-fi
 
 if [[ -n "$_MA_BASH_DIR" ]] && [[ -f "$_MA_BASH_DIR/methodology-analysis-state.md" ]]; then
     # Allow cancel-rlcr-loop.sh (user must be able to cancel during this phase)
