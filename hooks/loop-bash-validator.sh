@@ -73,10 +73,10 @@ ACTIVE_PR_LOOP_DIR=$(find_active_pr_loop "$PR_LOOP_BASE_DIR")
 # Uses unfiltered search to also apply to spawned agents with different session_id.
 
 _MA_BASH_DIR="$ACTIVE_LOOP_DIR"
-if [[ -z "$_MA_BASH_DIR" ]] || [[ ! -f "$_MA_BASH_DIR/methodology-analysis-state.md" ]]; then
-    # Spawned agents have a different session_id, so session-filtered search may
-    # miss the originating loop. Use targeted search that scans ALL loops for
-    # methodology-analysis-state.md to avoid binding to a wrong concurrent session.
+if [[ -z "$_MA_BASH_DIR" ]]; then
+    # Only fall back when NO session-matched loop was found (spawned agent case).
+    # If the session has its own active loop, do NOT search for another session's
+    # methodology analysis -- that would incorrectly restrict the current session.
     _MA_BASH_DIR=$(find_methodology_analysis_loop "$LOOP_BASE_DIR")
 fi
 
@@ -86,7 +86,7 @@ if [[ -n "$_MA_BASH_DIR" ]] && [[ -f "$_MA_BASH_DIR/methodology-analysis-state.m
         exit 0
     fi
     # Block git commands that modify the working tree
-    if echo "$COMMAND_LOWER" | grep -qE '(^|[[:space:];|&])git[[:space:]]+(commit|add|reset|checkout|merge|rebase|cherry-pick|am|apply|stash|push)'; then
+    if echo "$COMMAND_LOWER" | grep -qE '(^|[[:space:];|&])git[[:space:]]+(commit|add|reset|checkout|merge|rebase|cherry-pick|am|apply|stash|push|restore|clean|rm|mv)'; then
         echo "# Bash Blocked During Methodology Analysis
 
 Git write commands are not allowed during the methodology analysis phase." >&2

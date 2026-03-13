@@ -79,11 +79,11 @@ PROJECT_ROOT="${PROJECT_ROOT:-${CLAUDE_PROJECT_DIR:-$(pwd)}}"
 LOOP_BASE_DIR="${LOOP_BASE_DIR:-$PROJECT_ROOT/.humanize/rlcr}"
 ACTIVE_LOOP_DIR="${LOOP_DIR:-$(find_active_loop "$LOOP_BASE_DIR" "$HOOK_SESSION_ID")}"
 
-# Spawned agents (e.g., Opus analysis agent) have a different session_id.
-# Use targeted search that scans ALL loops for methodology-analysis-state.md
-# to avoid binding to a wrong concurrent session.
+# Only fall back when NO session-matched loop was found (spawned agent case).
+# If the session has its own active loop, do NOT search for another session's
+# methodology analysis -- that would incorrectly restrict the current session.
 _MA_CHECK_DIR="$ACTIVE_LOOP_DIR"
-if [[ -z "$_MA_CHECK_DIR" ]] || [[ ! -f "$_MA_CHECK_DIR/methodology-analysis-state.md" ]]; then
+if [[ -z "$_MA_CHECK_DIR" ]]; then
     _MA_CHECK_DIR=$(find_methodology_analysis_loop "$LOOP_BASE_DIR")
 fi
 
