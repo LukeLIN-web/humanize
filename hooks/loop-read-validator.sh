@@ -114,8 +114,8 @@ if [[ -n "$_MA_CHECK_DIR" ]]; then
                 *)
                     echo "# Read Blocked During Methodology Analysis
 
-Only analysis artifacts can be read from the loop directory during this phase.
-Allowed: round-*-summary.md, round-*-review-result.md, methodology-analysis-*.md" >&2
+Only methodology artifacts can be read from the loop directory during this phase.
+Allowed: methodology-analysis-report.md, methodology-analysis-done.md, methodology-analysis-state.md" >&2
                     exit 2
                     ;;
             esac
@@ -130,8 +130,8 @@ Allowed: round-*-summary.md, round-*-review-result.md, methodology-analysis-*.md
                 echo "# Read Blocked During Methodology Analysis
 
 Reading project files is not allowed during the methodology analysis phase.
-Only analysis artifacts within the loop directory can be read.
-Allowed: round-*-summary.md, round-*-review-result.md, methodology-analysis-*.md" >&2
+Only methodology artifacts within the loop directory can be read.
+Allowed: methodology-analysis-report.md, methodology-analysis-done.md, methodology-analysis-state.md" >&2
                 exit 2
             fi
         fi
