@@ -90,6 +90,12 @@ PROJECT_ROOT="${PROJECT_ROOT:-${CLAUDE_PROJECT_DIR:-$(pwd)}}"
 LOOP_BASE_DIR="${LOOP_BASE_DIR:-$PROJECT_ROOT/.humanize/rlcr}"
 _MA_LOOP_DIR="${LOOP_DIR:-$(find_active_loop "$LOOP_BASE_DIR" "$HOOK_SESSION_ID")}"
 
+# Spawned agents (e.g., Opus analysis agent) have a different session_id.
+# Try unfiltered search to detect methodology analysis phase for them.
+if [[ -z "$_MA_LOOP_DIR" ]]; then
+    _MA_LOOP_DIR=$(find_active_loop "$LOOP_BASE_DIR" "")
+fi
+
 if [[ -n "$_MA_LOOP_DIR" ]] && [[ -f "$_MA_LOOP_DIR/methodology-analysis-state.md" ]]; then
     _ma_real_path=$(realpath "$FILE_PATH" 2>/dev/null || echo "")
     _ma_real_loop=$(realpath "$_MA_LOOP_DIR" 2>/dev/null || echo "")

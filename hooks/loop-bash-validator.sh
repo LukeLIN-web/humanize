@@ -64,6 +64,56 @@ ACTIVE_LOOP_DIR=$(find_active_loop "$LOOP_BASE_DIR" "$HOOK_SESSION_ID")
 PR_LOOP_BASE_DIR="$PROJECT_ROOT/.humanize/pr-loop"
 ACTIVE_PR_LOOP_DIR=$(find_active_pr_loop "$PR_LOOP_BASE_DIR")
 
+# ========================================
+# Methodology Analysis Phase Bash Restriction
+# ========================================
+# During methodology analysis, block file-modifying bash commands.
+# Only gh commands and read-only operations are allowed.
+# This prevents source code modifications after Codex has signed off.
+# Uses unfiltered search to also apply to spawned agents with different session_id.
+
+_MA_BASH_DIR="$ACTIVE_LOOP_DIR"
+if [[ -z "$_MA_BASH_DIR" ]]; then
+    _MA_BASH_DIR=$(find_active_loop "$LOOP_BASE_DIR" "")
+fi
+
+if [[ -n "$_MA_BASH_DIR" ]] && [[ -f "$_MA_BASH_DIR/methodology-analysis-state.md" ]]; then
+    # Allow gh commands for issue creation
+    if [[ "$COMMAND_LOWER" =~ ^[[:space:]]*gh[[:space:]] ]]; then
+        exit 0
+    fi
+    # Block git commands that modify the working tree
+    if echo "$COMMAND_LOWER" | grep -qE '(^|[[:space:];|&])git[[:space:]]+(commit|add|reset|checkout|merge|rebase|cherry-pick|am|apply|stash|push)'; then
+        echo "# Bash Blocked During Methodology Analysis
+
+Git write commands are not allowed during the methodology analysis phase." >&2
+        exit 2
+    fi
+    # Block file manipulation commands (touch, mv, cp, rm, etc.)
+    if echo "$COMMAND_LOWER" | grep -qE '(^|[[:space:];|&])(tee|install|touch|mv|cp|rm|dd|truncate|chmod|chown)[[:space:]]'; then
+        echo "# Bash Blocked During Methodology Analysis
+
+File modification commands are not allowed during the methodology analysis phase." >&2
+        exit 2
+    fi
+    # Block in-place file editing tools
+    if echo "$COMMAND_LOWER" | grep -qE 'sed[[:space:]]+-i|awk[[:space:]]+-i[[:space:]]+inplace|perl[[:space:]]+-[^[:space:]]*i'; then
+        echo "# Bash Blocked During Methodology Analysis
+
+In-place file editing is not allowed during the methodology analysis phase." >&2
+        exit 2
+    fi
+    # Block output redirection to files (catches cat > file, echo > file, etc.)
+    # Strip safe redirections (/dev/ paths, fd duplication) then check for remaining >
+    _ma_stripped=$(echo "$COMMAND_LOWER" | sed 's|[0-9]*>[>]*[[:space:]]*/dev/[^[:space:]]*||g; s|[0-9]*>&[0-9]*||g')
+    if echo "$_ma_stripped" | grep -qE '[>]'; then
+        echo "# Bash Blocked During Methodology Analysis
+
+File redirection is not allowed during the methodology analysis phase." >&2
+        exit 2
+    fi
+fi
+
 # If no active loop of either type, allow all commands
 if [[ -z "$ACTIVE_LOOP_DIR" ]] && [[ -z "$ACTIVE_PR_LOOP_DIR" ]]; then
     exit 0
@@ -96,35 +146,6 @@ if [[ -n "$ACTIVE_LOOP_DIR" ]]; then
         exit 1
     fi
     CURRENT_ROUND="$STATE_CURRENT_ROUND"
-
-    # ========================================
-    # Methodology Analysis Phase Bash Restriction
-    # ========================================
-    # During methodology analysis, block file-modifying bash commands.
-    # Only gh commands and read-only operations are allowed.
-    # This prevents source code modifications after Codex has signed off.
-
-    if [[ "$STATE_FILE" == *"/methodology-analysis-state.md" ]]; then
-        # Allow gh commands for issue creation
-        if [[ "$COMMAND_LOWER" =~ ^[[:space:]]*gh[[:space:]] ]]; then
-            exit 0
-        fi
-        # Block git commands that modify the working tree
-        if echo "$COMMAND_LOWER" | grep -qE '(^|[[:space:];|&])git[[:space:]]+(commit|add|reset|checkout|merge|rebase|cherry-pick|am|apply|stash|push)'; then
-            echo "# Bash Blocked During Methodology Analysis
-
-Git commands that modify the working tree are not allowed during the methodology analysis phase." >&2
-            exit 2
-        fi
-        # Block in-place file editing tools (bypass for Write/Edit tool restriction)
-        if echo "$COMMAND_LOWER" | grep -qE '(^|[[:space:];|&])(tee|install)[[:space:]]' || \
-           echo "$COMMAND_LOWER" | grep -qE 'sed[[:space:]]+-i|awk[[:space:]]+-i[[:space:]]+inplace|perl[[:space:]]+-[^[:space:]]*i'; then
-            echo "# Bash Blocked During Methodology Analysis
-
-File modification commands are not allowed during the methodology analysis phase." >&2
-            exit 2
-        fi
-    fi
 
     # ========================================
     # Block Git Push When push_every_round is false
