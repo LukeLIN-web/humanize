@@ -5,13 +5,239 @@
 #   0 - Success, all validations passed
 #   1 - Input file does not exist
 #   2 - Input file is empty
-#   3 - Input file has no CMT:/ENDCMT blocks
+#   3 - Input file has no valid CMT:/ENDCMT blocks or has malformed CMT syntax
 #   4 - Input file missing required gen-plan sections
 #   5 - Output directory does not exist (when --output differs from --input)
 #   6 - QA directory not writable
 #   7 - Invalid arguments
 
 set -e
+
+scan_cmt_blocks() {
+    local input_file="$1"
+
+    awk '
+    function trim(value) {
+        sub(/^[[:space:]]+/, "", value)
+        sub(/[[:space:]]+$/, "", value)
+        return value
+    }
+
+    function has_non_ws(value) {
+        return value ~ /[^[:space:]]/
+    }
+
+    function current_heading() {
+        return nearest_heading == "" ? "Preamble" : nearest_heading
+    }
+
+    function context_excerpt(line_text, column, excerpt) {
+        excerpt = substr(line_text, column)
+        excerpt = trim(excerpt)
+        if (excerpt == "") {
+            excerpt = trim(line_text)
+        }
+        gsub(/[[:cntrl:]]/, " ", excerpt)
+        gsub(/[[:space:]]+/, " ", excerpt)
+        if (length(excerpt) > 80) {
+            excerpt = substr(excerpt, 1, 77) "..."
+        }
+        return excerpt
+    }
+
+    function emit_error(kind, line_num, column, excerpt, heading) {
+        fatal = 1
+        fatal_code = 2
+        heading = current_heading()
+
+        if (kind == "nested") {
+            printf "Comment parse error: nested CMT block at line %d, column %d near \"%s\" (context: \"%s\")\n", line_num, column, heading, excerpt > "/dev/stderr"
+        } else if (kind == "stray_end") {
+            printf "Comment parse error: stray ENDCMT at line %d, column %d near \"%s\" (context: \"%s\")\n", line_num, column, heading, excerpt > "/dev/stderr"
+        }
+
+        exit fatal_code
+    }
+
+    BEGIN {
+        count = 0
+        in_fence = 0
+        in_html = 0
+        in_cmt = 0
+        fence_marker = ""
+        nearest_heading = "Preamble"
+        cmt_open_line = 0
+        cmt_open_col = 0
+        cmt_open_heading = "Preamble"
+        cmt_has_text = 0
+        fatal = 0
+        fatal_code = 0
+    }
+
+    {
+        line = $0
+
+        if (!in_fence && !in_html && !in_cmt && line ~ /^[[:space:]]*#[#]*[[:space:]]+/) {
+            nearest_heading = trim(line)
+        }
+
+        if (in_fence) {
+            if ((fence_marker == "```" && line ~ /^[[:space:]]*```/) || (fence_marker == "~~~" && line ~ /^[[:space:]]*~~~/)) {
+                in_fence = 0
+                fence_marker = ""
+            }
+            next
+        }
+
+        if (!in_html && !in_cmt) {
+            if (line ~ /^[[:space:]]*```/) {
+                in_fence = 1
+                fence_marker = "```"
+                next
+            }
+            if (line ~ /^[[:space:]]*~~~/) {
+                in_fence = 1
+                fence_marker = "~~~"
+                next
+            }
+        }
+
+        pos = 1
+        line_length = length(line)
+        while (pos <= line_length) {
+            rest = substr(line, pos)
+
+            if (in_html) {
+                close_rel = index(rest, "-->")
+
+                if (in_cmt && has_non_ws(rest)) {
+                    cmt_has_text = 1
+                }
+
+                if (close_rel > 0) {
+                    pos += close_rel + 2
+                    in_html = 0
+                    continue
+                }
+
+                pos = line_length + 1
+                break
+            }
+
+            if (in_cmt) {
+                html_rel = index(rest, "<!--")
+                end_rel = index(rest, "ENDCMT")
+                nested_rel = index(rest, "CMT:")
+                token_rel = 0
+                token_type = ""
+
+                if (html_rel > 0) {
+                    token_rel = html_rel
+                    token_type = "html"
+                }
+                if (end_rel > 0 && (token_rel == 0 || end_rel < token_rel)) {
+                    token_rel = end_rel
+                    token_type = "end"
+                }
+                if (nested_rel > 0 && (token_rel == 0 || nested_rel < token_rel)) {
+                    token_rel = nested_rel
+                    token_type = "nested"
+                }
+
+                if (token_rel == 0) {
+                    if (has_non_ws(rest)) {
+                        cmt_has_text = 1
+                    }
+                    pos = line_length + 1
+                    break
+                }
+
+                segment = substr(rest, 1, token_rel - 1)
+                if (has_non_ws(segment)) {
+                    cmt_has_text = 1
+                }
+
+                if (token_type == "html") {
+                    cmt_has_text = 1
+                    in_html = 1
+                    pos += token_rel + 3
+                    continue
+                }
+
+                if (token_type == "nested") {
+                    emit_error("nested", NR, pos + token_rel - 1, context_excerpt(line, pos + token_rel - 1))
+                }
+
+                if (cmt_has_text) {
+                    count++
+                }
+
+                in_cmt = 0
+                cmt_has_text = 0
+                cmt_open_line = 0
+                cmt_open_col = 0
+                cmt_open_heading = "Preamble"
+                pos += token_rel + 5
+                continue
+            }
+
+            html_rel = index(rest, "<!--")
+            cmt_rel = index(rest, "CMT:")
+            end_rel = index(rest, "ENDCMT")
+            token_rel = 0
+            token_type = ""
+
+            if (html_rel > 0) {
+                token_rel = html_rel
+                token_type = "html"
+            }
+            if (cmt_rel > 0 && (token_rel == 0 || cmt_rel < token_rel)) {
+                token_rel = cmt_rel
+                token_type = "cmt"
+            }
+            if (end_rel > 0 && (token_rel == 0 || end_rel < token_rel)) {
+                token_rel = end_rel
+                token_type = "stray_end"
+            }
+
+            if (token_rel == 0) {
+                break
+            }
+
+            if (token_type == "html") {
+                in_html = 1
+                pos += token_rel + 3
+                continue
+            }
+
+            if (token_type == "cmt") {
+                in_cmt = 1
+                cmt_has_text = 0
+                cmt_open_line = NR
+                cmt_open_col = pos + token_rel - 1
+                cmt_open_heading = current_heading()
+                pos += token_rel + 3
+                continue
+            }
+
+            emit_error("stray_end", NR, pos + token_rel - 1, context_excerpt(line, pos + token_rel - 1))
+        }
+    }
+
+    END {
+        if (fatal) {
+            exit fatal_code
+        }
+
+        if (in_cmt) {
+            printf "Comment parse error: missing ENDCMT for block opened at line %d, column %d near \"%s\"\n", cmt_open_line, cmt_open_col, cmt_open_heading > "/dev/stderr"
+            exit 2
+        }
+
+        print count
+    }
+    ' "$input_file"
+}
 
 usage() {
     echo "Usage: $0 --input <path/to/annotated-plan.md> [--output <path/to/refined-plan.md>] [--qa-dir <path/to/qa-dir>] [--discussion|--direct]"
@@ -121,11 +347,20 @@ if [[ ! -s "$INPUT_FILE" ]]; then
     exit 2
 fi
 
-# Check 3: Input file has at least one CMT:/ENDCMT block
-if ! grep -q 'CMT:' "$INPUT_FILE"; then
+# Check 3: Input file has at least one valid, non-empty CMT:/ENDCMT block
+CMT_SCAN_OUTPUT=""
+if ! CMT_SCAN_OUTPUT=$(scan_cmt_blocks "$INPUT_FILE" 2>&1); then
+    echo "VALIDATION_ERROR: INVALID_CMT_BLOCKS"
+    echo "$CMT_SCAN_OUTPUT"
+    echo "Please fix malformed CMT:/ENDCMT blocks before running refine-plan."
+    exit 3
+fi
+
+CMT_BLOCK_COUNT=$(printf '%s' "$CMT_SCAN_OUTPUT" | tr -d '[:space:]')
+if [[ "$CMT_BLOCK_COUNT" -eq 0 ]]; then
     echo "VALIDATION_ERROR: NO_CMT_BLOCKS"
-    echo "The input file has no CMT: blocks: $INPUT_FILE"
-    echo "refine-plan requires at least one CMT:/ENDCMT comment block in the input."
+    echo "The input file has no valid non-empty CMT:/ENDCMT blocks after parsing: $INPUT_FILE"
+    echo "Markers inside HTML comments or fenced code are ignored, and empty blocks do not count."
     exit 3
 fi
 
@@ -189,7 +424,6 @@ fi
 
 # All checks passed
 INPUT_LINE_COUNT=$(wc -l < "$INPUT_FILE" | tr -d ' ')
-CMT_BLOCK_COUNT=$(grep -c 'CMT:' "$INPUT_FILE" || echo "0")
 echo "VALIDATION_SUCCESS"
 echo "Input file: $INPUT_FILE ($INPUT_LINE_COUNT lines, $CMT_BLOCK_COUNT CMT blocks)"
 echo "Output target: $OUTPUT_FILE"

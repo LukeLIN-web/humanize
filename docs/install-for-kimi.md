@@ -63,6 +63,27 @@ for skill in humanize humanize-gen-plan humanize-refine-plan humanize-rlcr; do
   sed -i.bak "s|{{HUMANIZE_RUNTIME_ROOT}}|$HOME/.config/agents/skills/humanize|g" \
     "$HOME/.config/agents/skills/$skill/SKILL.md"
 done
+
+# Strip user-invocable flag from SKILL.md files for runtime visibility
+# (This matches the behavior of scripts/install-skill.sh)
+for skill in humanize humanize-gen-plan humanize-refine-plan humanize-rlcr; do
+  awk '
+    BEGIN { in_fm = 0; fm_done = 0 }
+    /^---[[:space:]]*$/ {
+      if (fm_done == 0) {
+        in_fm = !in_fm
+        if (in_fm == 0) {
+          fm_done = 1
+        }
+      }
+      print
+      next
+    }
+    in_fm && $0 ~ /^user-invocable:[[:space:]]*/ { next }
+    { print }
+  ' "$HOME/.config/agents/skills/$skill/SKILL.md" > "$HOME/.config/agents/skills/$skill/SKILL.md.tmp"
+  mv "$HOME/.config/agents/skills/$skill/SKILL.md.tmp" "$HOME/.config/agents/skills/$skill/SKILL.md"
+done
 ```
 
 ### 3. Verify installation
@@ -175,6 +196,7 @@ To remove the skills:
 ```bash
 rm -rf ~/.config/agents/skills/humanize
 rm -rf ~/.config/agents/skills/humanize-gen-plan
+rm -rf ~/.config/agents/skills/humanize-refine-plan
 rm -rf ~/.config/agents/skills/humanize-rlcr
 ```
 

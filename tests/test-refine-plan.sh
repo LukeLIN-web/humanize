@@ -1,12 +1,14 @@
 #!/bin/bash
 #
-# Test script for refine-plan command structure, validator behavior, and QA template coverage
+# Test script for refine-plan command structure, validator behavior, QA template coverage,
+# and AC-7 installation wiring coverage
 #
 # Validates:
 # - commands/refine-plan.md frontmatter and workflow requirements
 # - validate-refine-plan-io.sh exit codes 0-7 and mode handling
 # - Comment extraction/classification requirements documented by the command
 # - Language variant and atomic write requirements
+# - AC-7 installation/documentation wiring for humanize-refine-plan
 #
 
 set -euo pipefail
@@ -16,10 +18,21 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 COMMANDS_DIR="$PROJECT_ROOT/commands"
 PROMPT_TEMPLATE_DIR="$PROJECT_ROOT/prompt-template/plan"
 SCRIPTS_DIR="$PROJECT_ROOT/scripts"
+SKILLS_DIR="$PROJECT_ROOT/skills"
+DOCS_DIR="$PROJECT_ROOT/docs"
+CLAUDE_PLUGIN_DIR="$PROJECT_ROOT/.claude-plugin"
 
 REFINE_PLAN_CMD="$COMMANDS_DIR/refine-plan.md"
 REFINE_PLAN_QA_TEMPLATE="$PROMPT_TEMPLATE_DIR/refine-plan-qa-template.md"
 VALIDATE_SCRIPT="$SCRIPTS_DIR/validate-refine-plan-io.sh"
+REFINE_PLAN_SKILL="$SKILLS_DIR/humanize-refine-plan/SKILL.md"
+INSTALL_SKILL_SCRIPT="$SCRIPTS_DIR/install-skill.sh"
+CLAUDE_INSTALL_DOC="$DOCS_DIR/install-for-claude.md"
+CODEX_INSTALL_DOC="$DOCS_DIR/install-for-codex.md"
+KIMI_INSTALL_DOC="$DOCS_DIR/install-for-kimi.md"
+PLUGIN_JSON="$CLAUDE_PLUGIN_DIR/plugin.json"
+MARKETPLACE_JSON="$CLAUDE_PLUGIN_DIR/marketplace.json"
+README_FILE="$PROJECT_ROOT/README.md"
 
 # Colors for output
 RED='\033[0;31m'
@@ -89,10 +102,33 @@ assert_line_order() {
     fi
 }
 
+assert_equals() {
+    local expected="$1"
+    local actual="$2"
+    local description="$3"
+
+    if [[ "$actual" == "$expected" ]]; then
+        pass "$description"
+    else
+        fail "$description" "$expected" "$actual"
+    fi
+}
+
 frontmatter_value() {
     local file="$1"
     local key="$2"
     sed -n "/^---$/,/^---$/{ /^${key}:[[:space:]]*/{ s/^${key}:[[:space:]]*//p; q; } }" "$file"
+}
+
+json_first_string_value() {
+    local file="$1"
+    local key="$2"
+    sed -n "s/^[[:space:]]*\"${key}\":[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$file" | head -1
+}
+
+readme_current_version() {
+    local file="$1"
+    sed -n 's/^\*\*Current Version:[[:space:]]*\([^*][^*]*\)\*\*$/\1/p' "$file" | head -1
 }
 
 trim_string() {
@@ -166,6 +202,46 @@ make_plan_without_comments() {
 
 ## Goal Description
 Refine the generated plan while keeping plan-only scope.
+
+## Acceptance Criteria
+- AC-1: A refined plan is produced.
+
+## Path Boundaries
+Keep refinement inside plan artifacts only.
+
+## Feasibility Hints and Suggestions
+Reuse config-loader semantics and keep writes atomic.
+
+## Dependencies and Sequence
+1. Validate
+2. Extract comments
+3. Write outputs
+
+## Task Breakdown
+| Task ID | AC | Tag | Depends |
+|---------|----|-----|---------|
+| task1 | AC-1 | coding | - |
+
+## Claude-Codex Deliberation
+### Convergence Status
+partially_converged
+
+## Pending User Decisions
+None.
+
+## Implementation Notes
+Remove all reviewer comments from the refined plan.
+EOF
+}
+
+make_plan_with_goal_body() {
+    local output_file="$1"
+    local goal_body="$2"
+    cat > "$output_file" <<EOF
+# Refine Plan Fixture
+
+## Goal Description
+$goal_body
 
 ## Acceptance Criteria
 - AC-1: A refined plan is produced.
@@ -609,6 +685,50 @@ assert_file_contains "$REFINE_PLAN_QA_TEMPLATE" "- **Output Plan:** <path/to/ref
 assert_file_contains "$REFINE_PLAN_QA_TEMPLATE" "- **QA Document:** <path/to/qa-document.md>" "refine-plan QA template records QA document path"
 assert_file_contains "$REFINE_PLAN_QA_TEMPLATE" "- **Convergence Status:** <converged | partially_converged>" "refine-plan QA template records convergence status"
 
+echo ""
+echo "PT-11: AC-7 wiring coverage"
+if [[ -f "$REFINE_PLAN_SKILL" ]]; then
+    USER_INVOCABLE="$(frontmatter_value "$REFINE_PLAN_SKILL" "user-invocable")"
+    assert_equals "false" "$USER_INVOCABLE" "humanize-refine-plan skill frontmatter sets user-invocable: false"
+else
+    fail "humanize-refine-plan skill frontmatter sets user-invocable: false" "File exists with user-invocable: false" "File not found"
+fi
+
+if sed -n '/^SKILL_NAMES=(/,/^)/p' "$INSTALL_SKILL_SCRIPT" | grep -qF '"humanize-refine-plan"'; then
+    pass "install-skill.sh includes humanize-refine-plan in SKILL_NAMES"
+else
+    fail "install-skill.sh includes humanize-refine-plan in SKILL_NAMES" '"humanize-refine-plan"' "missing from SKILL_NAMES"
+fi
+
+assert_file_contains "$CLAUDE_INSTALL_DOC" "/humanize:refine-plan" "install-for-claude.md mentions refine-plan command"
+assert_file_contains "$CODEX_INSTALL_DOC" "humanize-refine-plan" "install-for-codex.md mentions humanize-refine-plan skill"
+assert_file_contains "$KIMI_INSTALL_DOC" "humanize-refine-plan" "install-for-kimi.md mentions humanize-refine-plan skill"
+
+PLUGIN_VERSION="$(json_first_string_value "$PLUGIN_JSON" "version")"
+MARKETPLACE_VERSION="$(json_first_string_value "$MARKETPLACE_JSON" "version")"
+README_VERSION="$(readme_current_version "$README_FILE")"
+
+if [[ -n "$PLUGIN_VERSION" ]]; then
+    pass "plugin.json exposes a non-empty version"
+else
+    fail "plugin.json exposes a non-empty version" "Non-empty version" "(empty)"
+fi
+
+if [[ -n "$MARKETPLACE_VERSION" ]]; then
+    pass "marketplace.json exposes a non-empty version"
+else
+    fail "marketplace.json exposes a non-empty version" "Non-empty version" "(empty)"
+fi
+
+if [[ -n "$README_VERSION" ]]; then
+    pass "README.md exposes a non-empty current version"
+else
+    fail "README.md exposes a non-empty current version" "Non-empty current version" "(empty)"
+fi
+
+assert_equals "$PLUGIN_VERSION" "$MARKETPLACE_VERSION" "plugin.json and marketplace.json versions match"
+assert_equals "$PLUGIN_VERSION" "$README_VERSION" "plugin.json and README.md current versions match"
+
 # ========================================
 # Reference Behavior Tests - Extraction/Classification/Language
 # ========================================
@@ -855,6 +975,63 @@ else
     fail "validate-refine-plan-io: input without CMT blocks exits 3" "3" "$VALIDATOR_EXIT_CODE"
 fi
 
+HTML_ONLY_COMMENT_PLAN="$TEST_FIXTURES_DIR/html-only-comment-plan.md"
+make_plan_with_goal_body "$HTML_ONLY_COMMENT_PLAN" "<!-- CMT: ignored inside HTML comment ENDCMT -->"
+run_validator_capture --input "$HTML_ONLY_COMMENT_PLAN"
+if [[ "$VALIDATOR_EXIT_CODE" -eq 3 ]]; then
+    pass "validate-refine-plan-io: HTML-comment markers do not count as CMT blocks"
+else
+    fail "validate-refine-plan-io: HTML-comment markers do not count as CMT blocks" "3" "$VALIDATOR_EXIT_CODE"
+fi
+
+FENCE_ONLY_COMMENT_PLAN="$TEST_FIXTURES_DIR/fence-only-comment-plan.md"
+make_plan_with_goal_body "$FENCE_ONLY_COMMENT_PLAN" $'```markdown\nCMT: ignored inside code fence ENDCMT\n```'
+run_validator_capture --input "$FENCE_ONLY_COMMENT_PLAN"
+if [[ "$VALIDATOR_EXIT_CODE" -eq 3 ]]; then
+    pass "validate-refine-plan-io: code-fence markers do not count as CMT blocks"
+else
+    fail "validate-refine-plan-io: code-fence markers do not count as CMT blocks" "3" "$VALIDATOR_EXIT_CODE"
+fi
+
+EMPTY_COMMENT_PLAN="$TEST_FIXTURES_DIR/empty-comment-plan.md"
+make_plan_with_goal_body "$EMPTY_COMMENT_PLAN" "CMT:      ENDCMT"
+run_validator_capture --input "$EMPTY_COMMENT_PLAN"
+if [[ "$VALIDATOR_EXIT_CODE" -eq 3 ]]; then
+    pass "validate-refine-plan-io: empty CMT blocks do not count as valid input"
+else
+    fail "validate-refine-plan-io: empty CMT blocks do not count as valid input" "3" "$VALIDATOR_EXIT_CODE"
+fi
+
+UNTERMINATED_COMMENT_PLAN="$TEST_FIXTURES_DIR/unterminated-comment-plan.md"
+make_plan_with_goal_body "$UNTERMINATED_COMMENT_PLAN" "CMT: this block never closes"
+run_validator_capture --input "$UNTERMINATED_COMMENT_PLAN"
+if [[ "$VALIDATOR_EXIT_CODE" -eq 3 ]]; then
+    pass "validate-refine-plan-io: unterminated CMT blocks exit 3"
+else
+    fail "validate-refine-plan-io: unterminated CMT blocks exit 3" "3" "$VALIDATOR_EXIT_CODE"
+fi
+
+if echo "$VALIDATOR_OUTPUT" | grep -q "missing ENDCMT"; then
+    pass "validate-refine-plan-io: unterminated CMT blocks report missing ENDCMT"
+else
+    fail "validate-refine-plan-io: unterminated CMT blocks report missing ENDCMT" "missing ENDCMT" "$VALIDATOR_OUTPUT"
+fi
+
+NESTED_COMMENT_PLAN="$TEST_FIXTURES_DIR/nested-comment-plan.md"
+make_plan_with_goal_body "$NESTED_COMMENT_PLAN" "CMT: outer CMT: inner ENDCMT"
+run_validator_capture --input "$NESTED_COMMENT_PLAN"
+if [[ "$VALIDATOR_EXIT_CODE" -eq 3 ]]; then
+    pass "validate-refine-plan-io: nested CMT blocks exit 3"
+else
+    fail "validate-refine-plan-io: nested CMT blocks exit 3" "3" "$VALIDATOR_EXIT_CODE"
+fi
+
+if echo "$VALIDATOR_OUTPUT" | grep -q "nested CMT block"; then
+    pass "validate-refine-plan-io: nested CMT blocks report a parse error"
+else
+    fail "validate-refine-plan-io: nested CMT blocks report a parse error" "nested CMT block" "$VALIDATOR_OUTPUT"
+fi
+
 MISSING_SECTION_PLAN="$TEST_FIXTURES_DIR/missing-sections-plan.md"
 make_plan_missing_sections "$MISSING_SECTION_PLAN"
 run_validator_capture --input "$MISSING_SECTION_PLAN"
@@ -902,6 +1079,22 @@ if echo "$VALIDATOR_OUTPUT" | grep -q "Mode: in-place (atomic write with temp fi
     pass "validate-refine-plan-io: reports in-place mode"
 else
     fail "validate-refine-plan-io: reports in-place mode" "Mode: in-place (atomic write with temp file)" "missing"
+fi
+
+MIXED_COMMENT_PLAN="$TEST_FIXTURES_DIR/mixed-comment-plan.md"
+make_plan_with_goal_body "$MIXED_COMMENT_PLAN" 'Valid CMT: counted comment ENDCMT <!-- CMT: ignored inside HTML comment ENDCMT --> CMT:      ENDCMT'
+MIXED_COMMENT_QA_DIR="$TEST_FIXTURES_DIR/mixed-comment-qa"
+run_validator_capture --input "$MIXED_COMMENT_PLAN" --qa-dir "$MIXED_COMMENT_QA_DIR"
+if [[ "$VALIDATOR_EXIT_CODE" -eq 0 ]]; then
+    pass "validate-refine-plan-io: mixed valid, ignored, and empty markers still pass with a valid block"
+else
+    fail "validate-refine-plan-io: mixed valid, ignored, and empty markers still pass with a valid block" "0" "$VALIDATOR_EXIT_CODE"
+fi
+
+if echo "$VALIDATOR_OUTPUT" | grep -Eq 'Input file: .+ \([0-9]+ lines, 1 CMT blocks\)'; then
+    pass "validate-refine-plan-io: success output reports only valid non-empty CMT blocks"
+else
+    fail "validate-refine-plan-io: success output reports only valid non-empty CMT blocks" "1 CMT blocks" "$VALIDATOR_OUTPUT"
 fi
 
 NEW_FILE_DIR="$TEST_FIXTURES_DIR/new-file-output"
