@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Tests for bitlesson-validate-delta.sh Notes validation
+# Tests for bitlesson-validate-delta.sh validation rules
 #
 
 set -euo pipefail
@@ -60,6 +60,17 @@ run_validator() {
         --current-round 1
 }
 
+assert_blocked() {
+    local name="$1"
+    local output="$2"
+
+    if echo "$output" | jq -e '.decision == "block"' >/dev/null 2>&1; then
+        pass "$name"
+    else
+        fail "$name" "block decision" "$output"
+    fi
+}
+
 assert_blocked_with_notes_error() {
     local name="$1"
     local output="$2"
@@ -68,6 +79,17 @@ assert_blocked_with_notes_error() {
         pass "$name"
     else
         fail "$name" "block decision mentioning Notes" "$output"
+    fi
+}
+
+assert_passes() {
+    local name="$1"
+    local output="$2"
+
+    if [[ -z "$output" ]]; then
+        pass "$name"
+    else
+        fail "$name" "no block output" "$output"
     fi
 }
 
@@ -90,13 +112,42 @@ make_summary_file "$SUMMARY_FILE" "update" "<what changed and why>"
 RESULT=$(run_validator "$SUMMARY_FILE" "$BITLESSON_FILE")
 assert_blocked_with_notes_error "update action blocks when Notes uses angle-bracket placeholder text" "$RESULT"
 
+SUMMARY_FILE="$TEST_DIR/delta-inside-fence.md"
+cat > "$SUMMARY_FILE" <<EOF
+# Round Summary
+
+\`\`\`markdown
+## BitLesson Delta
+- Action: add
+- Lesson ID(s): $TEST_LESSON_ID
+- Notes: Quoted template text inside a fenced block.
+\`\`\`
+EOF
+RESULT=$(run_validator "$SUMMARY_FILE" "$BITLESSON_FILE")
+assert_blocked "BitLesson Delta inside a fenced code block fails validation" "$RESULT"
+
+SUMMARY_FILE="$TEST_DIR/delta-inside-html-comment.md"
+cat > "$SUMMARY_FILE" <<EOF
+# Round Summary
+
+<!--
+## BitLesson Delta
+- Action: add
+- Lesson ID(s): $TEST_LESSON_ID
+- Notes: Quoted template text inside an HTML comment.
+-->
+EOF
+RESULT=$(run_validator "$SUMMARY_FILE" "$BITLESSON_FILE")
+assert_blocked "BitLesson Delta inside an HTML comment fails validation" "$RESULT"
+
 SUMMARY_FILE="$TEST_DIR/add-valid-notes.md"
 make_summary_file "$SUMMARY_FILE" "add" "Recorded the validator gap and added a regression test."
 RESULT=$(run_validator "$SUMMARY_FILE" "$BITLESSON_FILE")
-if [[ -z "$RESULT" ]]; then
-    pass "add action passes when Notes explains the change"
-else
-    fail "add action passes when Notes explains the change" "no block output" "$RESULT"
-fi
+assert_passes "add action passes when Notes explains the change" "$RESULT"
+
+SUMMARY_FILE="$TEST_DIR/delta-normal-text.md"
+make_summary_file "$SUMMARY_FILE" "update" "Normal text flow still exposes the BitLesson Delta section."
+RESULT=$(run_validator "$SUMMARY_FILE" "$BITLESSON_FILE")
+assert_passes "BitLesson Delta in normal text still passes validation" "$RESULT"
 
 print_test_summary "BitLesson Delta Validator Test Summary"

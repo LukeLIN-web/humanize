@@ -135,9 +135,6 @@ if [[ -z "$BITLESSON_FILE_REL" ]] || \
     BITLESSON_FILE_REL=".humanize/bitlesson.md"
 fi
 BITLESSON_FILE="$PROJECT_ROOT/$BITLESSON_FILE_REL"
-if [[ -z "$RAW_BITLESSON_REQUIRED" && -f "$BITLESSON_FILE" ]]; then
-    BITLESSON_REQUIRED="true"
-fi
 BITLESSON_ALLOW_EMPTY_NONE="true"
 if [[ -n "$RAW_BITLESSON_ALLOW_EMPTY_NONE" ]]; then
     BITLESSON_ALLOW_EMPTY_NONE=$(echo "$RAW_BITLESSON_ALLOW_EMPTY_NONE" | sed 's/^bitlesson_allow_empty_none:[[:space:]]*//' | tr -d ' "')
@@ -587,9 +584,10 @@ if [[ "$GIT_IS_REPO" == "true" ]]; then
     SPECIAL_NOTES=""
 
     # Check for uncommitted changes (staged or unstaged) using cached status.
-    # Exclude .humanize/ untracked files from the dirty determination because
-    # plugin state (bitlesson.md, config.json, rlcr/) is intentionally untracked.
-    GIT_STATUS_FOR_BLOCK=$(echo "$GIT_STATUS_CACHED" | grep -vE '^\?\? \.humanize/' || true)
+    # Exclude untracked .humanize and legacy .humanize-* paths from the dirty
+    # determination because local plugin state (bitlesson.md, config.json,
+    # rlcr/) is intentionally untracked.
+    GIT_STATUS_FOR_BLOCK=$(echo "$GIT_STATUS_CACHED" | grep -vE '^\?\? \.humanize' || true)
     if [[ -n "$GIT_STATUS_FOR_BLOCK" ]]; then
         GIT_ISSUES="uncommitted changes"
 

@@ -67,6 +67,7 @@ TEST_SUITES=(
     "test-stop-gate.sh"
     "test-templates-comprehensive.sh"
     "test-plan-file-hooks.sh"
+    "test-stop-hook-legacy-compat.sh"
     "test-error-scenarios.sh"
     "test-ansi-parsing.sh"
     "test-allowlist-validators.sh"
