@@ -104,6 +104,13 @@ File modification commands are not allowed during the methodology analysis phase
 In-place file editing is not allowed during the methodology analysis phase." >&2
         exit 2
     fi
+    # Block common interpreters that could write files (defense-in-depth)
+    if echo "$COMMAND_LOWER" | grep -qE '(^|[[:space:];|&])(python[23]?|ruby|node|perl|php)[[:space:]]'; then
+        echo "# Bash Blocked During Methodology Analysis
+
+Running interpreters is not allowed during the methodology analysis phase." >&2
+        exit 2
+    fi
     # Block output redirection to files (catches cat > file, echo > file, etc.)
     # Strip safe redirections (/dev/ paths, fd duplication) then check for remaining >
     _ma_stripped=$(echo "$COMMAND_LOWER" | sed 's|[0-9]*>[>]*[[:space:]]*/dev/[^[:space:]]*||g; s|[0-9]*>&[0-9]*||g')

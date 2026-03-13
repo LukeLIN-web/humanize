@@ -119,7 +119,21 @@ Allowed: round-*-summary.md, round-*-review-result.md, methodology-analysis-*.md
                     ;;
             esac
         fi
-        # Files outside loop dir are allowed (Claude needs system files to function)
+        # Files within the project root are blocked (project-specific information)
+        # Files outside the project root are allowed (system files, config, etc.)
+        _ma_project_real=$(realpath "$PROJECT_ROOT" 2>/dev/null || echo "")
+        if [[ -n "$_ma_project_real" ]]; then
+            _ma_path_check="${_ma_real_path:-$FILE_PATH}"
+            if [[ "$_ma_path_check" == "$_ma_project_real/"* ]] || \
+               [[ "$_ma_path_check" == "$PROJECT_ROOT/"* ]]; then
+                echo "# Read Blocked During Methodology Analysis
+
+Reading project files is not allowed during the methodology analysis phase.
+Only analysis artifacts within the loop directory can be read.
+Allowed: round-*-summary.md, round-*-review-result.md, methodology-analysis-*.md" >&2
+                exit 2
+            fi
+        fi
         exit 0
     fi
 fi

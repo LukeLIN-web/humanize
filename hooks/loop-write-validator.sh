@@ -109,6 +109,9 @@ _MA_LOOP_DIR="${LOOP_DIR:-$(find_active_loop "$LOOP_BASE_DIR" "$HOOK_SESSION_ID"
 
 # Spawned agents (e.g., Opus analysis agent) have a different session_id.
 # Try unfiltered search to detect methodology analysis phase for them.
+# Note: This may briefly affect concurrent sessions in the same repo, but
+# methodology analysis is short-lived and this ensures spawned agents
+# cannot bypass the write freeze after Codex has signed off.
 if [[ -z "$_MA_LOOP_DIR" ]]; then
     _MA_LOOP_DIR=$(find_active_loop "$LOOP_BASE_DIR" "")
 fi
