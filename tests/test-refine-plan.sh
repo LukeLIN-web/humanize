@@ -708,7 +708,7 @@ assert_file_contains "$REFINE_PLAN_CMD" '- Exit code 1: Report `Input file not f
 assert_file_contains "$REFINE_PLAN_CMD" '- Exit code 2: Report `Input file is empty` and stop' "refine-plan.md documents validator exit code 2"
 assert_file_contains "$REFINE_PLAN_CMD" '- Exit code 3: Report `Input file has no CMT:/ENDCMT blocks` and stop' "refine-plan.md documents validator exit code 3"
 assert_file_contains "$REFINE_PLAN_CMD" '- Exit code 4: Report `Input file is missing required gen-plan sections` and stop' "refine-plan.md documents validator exit code 4"
-assert_file_contains "$REFINE_PLAN_CMD" '- Exit code 5: Report `Output directory does not exist - please create it` and stop' "refine-plan.md documents validator exit code 5"
+assert_file_contains "$REFINE_PLAN_CMD" '- Exit code 5: Report `Output directory does not exist or is not writable - please fix it` and stop' "refine-plan.md documents validator exit code 5"
 assert_file_contains "$REFINE_PLAN_CMD" '- Exit code 6: Report `QA directory is not writable` and stop' "refine-plan.md documents validator exit code 6"
 assert_file_contains "$REFINE_PLAN_CMD" '- Exit code 7: Report `Invalid arguments` and show the validator usage, then stop' "refine-plan.md documents validator exit code 7"
 
@@ -1223,6 +1223,24 @@ if [[ "$VALIDATOR_EXIT_CODE" -eq 5 ]]; then
 else
     fail "validate-refine-plan-io: missing output directory exits 5" "5" "$VALIDATOR_EXIT_CODE"
 fi
+
+READ_ONLY_OUTPUT_DIR="$TEST_FIXTURES_DIR/read-only-output"
+mkdir -p "$READ_ONLY_OUTPUT_DIR"
+chmod 0555 "$READ_ONLY_OUTPUT_DIR"
+run_validator_capture --input "$VALID_PLAN" --output "$READ_ONLY_OUTPUT_DIR/refined.md"
+if [[ "$VALIDATOR_EXIT_CODE" -eq 5 ]]; then
+    pass "validate-refine-plan-io: non-writable output directory exits 5"
+else
+    fail "validate-refine-plan-io: non-writable output directory exits 5" "5" "$VALIDATOR_EXIT_CODE"
+fi
+
+if echo "$VALIDATOR_OUTPUT" | grep -q "VALIDATION_ERROR: OUTPUT_DIR_NOT_WRITABLE"; then
+    pass "validate-refine-plan-io: non-writable output directory reports the specific validation error"
+else
+    fail "validate-refine-plan-io: non-writable output directory reports the specific validation error" "VALIDATION_ERROR: OUTPUT_DIR_NOT_WRITABLE" "$VALIDATOR_OUTPUT"
+fi
+
+chmod 0755 "$READ_ONLY_OUTPUT_DIR"
 
 REAL_AND_IGNORED_PLAN="$TEST_FIXTURES_DIR/real-and-ignored-sections-plan.md"
 make_plan_with_real_and_ignored_sections "$REAL_AND_IGNORED_PLAN"

@@ -194,6 +194,23 @@ EOF
         block_exit "$REASON" "Loop: BitLesson Delta missing lesson IDs for action $BITLESSON_ACTION (round $CURRENT_ROUND)"
     fi
 
+    BITLESSON_NOTES=$(echo "$BITLESSON_DELTA_BLOCK" | sed -nE 's/^[[:space:]-]*Notes:[[:space:]]*(.*)$/\1/p' | head -n1)
+    BITLESSON_NOTES=$(echo "$BITLESSON_NOTES" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+
+    if [[ -z "$BITLESSON_NOTES" ]] || [[ "$BITLESSON_NOTES" =~ ^(\[.*\]|<.*>)$ ]]; then
+        FALLBACK=$(cat <<'EOF'
+# BitLesson Delta Missing Notes
+
+`Action: {{ACTION}}` requires a `Notes:` field explaining what changed and why.
+
+The Notes field must not be empty or contain placeholder text like `[what changed and why]`.
+EOF
+)
+        REASON=$(load_and_render_safe "$TEMPLATE_DIR" "block/bitlesson-delta-missing-notes.md" "$FALLBACK" \
+            "ACTION=$BITLESSON_ACTION")
+        block_exit "$REASON" "Loop: BitLesson Delta missing Notes for action $BITLESSON_ACTION (round $CURRENT_ROUND)"
+    fi
+
     if [[ ! -f "$BITLESSON_FILE" ]]; then
         FALLBACK=$(cat <<'EOF'
 # BitLesson File Missing

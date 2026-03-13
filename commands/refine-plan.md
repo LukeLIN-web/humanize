@@ -169,7 +169,7 @@ Handle exit codes exactly:
 - Exit code 2: Report `Input file is empty` and stop
 - Exit code 3: Report `Input file has no CMT:/ENDCMT blocks` and stop
 - Exit code 4: Report `Input file is missing required gen-plan sections` and stop
-- Exit code 5: Report `Output directory does not exist - please create it` and stop
+- Exit code 5: Report `Output directory does not exist or is not writable - please fix it` and stop
 - Exit code 6: Report `QA directory is not writable` and stop
 - Exit code 7: Report `Invalid arguments` and show the validator usage, then stop
 

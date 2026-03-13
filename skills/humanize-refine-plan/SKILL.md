@@ -137,7 +137,7 @@ Rules:
 | 2 | Input file is empty |
 | 3 | Input file has no `CMT:` blocks |
 | 4 | Input file is missing required `gen-plan` sections |
-| 5 | Output directory does not exist |
+| 5 | Output directory does not exist or is not writable |
 | 6 | QA directory is not writable |
 | 7 | Invalid arguments |
 

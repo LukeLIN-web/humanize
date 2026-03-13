@@ -162,6 +162,26 @@ get_rlcr_color() {
     esac
 }
 
+# Resolve the repository root for Git worktrees; fall back to cwd otherwise.
+resolve_repo_root() {
+    local cwd="$1"
+
+    if [[ -z "$cwd" || ! -d "$cwd" ]]; then
+        return
+    fi
+
+    if command -v git >/dev/null 2>&1; then
+        local git_root
+        git_root=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)
+        if [[ -n "$git_root" ]]; then
+            echo "$git_root"
+            return
+        fi
+    fi
+
+    echo "$cwd"
+}
+
 # Get all raw values
 MODEL=$(get_value '.model.display_name')
 CWD=$(get_value '.cwd')
@@ -251,8 +271,9 @@ LINES_ADDED=${LINES_ADDED:-0}
 LINES_REMOVED=${LINES_REMOVED:-0}
 
 # Determine RLCR status
-if [[ -n "$CWD" && -d "$CWD/.humanize" ]]; then
-    RLCR_STATUS=$(get_rlcr_status "$CWD/.humanize/rlcr" "$SESSION_ID")
+REPO_ROOT=$(resolve_repo_root "$CWD")
+if [[ -n "$REPO_ROOT" && -d "$REPO_ROOT/.humanize" ]]; then
+    RLCR_STATUS=$(get_rlcr_status "$REPO_ROOT/.humanize/rlcr" "$SESSION_ID")
 else
     RLCR_STATUS="Off"
 fi
