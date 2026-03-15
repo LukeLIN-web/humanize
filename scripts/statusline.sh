@@ -60,30 +60,8 @@ _resolve_rlcr_display() {
     fi
 }
 
-# Resolve any RLCR state file for a session directory.
-_resolve_rlcr_state_file() {
-    local session_dir="$1"
-
-    if [[ -f "$session_dir/finalize-state.md" ]]; then
-        echo "$session_dir/finalize-state.md"
-    elif [[ -f "$session_dir/state.md" ]]; then
-        echo "$session_dir/state.md"
-    else
-        local terminal_file
-        terminal_file=$(ls -1 "$session_dir"/*-state.md 2>/dev/null | head -1)
-        echo "${terminal_file:-}"
-    fi
-}
-
-# Extract stored session_id from YAML frontmatter.
-_extract_rlcr_session_id() {
-    local state_file="$1"
-
-    awk '/^---$/{n++; next} n==1 && /^session_id:/{sub(/^session_id: */, ""); gsub(/ /, ""); print; exit}' "$state_file" 2>/dev/null
-}
-
 # Get RLCR loop status for the current session
-# Uses the same newest-to-oldest loop ordering as hooks/lib/loop-common.sh.
+# Mirrors find_active_loop() logic from humanize hooks/lib/loop-common.sh
 get_rlcr_status() {
     local rlcr_dir="$1"
     local filter_session_id="$2"
@@ -93,16 +71,44 @@ get_rlcr_status() {
         return
     fi
 
+    # Pre-scan: if any state files have a session_id, ignore those without
+    local has_sid_aware=false
+    if grep -rqE '^session_id: *.+' "$rlcr_dir"/*/*.md 2>/dev/null; then
+        has_sid_aware=true
+    fi
+
     if [[ -z "$filter_session_id" ]]; then
+        if ! $has_sid_aware; then
+            # No session-aware files: check the newest directory only (zombie-loop protection)
+            local newest_dir
+            newest_dir=$(ls -1d "$rlcr_dir"/*/ 2>/dev/null | sort -r | head -1)
+            if [[ -z "$newest_dir" ]]; then
+                echo "Off"
+                return
+            fi
+            _resolve_rlcr_display "${newest_dir%/}"
+            return
+        fi
+        # Session-aware files exist: find newest session-aware directory
         local dir
         while IFS= read -r dir; do
             [[ -z "$dir" ]] && continue
             local trimmed="${dir%/}"
-            local any_state
-            any_state=$(_resolve_rlcr_state_file "$trimmed")
+            local any_state=""
+            if [[ -f "$trimmed/finalize-state.md" ]]; then
+                any_state="$trimmed/finalize-state.md"
+            elif [[ -f "$trimmed/state.md" ]]; then
+                any_state="$trimmed/state.md"
+            else
+                any_state=$(ls -1 "$trimmed"/*-state.md 2>/dev/null | head -1)
+            fi
             [[ -z "$any_state" ]] && continue
-            _resolve_rlcr_display "$trimmed"
-            return
+            local stored_sid
+            stored_sid=$(awk '/^---$/{n++; next} n==1 && /^session_id:/{sub(/^session_id: */, ""); gsub(/ /, ""); print; exit}' "$any_state" 2>/dev/null)
+            if [[ -n "$stored_sid" ]]; then
+                _resolve_rlcr_display "$trimmed"
+                return
+            fi
         done < <(ls -1d "$rlcr_dir"/*/ 2>/dev/null | sort -r)
         echo "Off"
         return
@@ -115,16 +121,27 @@ get_rlcr_status() {
         local trimmed="${dir%/}"
 
         # Find any state file (active or terminal)
-        local any_state
-        any_state=$(_resolve_rlcr_state_file "$trimmed")
+        local any_state=""
+        if [[ -f "$trimmed/finalize-state.md" ]]; then
+            any_state="$trimmed/finalize-state.md"
+        elif [[ -f "$trimmed/state.md" ]]; then
+            any_state="$trimmed/state.md"
+        else
+            any_state=$(ls -1 "$trimmed"/*-state.md 2>/dev/null | head -1)
+        fi
         [[ -z "$any_state" ]] && continue
 
         # Extract stored session_id from YAML frontmatter
         local stored_sid
-        stored_sid=$(_extract_rlcr_session_id "$any_state")
+        stored_sid=$(awk '/^---$/{n++; next} n==1 && /^session_id:/{sub(/^session_id: */, ""); gsub(/ /, ""); print; exit}' "$any_state" 2>/dev/null)
 
-        # Empty stored session_id matches any session for backward compatibility.
-        if [[ -z "$stored_sid" ]] || [[ "$stored_sid" == "$filter_session_id" ]]; then
+        # Skip session-unaware entries when session-aware ones exist
+        if [[ -z "$stored_sid" ]]; then
+            $has_sid_aware && continue
+            _resolve_rlcr_display "$trimmed"
+            return
+        fi
+        if [[ "$stored_sid" == "$filter_session_id" ]]; then
             _resolve_rlcr_display "$trimmed"
             return
         fi
@@ -143,26 +160,6 @@ get_rlcr_color() {
         Off) echo "\e[2m" ;;
         *) echo "\e[33m" ;;
     esac
-}
-
-# Resolve the repository root for Git worktrees; fall back to cwd otherwise.
-resolve_repo_root() {
-    local cwd="$1"
-
-    if [[ -z "$cwd" || ! -d "$cwd" ]]; then
-        return
-    fi
-
-    if command -v git >/dev/null 2>&1; then
-        local git_root
-        git_root=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)
-        if [[ -n "$git_root" ]]; then
-            echo "$git_root"
-            return
-        fi
-    fi
-
-    echo "$cwd"
 }
 
 # Get all raw values
@@ -216,28 +213,9 @@ get_session_display() {
     echo "$sid"
 }
 
-# Get fast mode status from project-local settings first, then user settings.
+# Get fast mode status from user settings
 get_fast_mode() {
-    local git_root="${1:-}"
-    local settings
-    local val
-
-    if [[ -n "$git_root" ]]; then
-        settings="$git_root/.claude/settings.json"
-        if [[ -f "$settings" ]]; then
-            val=$(jq -r 'if has("fastMode") then .fastMode else empty end' "$settings" 2>/dev/null)
-            if [[ "$val" == "true" ]]; then
-                echo "On"
-                return
-            fi
-            if [[ "$val" == "false" ]]; then
-                echo "Off"
-                return
-            fi
-        fi
-    fi
-
-    settings="$HOME/.claude/settings.json"
+    local settings="$HOME/.claude/settings.json"
     if [[ -f "$settings" ]]; then
         local val
         val=$(jq -r '.fastMode // false' "$settings" 2>/dev/null)
@@ -250,8 +228,7 @@ get_fast_mode() {
 }
 
 SESSION_DISPLAY=$(get_session_display "$SESSION_ID" "$TRANSCRIPT_PATH" "$CWD")
-REPO_ROOT=$(resolve_repo_root "$CWD")
-FAST_MODE=$(get_fast_mode "$REPO_ROOT")
+FAST_MODE=$(get_fast_mode)
 
 # Get git branch name for CWD
 if [[ -n "$CWD" && -d "$CWD" ]]; then
@@ -274,8 +251,8 @@ LINES_ADDED=${LINES_ADDED:-0}
 LINES_REMOVED=${LINES_REMOVED:-0}
 
 # Determine RLCR status
-if [[ -n "$REPO_ROOT" && -d "$REPO_ROOT/.humanize" ]]; then
-    RLCR_STATUS=$(get_rlcr_status "$REPO_ROOT/.humanize/rlcr" "$SESSION_ID")
+if [[ -n "$CWD" && -d "$CWD/.humanize" ]]; then
+    RLCR_STATUS=$(get_rlcr_status "$CWD/.humanize/rlcr" "$SESSION_ID")
 else
     RLCR_STATUS="Off"
 fi
