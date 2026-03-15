@@ -596,6 +596,22 @@ PLAN_EOF
     else
         pass "setup execution: state.md was created"
 
+        SUMMARY_FILE="$(dirname "$STATE_FILE")/round-0-summary.md"
+        if [[ -f "$SUMMARY_FILE" ]]; then
+            if grep -q '^## BitLesson Delta$' "$SUMMARY_FILE" && \
+               grep -q '^Action: none$' "$SUMMARY_FILE"; then
+                pass "setup execution: round-0 summary scaffold includes BitLesson Delta defaults"
+            else
+                fail "setup execution: round-0 summary scaffold includes BitLesson Delta defaults" \
+                    "BitLesson Delta scaffold" \
+                    "$(cat "$SUMMARY_FILE")"
+            fi
+        else
+            fail "setup execution: round-0 summary scaffold was created" \
+                "round-0-summary.md exists" \
+                "not found"
+        fi
+
         # Verify codex_model from --codex-model flag
         assert_eq "setup execution: --codex-model set codex_model (gpt-5.3)" \
             "gpt-5.3" "$(grep '^codex_model:' "$STATE_FILE" | sed 's/codex_model: *//')"

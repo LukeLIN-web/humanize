@@ -1069,6 +1069,22 @@ else
     fail "--skip-impl goal-tracker" "goal-tracker.md exists" "not found"
 fi
 
+# Test 44b: --skip-impl creates summary scaffold with BitLesson Delta section
+echo ""
+echo "Test 44b: --skip-impl creates summary scaffold"
+if [[ -n "$LOOP_DIR" ]] && [[ -f "$LOOP_DIR/round-0-summary.md" ]]; then
+    if grep -q '^## BitLesson Delta$' "$LOOP_DIR/round-0-summary.md" && \
+       grep -q '^Action: none$' "$LOOP_DIR/round-0-summary.md"; then
+        pass "--skip-impl creates round-0 summary scaffold with BitLesson Delta defaults"
+    else
+        fail "--skip-impl summary scaffold" \
+            "BitLesson Delta section with Action: none" \
+            "$(cat "$LOOP_DIR/round-0-summary.md")"
+    fi
+else
+    fail "--skip-impl summary scaffold" "round-0-summary.md exists" "not found"
+fi
+
 # Test 45: --skip-impl with plan file still works
 echo ""
 echo "Test 45: --skip-impl with plan file still works"
