@@ -6,7 +6,6 @@ allowed-tools:
   - "Read"
   - "Task"
   - "AskUserQuestion"
-hide-from-slash-command-tool: "true"
 ---
 
 # Start RLCR Loop

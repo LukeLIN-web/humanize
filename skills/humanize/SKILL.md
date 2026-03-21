@@ -2,6 +2,7 @@
 name: humanize
 description: Iterative development with AI review. Provides RLCR (Ralph-Loop with Codex Review) for implementation planning and code review loops, plus PR review automation with bot monitoring.
 user-invocable: false
+disable-model-invocation: true
 ---
 
 # Humanize - Iterative Development with AI Review

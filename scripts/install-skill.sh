@@ -151,7 +151,7 @@ hydrate_skill_runtime_root() {
     done
 }
 
-strip_user_invocable_for_runtime() {
+strip_claude_specific_frontmatter() {
     local target_dir="$1"
     local skill
     local skill_file
@@ -162,7 +162,7 @@ strip_user_invocable_for_runtime() {
         [[ -f "$skill_file" ]] || continue
 
         if [[ "$DRY_RUN" == "true" ]]; then
-            log "DRY-RUN strip user-invocable in $skill_file"
+            log "DRY-RUN strip Claude-specific frontmatter in $skill_file"
             continue
         fi
 
@@ -180,6 +180,8 @@ strip_user_invocable_for_runtime() {
                 next
             }
             in_fm && $0 ~ /^user-invocable:[[:space:]]*/ { next }
+            in_fm && $0 ~ /^disable-model-invocation:[[:space:]]*/ { next }
+            in_fm && $0 ~ /^hide-from-slash-command-tool:[[:space:]]*/ { next }
             { print }
         ' "$skill_file" > "$tmp" \
             || { rm -f "$tmp"; die "failed to update $skill_file"; }
@@ -204,7 +206,7 @@ sync_target() {
     done
     install_runtime_bundle "$target_dir"
     hydrate_skill_runtime_root "$target_dir"
-    strip_user_invocable_for_runtime "$target_dir"
+    strip_claude_specific_frontmatter "$target_dir"
 }
 
 while [[ $# -gt 0 ]]; do

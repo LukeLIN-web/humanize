@@ -11,7 +11,6 @@ allowed-tools:
   - "Task"
   - "Write"
   - "AskUserQuestion"
-hide-from-slash-command-tool: "true"
 ---
 
 # Generate Plan from Draft
