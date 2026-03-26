@@ -45,6 +45,25 @@ Source Rounds: 0
 EOF
 }
 
+create_real_humanize_bitlesson() {
+    local dir="$1"
+    mkdir -p "$dir/.humanize"
+    cat > "$dir/.humanize/bitlesson.md" <<'EOF'
+# BitLesson Knowledge Base
+## Entries
+
+## Lesson: Avoid tracker drift
+Lesson ID: BL-20260315-tracker-drift
+Scope: goal-tracker.md
+Problem Description: Tracker diverges from actual task status.
+Root Cause: Status rows are not updated after verification.
+Solution: Update tracker rows immediately after each verification step.
+Constraints: Keep tracker edits minimal.
+Validation Evidence: Verified in test fixture.
+Source Rounds: 0
+EOF
+}
+
 # Helper: create a mock codex binary that outputs valid bitlesson-selector format
 create_mock_codex() {
     local bin_dir="$1"
@@ -121,7 +140,7 @@ echo "--- Test 1: gpt-* model routes to codex ---"
 echo ""
 
 setup_test_dir
-create_real_bitlesson "$TEST_DIR"
+create_real_humanize_bitlesson "$TEST_DIR"
 BIN_DIR="$TEST_DIR/bin"
 create_mock_codex "$BIN_DIR"
 mkdir -p "$TEST_DIR/.humanize"
@@ -150,7 +169,7 @@ echo "--- Test 1b: gpt-* codex path passes stdin prompt via trailing '-' ---"
 echo ""
 
 setup_test_dir
-create_mock_bitlesson "$TEST_DIR"
+create_real_humanize_bitlesson "$TEST_DIR"
 BIN_DIR="$TEST_DIR/bin"
 STDIN_FILE="$TEST_DIR/codex-stdin.txt"
 create_recording_mock_codex "$BIN_DIR" "$STDIN_FILE"
@@ -185,7 +204,7 @@ echo "--- Test 2: haiku model routes to claude ---"
 echo ""
 
 setup_test_dir
-create_real_bitlesson "$TEST_DIR"
+create_real_humanize_bitlesson "$TEST_DIR"
 BIN_DIR="$TEST_DIR/bin"
 create_mock_claude "$BIN_DIR"
 mkdir -p "$TEST_DIR/.humanize"
@@ -214,7 +233,7 @@ echo "--- Test 3: sonnet model routes to claude ---"
 echo ""
 
 setup_test_dir
-create_real_bitlesson "$TEST_DIR"
+create_real_humanize_bitlesson "$TEST_DIR"
 BIN_DIR="$TEST_DIR/bin"
 create_mock_claude "$BIN_DIR"
 mkdir -p "$TEST_DIR/.humanize"
@@ -243,7 +262,7 @@ echo "--- Test 4: OPUS (uppercase) model routes to claude ---"
 echo ""
 
 setup_test_dir
-create_real_bitlesson "$TEST_DIR"
+create_real_humanize_bitlesson "$TEST_DIR"
 BIN_DIR="$TEST_DIR/bin"
 create_mock_claude "$BIN_DIR"
 mkdir -p "$TEST_DIR/.humanize"
@@ -272,7 +291,7 @@ echo "--- Test 5: Unknown model exits non-zero with error ---"
 echo ""
 
 setup_test_dir
-create_real_bitlesson "$TEST_DIR"
+create_real_humanize_bitlesson "$TEST_DIR"
 mkdir -p "$TEST_DIR/.humanize"
 printf '{"bitlesson_model": "unknown-xyz-model"}' > "$TEST_DIR/.humanize/config.json"
 
@@ -298,7 +317,7 @@ echo "--- Test 6: gpt-* model with missing codex binary exits non-zero ---"
 echo ""
 
 setup_test_dir
-create_real_bitlesson "$TEST_DIR"
+create_real_humanize_bitlesson "$TEST_DIR"
 mkdir -p "$TEST_DIR/.humanize"
 printf '{"bitlesson_model": "gpt-4o"}' > "$TEST_DIR/.humanize/config.json"
 # Use a bin dir that contains a stub claude but NOT codex.
@@ -334,7 +353,7 @@ echo "--- Test 7: haiku model falls back to codex when claude binary is missing 
 echo ""
 
 setup_test_dir
-create_real_bitlesson "$TEST_DIR"
+create_real_humanize_bitlesson "$TEST_DIR"
 mkdir -p "$TEST_DIR/.humanize"
 printf '{"bitlesson_model": "haiku"}' > "$TEST_DIR/.humanize/config.json"
 # Use a bin dir that contains a stub codex but NOT claude.
@@ -409,7 +428,7 @@ stdout_out=$(CLAUDE_PROJECT_DIR="$TEST_DIR" XDG_CONFIG_HOME="$TEST_DIR/no-user" 
     bash "$BITLESSON_SELECT" \
     --task "Any task" \
     --paths "README.md" \
-    --bitlesson-file "$TEST_DIR/bitlesson.md" 2>/dev/null) || exit_code=$?
+    --bitlesson-file "$TEST_DIR/.humanize/bitlesson.md" 2>/dev/null) || exit_code=$?
 
 if [[ $exit_code -eq 0 ]] && echo "$stdout_out" | grep -q "LESSON_IDS: NONE" && echo "$stdout_out" | grep -q "no recorded lessons"; then
     pass "Placeholder BitLesson file returns NONE without invoking a model"
