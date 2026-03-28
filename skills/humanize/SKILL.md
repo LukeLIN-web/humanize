@@ -96,6 +96,7 @@ After each round, write the required summary and stop/exit normally. Humanize's 
 - `--agent-teams` - Enable Agent Teams mode
 - `--yolo` - Skip Plan Understanding Quiz and enable --claude-answer-codex
 - `--skip-quiz` - Skip the Plan Understanding Quiz only
+- `--privacy` - Disable methodology analysis at loop exit (default: analysis enabled)
 
 ### Cancel RLCR Loop
 
@@ -226,6 +227,9 @@ Humanize stores all data in `.humanize/`:
 │       ├── round-N-review-result.md
 │       ├── finalize-state.md
 │       ├── finalize-summary.md
+│       ├── methodology-analysis-state.md
+│       ├── methodology-analysis-report.md
+│       ├── methodology-analysis-done.md
 │       └── complete-state.md
 ├── pr-loop/        # PR loop data
 │   └── <timestamp>/
