@@ -185,10 +185,19 @@ run_selector() {
     local model="$2"
 
     if [[ "$provider" == "codex" ]]; then
-        local codex_exec_args=(
-            "--disable" "codex_hooks"
-            "--skip-git-repo-check"
-            "--ephemeral"
+        local codex_exec_args=()
+        # Probe whether the installed Codex CLI supports --disable flag
+        if codex --help 2>&1 | grep -q -- '--disable'; then
+            codex_exec_args+=("--disable" "codex_hooks")
+        fi
+        # Probe for --skip-git-repo-check and --ephemeral support
+        if codex exec --help 2>&1 | grep -q -- '--skip-git-repo-check'; then
+            codex_exec_args+=("--skip-git-repo-check")
+        fi
+        if codex exec --help 2>&1 | grep -q -- '--ephemeral'; then
+            codex_exec_args+=("--ephemeral")
+        fi
+        codex_exec_args+=(
             "-s" "read-only"
             "-m" "$model"
             "-c" "model_reasoning_effort=low"

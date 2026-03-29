@@ -448,6 +448,15 @@ CAPTURE_BIN="$TEST_DIR/capture-bin"
 mkdir -p "$CAPTURE_BIN"
 cat > "$CAPTURE_BIN/codex" <<'EOF'
 #!/usr/bin/env bash
+# Respond to help probes with supported flags
+for arg in "$@"; do
+    if [[ "$arg" == "--help" ]]; then
+        echo "  --disable <feature>   Disable a feature"
+        echo "  --skip-git-repo-check Skip git repo check"
+        echo "  --ephemeral           Ephemeral mode"
+        exit 0
+    fi
+done
 printf '%s\n' "$@" > "${TEST_CAPTURE_ARGS:?}"
 cat > /dev/null
 cat <<'OUT'
