@@ -97,8 +97,21 @@ if [[ -n "$_MA_CHECK_DIR" ]]; then
         fi
         _ma_real_loop=$(realpath "$_MA_CHECK_DIR" 2>/dev/null || echo "")
         # Fallback to raw paths when realpath is unavailable (older macOS/BSD)
-        [[ -z "$_ma_real_path" ]] && _ma_real_path="$FILE_PATH"
-        [[ -z "$_ma_real_loop" ]] && _ma_real_loop="$_MA_CHECK_DIR"
+        # Ensure paths are absolute so prefix guards cannot be bypassed
+        if [[ -z "$_ma_real_path" ]]; then
+            if [[ "$FILE_PATH" == /* ]]; then
+                _ma_real_path="$FILE_PATH"
+            else
+                _ma_real_path="$PROJECT_ROOT/$FILE_PATH"
+            fi
+        fi
+        if [[ -z "$_ma_real_loop" ]]; then
+            if [[ "$_MA_CHECK_DIR" == /* ]]; then
+                _ma_real_loop="$_MA_CHECK_DIR"
+            else
+                _ma_real_loop="$PROJECT_ROOT/$_MA_CHECK_DIR"
+            fi
+        fi
         if [[ "$_ma_real_path" == "$_ma_real_loop/"* ]]; then
             _ma_basename=$(basename "$_ma_real_path")
             # Allowlist: only methodology artifacts (not raw development records).
