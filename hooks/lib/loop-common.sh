@@ -588,7 +588,7 @@ extract_mainline_progress_verdict() {
 
     # Extract the verdict word using grep -oEi (portable) instead of sed /I (GNU-only).
     # The preceding grep -Ei already ensures the line contains one of the three verdicts.
-    verdict_value=$(printf '%s\n' "$verdict_line" | grep -oEi 'ADVANCED|STALLED|REGRESSED' | tail -1)
+    verdict_value=$(printf '%s\n' "$verdict_line" | grep -oEi 'ADVANCED|STALLED|REGRESSED' | head -1)
     normalize_mainline_progress_verdict "$verdict_value"
 }
 
