@@ -882,6 +882,10 @@ _humanize_monitor_codex() {
 
         # Handle case when no log file exists for current session
         if [[ -z "$current_file" ]]; then
+            # Track terminal dimensions to detect resize (fallback for SIGWINCH)
+            local centered_last_cols=$(tput cols)
+            local centered_last_rows=$(tput lines)
+
             # Render centered no-log message if status changed or not yet shown
             if [[ "$last_no_log_status" != "$current_loop_status" ]]; then
                 if [[ "$current_loop_status" == "active" ]]; then
@@ -903,11 +907,17 @@ _humanize_monitor_codex() {
                     return 0
                 fi
 
-                # Handle terminal resize at a safe point
+                # Detect terminal resize via both SIGWINCH flag and actual dimension change
                 local redraw_centered_msg=false
-                if [[ "$resize_needed" == "true" ]]; then
+                local cur_cols=$(tput cols)
+                local cur_rows=$(tput lines)
+                if [[ "$resize_needed" == "true" ]] || \
+                   [[ "$cur_cols" != "$centered_last_cols" ]] || \
+                   [[ "$cur_rows" != "$centered_last_rows" ]]; then
                     resize_needed=false
                     redraw_centered_msg=true
+                    centered_last_cols="$cur_cols"
+                    centered_last_rows="$cur_rows"
                     # Check if terminal is too small
                     if ! _check_terminal_size; then
                         _display_terminal_too_small
@@ -919,6 +929,8 @@ _humanize_monitor_codex() {
                         [[ "$monitor_running" != "true" ]] && break
                         # Terminal is now big enough, reinitialize
                         _setup_terminal
+                        centered_last_cols=$(tput cols)
+                        centered_last_rows=$(tput lines)
                     else
                         _update_scroll_region
                     fi
@@ -1003,6 +1015,10 @@ _humanize_monitor_codex() {
         local log_lines=$(_get_log_area_height)
         tail -n "$log_lines" "$current_file" 2>/dev/null
 
+        # Track terminal dimensions to detect resize (fallback for SIGWINCH)
+        local follow_last_cols=$(tput cols)
+        local follow_last_rows=$(tput lines)
+
         # Incremental monitoring loop
         while [[ "$monitor_running" == "true" ]]; do
             sleep 0.5  # Check more frequently for smoother output
@@ -1014,9 +1030,15 @@ _humanize_monitor_codex() {
                 return 0
             fi
 
-            # Handle terminal resize at a safe point
-            if [[ "$resize_needed" == "true" ]]; then
+            # Detect terminal resize via both SIGWINCH flag and actual dimension change
+            local cur_cols=$(tput cols)
+            local cur_rows=$(tput lines)
+            if [[ "$resize_needed" == "true" ]] || \
+               [[ "$cur_cols" != "$follow_last_cols" ]] || \
+               [[ "$cur_rows" != "$follow_last_rows" ]]; then
                 resize_needed=false
+                follow_last_cols="$cur_cols"
+                follow_last_rows="$cur_rows"
                 # Check if terminal is too small
                 if ! _check_terminal_size; then
                     _display_terminal_too_small
@@ -1028,6 +1050,8 @@ _humanize_monitor_codex() {
                     [[ "$monitor_running" != "true" ]] && break
                     # Terminal is now big enough, reinitialize
                     _setup_terminal
+                    follow_last_cols=$(tput cols)
+                    follow_last_rows=$(tput lines)
                 else
                     _update_scroll_region
                 fi
