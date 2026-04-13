@@ -61,9 +61,9 @@ Requires [codex CLI](https://github.com/openai/codex) for review. See the full [
    /humanize:ask-gemini What are the latest best practices for X?
    ```
 
-5. **Monitor progress**:
+5. **Monitor progress (in another terminal, not inside Claude Code)**:
    ```bash
-   source <path/to/humanize>/scripts/humanize.sh
+   source <path/to/humanize>/scripts/humanize.sh # Or just add it into your .bashec or .zshrc
    humanize monitor rlcr       # RLCR loop
    humanize monitor skill      # All skill invocations (codex + gemini)
    humanize monitor codex      # Codex invocations only
