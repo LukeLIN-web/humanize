@@ -87,6 +87,9 @@ fi
 HOOK_TRANSCRIPT_PATH=$(extract_transcript_path "$HOOK_INPUT")
 if has_pending_background_tasks "$HOOK_TRANSCRIPT_PATH"; then
     PENDING_BG_COUNT=$(count_pending_background_tasks "$HOOK_TRANSCRIPT_PATH")
+    # Mark the loop as parked; allows a fresh session to adopt it if this
+    # Claude window is closed before the background task finishes.
+    : > "$LOOP_DIR/bg-pending.marker" 2>/dev/null || true
     jq -n --arg count "$PENDING_BG_COUNT" \
         '{systemMessage: ("RLCR loop active. " + $count + " background task(s) still running - stop allowed naturally; loop has NOT terminated and will resume on completion.")}'
     exit 0

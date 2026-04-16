@@ -545,5 +545,132 @@ else
         "exit $AC10C_EXIT; output: $AC10C_BODY"
 fi
 
+# ---------------- AC-11 / AC-11b ----------------
+# Orphan prevention: when the short-circuit parks a loop waiting for a
+# background task and the user closes that Claude session, a fresh
+# session must still be able to pick up the loop. The short-circuit
+# writes `bg-pending.marker` into the loop dir; find_active_loop
+# accepts a stored-vs-filter session_id mismatch iff the marker is
+# present. Without this cross-session adoption path, state.md would
+# be stranded with the dead session_id and require manual cancel.
+echo "Test AC-11: cross-session bg-pending.marker allows pickup"
+AC11_REPO="$TEST_DIR/ac11"
+AC11_LOOP=$(create_full_fixture "$AC11_REPO")
+AC11_STATE="$AC11_LOOP/state.md"
+
+# Override state.md with an explicit stored session_id so find_active_loop
+# sees a real mismatch when we later pass a different session_id.
+AC11_BRANCH=$(git -C "$AC11_REPO" rev-parse --abbrev-ref HEAD)
+AC11_BASE_COMMIT=$(git -C "$AC11_REPO" rev-parse HEAD)
+cat > "$AC11_STATE" <<EOF_AC11
+---
+current_round: 0
+max_iterations: 42
+codex_model: gpt-5.4
+codex_effort: high
+codex_timeout: 60
+push_every_round: false
+full_review_round: 5
+plan_file: "plans/test-plan.md"
+plan_tracked: false
+start_branch: $AC11_BRANCH
+base_branch: $AC11_BRANCH
+base_commit: $AC11_BASE_COMMIT
+review_started: false
+ask_codex_question: false
+agent_teams: false
+session_id: session_alpha
+---
+EOF_AC11
+
+# Simulate the state left by a previous session that took the short-circuit
+# and then died (Claude window closed). The marker is the public contract
+# between the short-circuit path and cross-session pickup.
+: > "$AC11_LOOP/bg-pending.marker"
+
+AC11_TRANSCRIPT="$TRANSCRIPTS_DIR/ac11.jsonl"
+AC11_LAUNCH=$(emit_tool_use_assistant "toolu_I" "Agent" ',"description":"x","prompt":"x"')
+AC11_RESULT=$(emit_async_agent_launch_result "toolu_I" "agent_pending_I")
+write_transcript "$AC11_TRANSCRIPT" "$AC11_LAUNCH" "$AC11_RESULT"
+
+AC11_INPUT=$(jq -c -n --arg tp "$AC11_TRANSCRIPT" \
+    '{transcript_path:$tp, session_id:"session_beta"}')
+run_stop_hook_with_input "$AC11_REPO" "$AC11_INPUT"
+assert_systemmessage_only \
+    "AC-11: cross-session bg-pending.marker allows pickup and short-circuit" \
+    "$AC11_REPO" "$AC11_STATE" "1 background task"
+
+# Negative counterpart: same session mismatch but NO marker must still
+# reject the loop (preserving the existing session-bound isolation when
+# the loop was not explicitly parked).
+echo "Test AC-11b: cross-session without marker is still rejected"
+AC11B_REPO="$TEST_DIR/ac11b"
+AC11B_LOOP=$(create_full_fixture "$AC11B_REPO")
+AC11B_STATE="$AC11B_LOOP/state.md"
+AC11B_BRANCH=$(git -C "$AC11B_REPO" rev-parse --abbrev-ref HEAD)
+AC11B_BASE_COMMIT=$(git -C "$AC11B_REPO" rev-parse HEAD)
+cat > "$AC11B_STATE" <<EOF_AC11B
+---
+current_round: 0
+max_iterations: 42
+codex_model: gpt-5.4
+codex_effort: high
+codex_timeout: 60
+push_every_round: false
+full_review_round: 5
+plan_file: "plans/test-plan.md"
+plan_tracked: false
+start_branch: $AC11B_BRANCH
+base_branch: $AC11B_BRANCH
+base_commit: $AC11B_BASE_COMMIT
+review_started: false
+ask_codex_question: false
+agent_teams: false
+session_id: session_alpha
+---
+EOF_AC11B
+# Intentionally NO marker in AC11B_LOOP.
+
+AC11B_TRANSCRIPT="$TRANSCRIPTS_DIR/ac11b.jsonl"
+AC11B_LAUNCH=$(emit_tool_use_assistant "toolu_J" "Agent" ',"description":"x","prompt":"x"')
+AC11B_RESULT=$(emit_async_agent_launch_result "toolu_J" "agent_pending_J")
+write_transcript "$AC11B_TRANSCRIPT" "$AC11B_LAUNCH" "$AC11B_RESULT"
+
+AC11B_INPUT=$(jq -c -n --arg tp "$AC11B_TRANSCRIPT" \
+    '{transcript_path:$tp, session_id:"session_beta"}')
+run_stop_hook_with_input "$AC11B_REPO" "$AC11B_INPUT"
+AC11B_SYS_MSG=$(printf '%s' "$RUN_OUTPUT" | jq -r '.systemMessage // empty' 2>/dev/null || echo "")
+if [[ "$RUN_EXIT_CODE" -eq 0 ]] && [[ ! -f "$RUN_MARKER" ]] && [[ -z "$AC11B_SYS_MSG" ]]; then
+    pass "AC-11b: cross-session without marker keeps existing isolation (no adoption)"
+else
+    fail "AC-11b: cross-session without marker keeps existing isolation (no adoption)" \
+        "exit 0, no Codex marker, no systemMessage" \
+        "exit $RUN_EXIT_CODE, marker=$(test -f "$RUN_MARKER" && echo present || echo missing), systemMessage='$AC11B_SYS_MSG'; output: $RUN_OUTPUT"
+fi
+
+# AC-11c: short-circuit should actually write bg-pending.marker so the
+# adoption path in AC-11 is reachable from real usage (not only from
+# synthetic test setup).
+echo "Test AC-11c: short-circuit writes bg-pending.marker"
+AC11C_REPO="$TEST_DIR/ac11c"
+AC11C_LOOP=$(create_full_fixture "$AC11C_REPO")
+AC11C_MARKER="$AC11C_LOOP/bg-pending.marker"
+[[ -e "$AC11C_MARKER" ]] && rm -f "$AC11C_MARKER"
+
+AC11C_TRANSCRIPT="$TRANSCRIPTS_DIR/ac11c.jsonl"
+AC11C_LAUNCH=$(emit_tool_use_assistant "toolu_K" "Agent" ',"description":"x","prompt":"x"')
+AC11C_RESULT=$(emit_async_agent_launch_result "toolu_K" "agent_pending_K")
+write_transcript "$AC11C_TRANSCRIPT" "$AC11C_LAUNCH" "$AC11C_RESULT"
+
+AC11C_INPUT=$(jq -c -n --arg tp "$AC11C_TRANSCRIPT" '{transcript_path:$tp}')
+run_stop_hook_with_input "$AC11C_REPO" "$AC11C_INPUT"
+if [[ "$RUN_EXIT_CODE" -eq 0 ]] && [[ -f "$AC11C_MARKER" ]]; then
+    pass "AC-11c: short-circuit path writes bg-pending.marker into loop dir"
+else
+    fail "AC-11c: short-circuit path writes bg-pending.marker into loop dir" \
+        "exit 0 and bg-pending.marker present" \
+        "exit $RUN_EXIT_CODE, marker=$(test -f "$AC11C_MARKER" && echo present || echo missing); output: $RUN_OUTPUT"
+fi
+
 print_test_summary "Stop Hook Background-Task Allow Test Summary"
 exit $?

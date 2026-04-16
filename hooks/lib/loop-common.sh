@@ -477,6 +477,18 @@ find_active_loop() {
             echo ""
             return
         fi
+
+        # Session mismatch: adopt the loop only when it was explicitly parked
+        # for a background task (stop hook writes bg-pending.marker there).
+        if [[ -f "$trimmed_dir/bg-pending.marker" ]]; then
+            local active_state_bg
+            active_state_bg=$(resolve_active_state_file "$trimmed_dir")
+            if [[ -n "$active_state_bg" ]]; then
+                echo "$trimmed_dir"
+                return
+            fi
+            # Marker on a terminal loop is stale; ignore it and keep walking.
+        fi
     done < <(ls -1d "$loop_base_dir"/*/ 2>/dev/null | sort -r)
 
     echo ""
