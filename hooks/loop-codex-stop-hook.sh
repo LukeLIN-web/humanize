@@ -69,6 +69,30 @@ if [[ -z "$LOOP_DIR" ]]; then
 fi
 
 # ========================================
+# Early Exit: Pending Background Tasks
+# ========================================
+# When the main Claude Code session has dispatched background work (Agent with
+# run_in_background=true, or Bash with run_in_background=true) whose
+# completion notifications have not yet arrived, the natural "stop" is simply
+# "I am waiting for the background task". Running git/summary/BitLesson/Codex
+# gates in that state wastes Codex tokens and produces low-signal reviews.
+#
+# Allow the stop (exit 0) and emit a user-visible systemMessage so nobody
+# mistakes the pause for loop completion. The on-disk loop state is left
+# untouched -- the next natural stop (after background work finishes) will
+# re-enter this hook with no pending tasks and run the normal flow.
+#
+# This check MUST run before any other gate (phase detection, state parsing,
+# branch / plan / git-clean / summary / max-iter checks, Codex review).
+HOOK_TRANSCRIPT_PATH=$(extract_transcript_path "$HOOK_INPUT")
+if has_pending_background_tasks "$HOOK_TRANSCRIPT_PATH"; then
+    PENDING_BG_COUNT=$(count_pending_background_tasks "$HOOK_TRANSCRIPT_PATH")
+    jq -n --arg count "$PENDING_BG_COUNT" \
+        '{systemMessage: ("RLCR loop active. " + $count + " background task(s) still running - stop allowed naturally; loop has NOT terminated and will resume on completion.")}'
+    exit 0
+fi
+
+# ========================================
 # Detect Loop Phase: Normal or Finalize
 # ========================================
 # Normal loop: state.md exists

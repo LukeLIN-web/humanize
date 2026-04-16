@@ -83,9 +83,15 @@ if ! command -v jq >/dev/null 2>&1; then
     exit 20
 fi
 
-# Build hook input JSON while omitting empty fields.
-# Include standard Stop hook fields so the underlying hook sees the same schema
-# as a real Claude Code Stop event (hook_event_name, stop_hook_active, cwd).
+# Build hook input JSON. Include standard Stop hook fields so the underlying
+# hook sees the same schema as a real Claude Code Stop event
+# (hook_event_name, stop_hook_active, cwd).
+#
+# Empty session_id / transcript_path become explicit null instead of being
+# filtered out; a `select(length > 0)` used as a plain object value collapses
+# the entire enclosing object to empty whenever any selected field is empty,
+# which would hide forwarded fields like transcript_path when only session_id
+# is missing.
 HOOK_INPUT=$(jq -n \
     --arg session_id "$SESSION_ID" \
     --arg transcript_path "$TRANSCRIPT_PATH" \
@@ -99,8 +105,8 @@ HOOK_INPUT=$(jq -n \
         model: $model,
         permission_mode: $permission_mode,
         last_assistant_message: null,
-        session_id: ($session_id | select(length > 0)),
-        transcript_path: ($transcript_path | select(length > 0))
+        session_id: (if ($session_id | length) > 0 then $session_id else null end),
+        transcript_path: (if ($transcript_path | length) > 0 then $transcript_path else null end)
     }')
 
 # Capture hook exit code explicitly to map non-zero to exit 20 (wrapper error)
@@ -138,6 +144,20 @@ if [[ "$DECISION" == "block" ]]; then
         [[ -n "$REASON" ]] && printf '%s\n' "$REASON"
     fi
     exit 10
+fi
+
+# No decision field in the JSON: per Claude Code Stop-hook spec this means
+# allow the stop. Surface any systemMessage so callers see the reason
+# (e.g. "background task(s) still running"), then exit 0.
+if [[ -z "$DECISION" ]]; then
+    if [[ "$PRINT_JSON" == "true" ]]; then
+        printf '%s\n' "$HOOK_OUTPUT"
+    elif [[ -n "$SYSTEM_MESSAGE" ]]; then
+        printf 'ALLOW: %s\n' "$SYSTEM_MESSAGE"
+    else
+        echo "ALLOW: stop gate passed."
+    fi
+    exit 0
 fi
 
 echo "Error: Unexpected hook decision: ${DECISION:-<empty>}" >&2

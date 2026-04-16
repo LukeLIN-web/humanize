@@ -242,6 +242,102 @@ extract_session_id() {
     printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null || echo ""
 }
 
+# Extract transcript_path from hook JSON input
+# Usage: extract_transcript_path "$json_input"
+# Outputs the transcript_path to stdout, or empty string if not available
+extract_transcript_path() {
+    local input="$1"
+    printf '%s' "$input" | jq -r '.transcript_path // empty' 2>/dev/null || echo ""
+}
+
+# Enumerate background-task ids that have been launched but not yet marked
+# completed in a Claude Code transcript.jsonl.
+#
+# Launch events (inspected in tool_result "user" messages):
+#   - Background subagent: toolUseResult.isAsync == true
+#     -> id is toolUseResult.agentId
+#   - Background shell: toolUseResult.backgroundTaskId non-empty
+#     -> id is toolUseResult.backgroundTaskId
+#
+# Completion events (inspected in "queue-operation" messages with
+# operation == "enqueue" whose content contains a <task-notification>
+# XML block): any <task-id>...</task-id> value is treated as terminal
+# regardless of the reported <status> (completed, failed, killed,
+# cancelled, interrupted, ...).
+#
+# pending := launched \ completed
+#
+# Usage: list_pending_background_task_ids "$transcript_path"
+#   - Outputs one id per line on stdout (possibly empty).
+#   - Returns 0 when the transcript is readable (including when there are
+#     no pending tasks). Returns 1 when the transcript path is empty, not
+#     a regular file, or jq is unavailable, so callers must treat non-zero
+#     as "unknown -> do not short-circuit".
+list_pending_background_task_ids() {
+    local transcript_path="$1"
+
+    if [[ -z "$transcript_path" ]] || [[ ! -f "$transcript_path" ]]; then
+        return 1
+    fi
+    if ! command -v jq >/dev/null 2>&1; then
+        return 1
+    fi
+
+    local launched completed
+    launched=$(jq -r '
+        select(.toolUseResult != null)
+        | select(
+            (.toolUseResult.isAsync == true and (.toolUseResult.agentId // "") != "")
+            or ((.toolUseResult.backgroundTaskId // "") != "")
+          )
+        | (.toolUseResult.agentId // .toolUseResult.backgroundTaskId)
+    ' "$transcript_path" 2>/dev/null | sort -u) || return 1
+
+    completed=$(jq -r '
+        select(.type == "queue-operation" and .operation == "enqueue")
+        | (.content // "" | tostring)
+        | select(contains("<task-notification>"))
+    ' "$transcript_path" 2>/dev/null \
+        | grep -oE '<task-id>[^<]+</task-id>' \
+        | sed -E 's|</?task-id>||g' \
+        | sort -u) || completed=""
+
+    # Emit launched ids that have no matching completion notification.
+    comm -23 \
+        <(printf '%s\n' "$launched" | sed '/^$/d') \
+        <(printf '%s\n' "$completed" | sed '/^$/d')
+}
+
+# Returns 0 when the transcript shows at least one pending background task.
+# Returns 1 when no pending tasks are detected (including fail-closed cases
+# like missing transcript, non-file path, or jq unavailable).
+#
+# Usage: has_pending_background_tasks "$transcript_path"
+has_pending_background_tasks() {
+    local transcript_path="$1"
+    local pending
+    pending=$(list_pending_background_task_ids "$transcript_path" 2>/dev/null) || return 1
+    [[ -n "$pending" ]]
+}
+
+# Prints the count of pending background tasks to stdout. Prints 0 for any
+# error case so callers can still format messages safely.
+#
+# Usage: count_pending_background_tasks "$transcript_path"
+count_pending_background_tasks() {
+    local transcript_path="$1"
+    local pending
+    pending=$(list_pending_background_task_ids "$transcript_path" 2>/dev/null) || {
+        echo 0
+        return 0
+    }
+    if [[ -z "$pending" ]]; then
+        echo 0
+    else
+        printf '%s\n' "$pending" | sed '/^$/d' | wc -l | tr -d ' '
+    fi
+}
+
 # Resolve the active state file for a loop directory
 # Checks for finalize-state.md first, then state.md
 # Usage: resolve_active_state_file "$loop_dir"
