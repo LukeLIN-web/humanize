@@ -442,10 +442,17 @@ resolve_any_state_file() {
 # Empty stored session_id matches any filter (backward compat for pre-session
 # state files).
 #
+# Third parameter `allow_bg_marker_fallback` (default "false"): when "true",
+# the session-filter branch also considers a mismatched-session dir that holds
+# a `bg-pending.marker` file AND an active state file. Only the RLCR stop
+# hook opts in to this; every other caller (read/write/bash/plan-file
+# validators, ...) keeps strict session isolation.
+#
 # Outputs the directory path to stdout, or empty string if none found
 find_active_loop() {
     local loop_base_dir="$1"
     local filter_session_id="${2:-}"
+    local allow_bg_marker_fallback="${3:-false}"
 
     if [[ ! -d "$loop_base_dir" ]]; then
         echo ""
@@ -509,9 +516,13 @@ find_active_loop() {
             return
         fi
 
-        # Session mismatch: stash the newest eligible marker candidate but
-        # keep walking in case an older dir is the caller's own session.
-        if [[ -z "$marker_candidate" ]] && [[ -f "$trimmed_dir/bg-pending.marker" ]]; then
+        # Session mismatch. Only the stop hook opts in to marker-based
+        # adoption; validators and other callers keep strict isolation, so
+        # the candidate is only recorded when the caller explicitly allows
+        # it.
+        if [[ "$allow_bg_marker_fallback" == "true" ]] \
+           && [[ -z "$marker_candidate" ]] \
+           && [[ -f "$trimmed_dir/bg-pending.marker" ]]; then
             local candidate_state
             candidate_state=$(resolve_active_state_file "$trimmed_dir")
             if [[ -n "$candidate_state" ]]; then
@@ -521,10 +532,11 @@ find_active_loop() {
         fi
     done < <(ls -1d "$loop_base_dir"/*/ 2>/dev/null | sort -r)
 
-    # No exact session match. Fall back to marker-based adoption if any --
-    # this is the cross-session recovery path when a previous session parked
-    # the loop and then died before the background-task completion arrived.
-    if [[ -n "$marker_candidate" ]]; then
+    # No exact session match. Fall back to marker-based adoption only when
+    # the caller explicitly opted in -- the stop hook uses this to surface
+    # a "parked by another session" notice or to resume its own parked
+    # loop after a previous session died before the bg completion arrived.
+    if [[ "$allow_bg_marker_fallback" == "true" ]] && [[ -n "$marker_candidate" ]]; then
         echo "$marker_candidate"
         return
     fi

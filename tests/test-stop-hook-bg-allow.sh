@@ -552,17 +552,17 @@ else
 fi
 
 # ---------------- AC-11 / AC-11b ----------------
-# Orphan prevention: when the short-circuit parks a loop waiting for a
-# background task and the user closes that Claude session, a fresh
-# session must still be able to pick up the loop. The short-circuit
-# writes `bg-pending.marker` into the loop dir; find_active_loop
-# accepts a stored-vs-filter session_id mismatch iff the marker is
-# present. Without this cross-session adoption path, state.md would
-# be stranded with the dead session_id and require manual cancel.
-echo "Test AC-11: cross-session bg-pending.marker allows pickup"
+# Cross-session parked-loop guard: when a loop in the repo carries the
+# bg-pending.marker and its stored session_id does not match the caller,
+# the stop hook must exit 0 with a dedicated "parked by another session"
+# systemMessage and leave every on-disk artifact intact. The current
+# session has no authority to advance or cleanup a foreign parked loop
+# because its transcript cannot observe the other session's bg task.
+echo "Test AC-11: cross-session bg-pending.marker emits 'parked' systemMessage"
 AC11_REPO="$TEST_DIR/ac11"
 AC11_LOOP=$(create_full_fixture "$AC11_REPO")
 AC11_STATE="$AC11_LOOP/state.md"
+AC11_MARKER="$AC11_LOOP/bg-pending.marker"
 
 # Override state.md with an explicit stored session_id so find_active_loop
 # sees a real mismatch when we later pass a different session_id.
@@ -588,11 +588,10 @@ agent_teams: false
 session_id: session_alpha
 ---
 EOF_AC11
+AC11_STATE_HASH_BEFORE=$(sha256sum "$AC11_STATE" | awk '{print $1}')
 
-# Simulate the state left by a previous session that took the short-circuit
-# and then died (Claude window closed). The marker is the public contract
-# between the short-circuit path and cross-session pickup.
-: > "$AC11_LOOP/bg-pending.marker"
+# Simulate the state left by a previous session that took the short-circuit.
+: > "$AC11_MARKER"
 
 AC11_TRANSCRIPT="$TRANSCRIPTS_DIR/ac11.jsonl"
 AC11_LAUNCH=$(emit_tool_use_assistant "toolu_I" "Agent" ',"description":"x","prompt":"x"')
@@ -602,9 +601,19 @@ write_transcript "$AC11_TRANSCRIPT" "$AC11_LAUNCH" "$AC11_RESULT"
 AC11_INPUT=$(jq -c -n --arg tp "$AC11_TRANSCRIPT" \
     '{transcript_path:$tp, session_id:"session_beta"}')
 run_stop_hook_with_input "$AC11_REPO" "$AC11_INPUT"
-assert_systemmessage_only \
-    "AC-11: cross-session bg-pending.marker allows pickup and short-circuit" \
-    "$AC11_REPO" "$AC11_STATE" "1 background task"
+AC11_SYS_MSG=$(printf '%s' "$RUN_OUTPUT" | jq -r '.systemMessage // empty' 2>/dev/null || echo "")
+AC11_STATE_HASH_AFTER=$(sha256sum "$AC11_STATE" | awk '{print $1}')
+if [[ "$RUN_EXIT_CODE" -eq 0 ]] \
+   && [[ ! -f "$RUN_MARKER" ]] \
+   && [[ -f "$AC11_MARKER" ]] \
+   && [[ "$AC11_STATE_HASH_BEFORE" == "$AC11_STATE_HASH_AFTER" ]] \
+   && printf '%s' "$AC11_SYS_MSG" | grep -qi "parked"; then
+    pass "AC-11: cross-session stop exits with 'parked' systemMessage; marker and session_id untouched"
+else
+    fail "AC-11: cross-session stop exits with 'parked' systemMessage; marker and session_id untouched" \
+        "exit 0 + systemMessage matches /parked/ + marker stays + state.md byte-identical + no Codex" \
+        "exit $RUN_EXIT_CODE, codex_marker=$(test -f "$RUN_MARKER" && echo present || echo missing), bg_marker=$(test -f "$AC11_MARKER" && echo present || echo missing), state_unchanged=$([[ "$AC11_STATE_HASH_BEFORE" == "$AC11_STATE_HASH_AFTER" ]] && echo yes || echo no), systemMessage='$AC11_SYS_MSG'; output: $RUN_OUTPUT"
+fi
 
 # Negative counterpart: same session mismatch but NO marker must still
 # reject the loop (preserving the existing session-bound isolation when
@@ -782,14 +791,17 @@ else
 fi
 
 # ---------------- AC-14 ----------------
-# Cross-session resume: a different session walks in, finds the loop through
-# the marker fallback, and the non-short-circuit path must rewrite the
-# stored session_id so future same-session stops use the exact-match path
-# instead of re-adopting via a stale marker.
-echo "Test AC-14: cross-session resume rewrites session_id and removes marker"
+# Anti-hijack: a different session walking in MUST NOT rewrite the stored
+# session_id and MUST NOT delete bg-pending.marker, even when its own
+# transcript shows no pending bg events. The foreign session's transcript
+# cannot observe the parking session's bg activity, so nothing the new
+# session sees is authoritative. The cross-session guard takes over
+# instead.
+echo "Test AC-14: cross-session stop preserves marker and stored session_id"
 AC14_REPO="$TEST_DIR/ac14"
 AC14_LOOP=$(create_full_fixture "$AC14_REPO")
 AC14_STATE="$AC14_LOOP/state.md"
+AC14_MARKER="$AC14_LOOP/bg-pending.marker"
 AC14_BRANCH=$(git -C "$AC14_REPO" rev-parse --abbrev-ref HEAD)
 AC14_BASE_COMMIT=$(git -C "$AC14_REPO" rev-parse HEAD)
 cat > "$AC14_STATE" <<EOF_AC14
@@ -812,7 +824,7 @@ agent_teams: false
 session_id: session_foreign
 ---
 EOF_AC14
-: > "$AC14_LOOP/bg-pending.marker"
+: > "$AC14_MARKER"
 
 AC14_TRANSCRIPT="$TRANSCRIPTS_DIR/ac14.jsonl"
 write_transcript "$AC14_TRANSCRIPT" '{"type":"user","message":{"role":"user","content":"hello"}}'
@@ -820,18 +832,18 @@ AC14_INPUT=$(jq -c -n --arg tp "$AC14_TRANSCRIPT" \
     '{transcript_path:$tp, session_id:"session_home"}')
 run_stop_hook_with_input "$AC14_REPO" "$AC14_INPUT"
 
-if [[ ! -f "$AC14_LOOP/bg-pending.marker" ]]; then
-    pass "AC-14: marker removed after cross-session resume"
+if [[ -f "$AC14_MARKER" ]]; then
+    pass "AC-14: cross-session stop preserves bg-pending.marker"
 else
-    fail "AC-14: marker removed after cross-session resume" \
-        "marker absent" "marker still present"
+    fail "AC-14: cross-session stop preserves bg-pending.marker" \
+        "marker still present" "marker was removed (foreign-session hijack)"
 fi
 
-if grep -q "^session_id: session_home$" "$AC14_STATE"; then
-    pass "AC-14b: state.md session_id rewritten to the current session on adoption"
+if grep -q "^session_id: session_foreign$" "$AC14_STATE"; then
+    pass "AC-14b: cross-session stop leaves stored session_id intact"
 else
-    fail "AC-14b: state.md session_id rewritten to the current session on adoption" \
-        "session_id: session_home" "$(grep '^session_id:' "$AC14_STATE" || echo '(missing)')"
+    fail "AC-14b: cross-session stop leaves stored session_id intact" \
+        "session_id: session_foreign" "$(grep '^session_id:' "$AC14_STATE" || echo '(missing)')"
 fi
 
 # ---------------- AC-15 ----------------
@@ -983,6 +995,50 @@ else
     fail "AC-17c: missing-file transcript_path preserves marker and session_id" \
         "marker present and session_id: session_foreign" \
         "marker=$(test -f "$AC17C_LOOP/bg-pending.marker" && echo present || echo missing); session_id=$(grep '^session_id:' "$AC17C_STATE" || echo '(missing)')"
+fi
+
+# ---------------- AC-18 ----------------
+# Validator isolation: find_active_loop's marker-based adoption is opt-in
+# via its third positional argument. Default callers (read/write/bash/etc.
+# validators) must continue to see strict session-id isolation; a parked
+# loop for a different session must NOT become visible to them through a
+# bg-pending.marker.
+echo "Test AC-18: find_active_loop default invocation ignores foreign marker"
+AC18_BASE="$TEST_DIR/ac18-loops"
+mkdir -p "$AC18_BASE/2026-03-02_00-00-00"
+cat > "$AC18_BASE/2026-03-02_00-00-00/state.md" <<'EOF_AC18'
+---
+current_round: 0
+max_iterations: 42
+codex_model: gpt-5.4
+codex_effort: high
+session_id: session_foreign
+---
+EOF_AC18
+: > "$AC18_BASE/2026-03-02_00-00-00/bg-pending.marker"
+
+AC18_DEFAULT=$(
+    # shellcheck source=/dev/null
+    source "$PROJECT_ROOT/hooks/lib/loop-common.sh"
+    find_active_loop "$AC18_BASE" "session_home"
+)
+if [[ -z "$AC18_DEFAULT" ]]; then
+    pass "AC-18: find_active_loop default (no opt-in) ignores foreign marker dir"
+else
+    fail "AC-18: find_active_loop default (no opt-in) ignores foreign marker dir" \
+        "empty result (validators stay isolated)" "got: $AC18_DEFAULT"
+fi
+
+AC18_OPTIN=$(
+    # shellcheck source=/dev/null
+    source "$PROJECT_ROOT/hooks/lib/loop-common.sh"
+    find_active_loop "$AC18_BASE" "session_home" true
+)
+if [[ "$AC18_OPTIN" == "$AC18_BASE/2026-03-02_00-00-00" ]]; then
+    pass "AC-18b: find_active_loop with opt-in does return the marker dir"
+else
+    fail "AC-18b: find_active_loop with opt-in does return the marker dir" \
+        "$AC18_BASE/2026-03-02_00-00-00" "$AC18_OPTIN"
 fi
 
 print_test_summary "Stop Hook Background-Task Allow Test Summary"

@@ -61,11 +61,35 @@ GIT_TIMEOUT=30
 # Extract session_id from hook input for session-aware loop filtering
 HOOK_SESSION_ID=$(extract_session_id "$HOOK_INPUT")
 
-LOOP_DIR=$(find_active_loop "$LOOP_BASE_DIR" "$HOOK_SESSION_ID")
+LOOP_DIR=$(find_active_loop "$LOOP_BASE_DIR" "$HOOK_SESSION_ID" true)
 
 # If no active loop (or session_id mismatch), allow exit
 if [[ -z "$LOOP_DIR" ]]; then
     exit 0
+fi
+
+# ========================================
+# Cross-Session Parked-Loop Guard
+# ========================================
+# If find_active_loop handed this dir over via the marker fallback, the
+# loop is parked by a different session waiting on a background task. The
+# current session has no authority to inspect or advance that loop - its
+# transcript sees none of the foreign bg activity - so the only safe
+# response is to exit 0 with a distinct systemMessage and leave every
+# on-disk artifact (state file, stored session_id, marker) untouched.
+HOOK_TRANSCRIPT_PATH=$(extract_transcript_path "$HOOK_INPUT")
+if [[ -f "$LOOP_DIR/bg-pending.marker" ]]; then
+    GUARD_STATE_FILE=$(resolve_active_state_file "$LOOP_DIR")
+    if [[ -n "$GUARD_STATE_FILE" ]]; then
+        GUARD_STORED_SID=$(sed -n '/^---$/,/^---$/{ /^'"${FIELD_SESSION_ID}"':/{ s/^'"${FIELD_SESSION_ID}"': *//; p; } }' "$GUARD_STATE_FILE" 2>/dev/null | tr -d ' ')
+        if [[ -n "$GUARD_STORED_SID" ]] \
+           && [[ -n "$HOOK_SESSION_ID" ]] \
+           && [[ "$GUARD_STORED_SID" != "$HOOK_SESSION_ID" ]]; then
+            jq -n \
+                '{systemMessage: "RLCR loop in this repo is parked by another Claude session waiting for background work. Stop allowed; your session leaves the loop untouched. If that session ended, run /humanize:cancel-rlcr-loop to clean up."}'
+            exit 0
+        fi
+    fi
 fi
 
 # ========================================
@@ -84,45 +108,32 @@ fi
 #
 # This check MUST run before any other gate (phase detection, state parsing,
 # branch / plan / git-clean / summary / max-iter checks, Codex review).
-HOOK_TRANSCRIPT_PATH=$(extract_transcript_path "$HOOK_INPUT")
 if has_pending_background_tasks "$HOOK_TRANSCRIPT_PATH"; then
     PENDING_BG_COUNT=$(count_pending_background_tasks "$HOOK_TRANSCRIPT_PATH")
-    # Mark the loop as parked; allows a fresh session to adopt it if this
-    # Claude window is closed before the background task finishes.
+    # Mark the loop as parked; allows the same session to resume later and
+    # makes the cross-session guard above reachable if the user opens a
+    # different Claude session in this repo before the bg task completes.
     : > "$LOOP_DIR/bg-pending.marker" 2>/dev/null || true
     jq -n --arg count "$PENDING_BG_COUNT" \
         '{systemMessage: ("RLCR loop active. " + $count + " background task(s) still running - stop allowed naturally; loop has NOT terminated and will resume on completion.")}'
     exit 0
 fi
 
-# No pending background task. If a stale bg-pending.marker is lingering
-# here, this stop is the resume point. When find_active_loop picked this
-# dir up through the marker-fallback path (stored session_id differs from
-# the current one), rewrite the stored session_id so future same-session
-# stops use the exact-match path, then remove the marker so any later
-# hook trigger from an unrelated session is rejected rather than adopted.
+# Same-session resume after background task finished: the cross-session
+# guard above already exited for every foreign session, so reaching here
+# with the marker present means the CURRENT session parked the loop and
+# has now come back with a transcript showing no pending bg events.
+# Remove the stale marker before the normal flow takes over.
 #
-# Guard: only perform the cleanup when we could actually inspect the
-# transcript. `has_pending_background_tasks` is fail-closed and also
-# returns false when the transcript is missing or unreadable (e.g.
-# rlcr-stop-gate.sh invoked without --transcript-path). In that case the
-# "no pending" signal is not authoritative, so the marker and the stored
-# session_id must be preserved to keep cross-session recovery reachable.
+# Guard: only run when we could actually inspect the transcript.
+# `has_pending_background_tasks` is fail-closed and also returns false
+# when the transcript is missing or unreadable (e.g. rlcr-stop-gate.sh
+# invoked without --transcript-path). In that case the "no pending"
+# signal is not authoritative, so the marker stays in place to keep
+# cross-session recovery reachable.
 if [[ -f "$LOOP_DIR/bg-pending.marker" ]] \
    && [[ -n "$HOOK_TRANSCRIPT_PATH" ]] \
    && [[ -f "$HOOK_TRANSCRIPT_PATH" ]]; then
-    ADOPT_STATE_FILE=$(resolve_active_state_file "$LOOP_DIR")
-    if [[ -n "$ADOPT_STATE_FILE" ]] && [[ -n "$HOOK_SESSION_ID" ]]; then
-        STORED_SID_ADOPT=$(sed -n '/^---$/,/^---$/{ /^'"${FIELD_SESSION_ID}"':/{ s/^'"${FIELD_SESSION_ID}"': *//; p; } }' "$ADOPT_STATE_FILE" 2>/dev/null | tr -d ' ')
-        if [[ -n "$STORED_SID_ADOPT" ]] && [[ "$STORED_SID_ADOPT" != "$HOOK_SESSION_ID" ]]; then
-            # Portable in-place rewrite. Failure is logged but non-fatal:
-            # worst case the next stop re-adopts via the marker pathway.
-            if ! sed -i.bak -E "s|^(${FIELD_SESSION_ID}:).*$|\\1 $HOOK_SESSION_ID|" "$ADOPT_STATE_FILE" 2>/dev/null; then
-                echo "Warning: failed to adopt session_id in $ADOPT_STATE_FILE" >&2
-            fi
-            rm -f "${ADOPT_STATE_FILE}.bak" 2>/dev/null || true
-        fi
-    fi
     rm -f "$LOOP_DIR/bg-pending.marker" 2>/dev/null || true
 fi
 
