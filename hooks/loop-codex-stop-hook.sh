@@ -82,8 +82,13 @@ if [[ -f "$LOOP_DIR/bg-pending.marker" ]]; then
     GUARD_STATE_FILE=$(resolve_active_state_file "$LOOP_DIR")
     if [[ -n "$GUARD_STATE_FILE" ]]; then
         GUARD_STORED_SID=$(sed -n '/^---$/,/^---$/{ /^'"${FIELD_SESSION_ID}"':/{ s/^'"${FIELD_SESSION_ID}"': *//; p; } }' "$GUARD_STATE_FILE" 2>/dev/null | tr -d ' ')
+        # Non-empty stored session_id that differs from the caller's session
+        # (empty or not) means this is a foreign parked loop. Hook-input
+        # schemas that omit session_id -- such as rlcr-stop-gate.sh invoked
+        # without --session-id -- still get a mismatch here and take the
+        # safe exit path. An empty stored session_id keeps the existing
+        # backward-compat "matches any" semantics from find_active_loop.
         if [[ -n "$GUARD_STORED_SID" ]] \
-           && [[ -n "$HOOK_SESSION_ID" ]] \
            && [[ "$GUARD_STORED_SID" != "$HOOK_SESSION_ID" ]]; then
             jq -n \
                 '{systemMessage: "RLCR loop in this repo is parked by another Claude session waiting for background work. Stop allowed; your session leaves the loop untouched. If that session ended, run /humanize:cancel-rlcr-loop to clean up."}'
@@ -125,16 +130,22 @@ fi
 # has now come back with a transcript showing no pending bg events.
 # Remove the stale marker before the normal flow takes over.
 #
-# Guard: only run when we could actually inspect the transcript.
-# `has_pending_background_tasks` is fail-closed and also returns false
-# when the transcript is missing or unreadable (e.g. rlcr-stop-gate.sh
-# invoked without --transcript-path). In that case the "no pending"
-# signal is not authoritative, so the marker stays in place to keep
-# cross-session recovery reachable.
-if [[ -f "$LOOP_DIR/bg-pending.marker" ]] \
-   && [[ -n "$HOOK_TRANSCRIPT_PATH" ]] \
-   && [[ -f "$HOOK_TRANSCRIPT_PATH" ]]; then
-    rm -f "$LOOP_DIR/bg-pending.marker" 2>/dev/null || true
+# Two-part guard to make sure we never drop the parked-state signal
+# without evidence:
+#   (a) list_pending_background_task_ids returned exit 0 -- the
+#       transcript was present, readable, AND parsed successfully.
+#       The helper is fail-closed on missing files, empty paths,
+#       jq parse failure, and truncation, so a non-zero exit blocks
+#       cleanup here even when the transcript "file" exists.
+#   (b) its output is empty -- proves "no pending" was authoritatively
+#       verified, not inferred from a failure.
+# The check uses a single fresh call so we capture both the exit code
+# and the emptiness without double-running jq.
+if [[ -f "$LOOP_DIR/bg-pending.marker" ]]; then
+    if PENDING_BG_CHECK=$(list_pending_background_task_ids "$HOOK_TRANSCRIPT_PATH" 2>/dev/null) \
+       && [[ -z "$PENDING_BG_CHECK" ]]; then
+        rm -f "$LOOP_DIR/bg-pending.marker" 2>/dev/null || true
+    fi
 fi
 
 # ========================================

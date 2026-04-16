@@ -11,15 +11,26 @@
 #
 # Acceptance criteria exercised here (see
 # .humanize/rlcr/2026-04-16_13-19-26/goal-tracker.md for authoritative list):
-#   AC-1  no bg dispatches            -> normal Codex flow
-#   AC-2  pending subagent            -> exit 0 + systemMessage
-#   AC-3  pending shell               -> exit 0 + systemMessage
-#   AC-4  subagent launch + complete  -> normal Codex flow
-#   AC-5  2 subagents + 1 shell       -> systemMessage mentions "3 background"
-#   AC-6  missing transcript path     -> normal Codex flow (fail-closed)
-#   AC-7  no active loop              -> exit 0, no systemMessage, no Codex
-#   AC-8  finalize phase pending bg   -> exit 0 + systemMessage
-#   AC-9  via rlcr-stop-gate.sh       -> exit 0 (wrapper ALLOW)
+#   AC-1   no bg dispatches                          -> normal Codex flow
+#   AC-2   pending subagent                          -> exit 0 + systemMessage
+#   AC-3   pending shell                             -> exit 0 + systemMessage
+#   AC-4   subagent launch + complete                -> normal Codex flow
+#   AC-5   2 subagents + 1 shell                     -> systemMessage mentions "3 background"
+#   AC-6   missing transcript path                   -> normal Codex flow (fail-closed)
+#   AC-7   no active loop                            -> exit 0, no systemMessage, no Codex
+#   AC-8   finalize phase pending bg                 -> exit 0 + systemMessage
+#   AC-9   via rlcr-stop-gate.sh                     -> exit 0 (wrapper ALLOW)
+#   AC-10  tilde transcript path                     -> short-circuit fires
+#   AC-11  cross-session bg-pending.marker           -> "parked" systemMessage, artifacts intact
+#   AC-12  find_active_loop prefers exact session    -> returns older exact-match dir
+#   AC-13  same-session resume                       -> stale marker removed
+#   AC-14  cross-session stop with marker            -> marker and stored session_id preserved
+#   AC-15  task_notification completion format       -> marks launch completed
+#   AC-16  mixed legacy + SDK completions            -> resolves to empty pending set
+#   AC-17  unreadable transcript with marker         -> marker and session_id preserved
+#   AC-18  find_active_loop default ignores marker   -> validators stay isolated
+#   AC-19  hook input omits session_id               -> cross-session guard fires
+#   AC-20  malformed transcript with marker          -> marker preserved (fail-closed)
 #
 
 set -euo pipefail
@@ -1039,6 +1050,115 @@ if [[ "$AC18_OPTIN" == "$AC18_BASE/2026-03-02_00-00-00" ]]; then
 else
     fail "AC-18b: find_active_loop with opt-in does return the marker dir" \
         "$AC18_BASE/2026-03-02_00-00-00" "$AC18_OPTIN"
+fi
+
+# ---------------- AC-19 ----------------
+# Empty-session caller must still be treated as "foreign" for a parked
+# loop whose stored session_id is non-empty. Real trigger: callers such
+# as scripts/rlcr-stop-gate.sh invoked without --session-id reach the
+# hook with no session_id key at all.
+echo "Test AC-19: cross-session guard fires when hook input omits session_id"
+AC19_REPO="$TEST_DIR/ac19"
+AC19_LOOP=$(create_full_fixture "$AC19_REPO")
+AC19_STATE="$AC19_LOOP/state.md"
+AC19_MARKER="$AC19_LOOP/bg-pending.marker"
+AC19_BRANCH=$(git -C "$AC19_REPO" rev-parse --abbrev-ref HEAD)
+AC19_BASE_COMMIT=$(git -C "$AC19_REPO" rev-parse HEAD)
+cat > "$AC19_STATE" <<EOF_AC19
+---
+current_round: 0
+max_iterations: 42
+codex_model: gpt-5.4
+codex_effort: high
+codex_timeout: 60
+push_every_round: false
+full_review_round: 5
+plan_file: "plans/test-plan.md"
+plan_tracked: false
+start_branch: $AC19_BRANCH
+base_branch: $AC19_BRANCH
+base_commit: $AC19_BASE_COMMIT
+review_started: false
+ask_codex_question: false
+agent_teams: false
+session_id: session_alpha
+---
+EOF_AC19
+AC19_STATE_HASH_BEFORE=$(sha256sum "$AC19_STATE" | awk '{print $1}')
+: > "$AC19_MARKER"
+
+# Transcript exists and is a readable, well-formed minimal record. The
+# guard must rely on the stored-vs-current session_id mismatch alone,
+# not on transcript readability, to detect the foreign-session case.
+AC19_TRANSCRIPT="$TRANSCRIPTS_DIR/ac19.jsonl"
+write_transcript "$AC19_TRANSCRIPT" '{"type":"user","message":{"role":"user","content":"hello"}}'
+
+# Hook input without any session_id key (mirrors rlcr-stop-gate.sh
+# invoked without --session-id).
+AC19_INPUT=$(jq -c -n --arg tp "$AC19_TRANSCRIPT" '{transcript_path:$tp}')
+run_stop_hook_with_input "$AC19_REPO" "$AC19_INPUT"
+AC19_SYS_MSG=$(printf '%s' "$RUN_OUTPUT" | jq -r '.systemMessage // empty' 2>/dev/null || echo "")
+AC19_STATE_HASH_AFTER=$(sha256sum "$AC19_STATE" | awk '{print $1}')
+if [[ "$RUN_EXIT_CODE" -eq 0 ]] \
+   && [[ ! -f "$RUN_MARKER" ]] \
+   && [[ -f "$AC19_MARKER" ]] \
+   && [[ "$AC19_STATE_HASH_BEFORE" == "$AC19_STATE_HASH_AFTER" ]] \
+   && printf '%s' "$AC19_SYS_MSG" | grep -qi "parked"; then
+    pass "AC-19: empty hook session_id triggers 'parked' guard; marker and state preserved"
+else
+    fail "AC-19: empty hook session_id triggers 'parked' guard; marker and state preserved" \
+        "exit 0 + systemMessage matches /parked/ + marker stays + state.md byte-identical + no Codex" \
+        "exit $RUN_EXIT_CODE, codex_marker=$(test -f "$RUN_MARKER" && echo present || echo missing), bg_marker=$(test -f "$AC19_MARKER" && echo present || echo missing), state_unchanged=$([[ "$AC19_STATE_HASH_BEFORE" == "$AC19_STATE_HASH_AFTER" ]] && echo yes || echo no), systemMessage='$AC19_SYS_MSG'; output: $RUN_OUTPUT"
+fi
+
+# ---------------- AC-20 ----------------
+# Non-short-circuit cleanup must not drop bg-pending.marker when the
+# transcript exists but cannot be parsed. The helper is fail-closed on
+# malformed JSON; that failure must NOT be treated as "no pending".
+echo "Test AC-20: malformed transcript preserves bg-pending.marker"
+AC20_REPO="$TEST_DIR/ac20"
+AC20_LOOP=$(create_full_fixture "$AC20_REPO")
+AC20_STATE="$AC20_LOOP/state.md"
+AC20_MARKER="$AC20_LOOP/bg-pending.marker"
+AC20_BRANCH=$(git -C "$AC20_REPO" rev-parse --abbrev-ref HEAD)
+AC20_BASE_COMMIT=$(git -C "$AC20_REPO" rev-parse HEAD)
+cat > "$AC20_STATE" <<EOF_AC20
+---
+current_round: 0
+max_iterations: 42
+codex_model: gpt-5.4
+codex_effort: high
+codex_timeout: 60
+push_every_round: false
+full_review_round: 5
+plan_file: "plans/test-plan.md"
+plan_tracked: false
+start_branch: $AC20_BRANCH
+base_branch: $AC20_BRANCH
+base_commit: $AC20_BASE_COMMIT
+review_started: false
+ask_codex_question: false
+agent_teams: false
+session_id: session_home
+---
+EOF_AC20
+: > "$AC20_MARKER"
+
+# Write a deliberately malformed transcript (truncated JSON object) so
+# list_pending_background_task_ids's jq invocations fail the parse.
+AC20_TRANSCRIPT="$TRANSCRIPTS_DIR/ac20.jsonl"
+printf '%s\n' '{"type":"user","message":' > "$AC20_TRANSCRIPT"
+
+AC20_INPUT=$(jq -c -n --arg tp "$AC20_TRANSCRIPT" \
+    '{transcript_path:$tp, session_id:"session_home"}')
+run_stop_hook_with_input "$AC20_REPO" "$AC20_INPUT"
+
+if [[ -f "$AC20_MARKER" ]]; then
+    pass "AC-20: malformed transcript preserves bg-pending.marker"
+else
+    fail "AC-20: malformed transcript preserves bg-pending.marker" \
+        "marker still present (cleanup must not fire on fail-closed helper)" \
+        "marker was removed"
 fi
 
 print_test_summary "Stop Hook Background-Task Allow Test Summary"
