@@ -1221,7 +1221,7 @@ git_adds_humanize() {
         # Check for direct .humanize reference (blocked regardless of other flags)
         # Handles: .humanize, ./.humanize, path/to/.humanize, ".humanize", '.humanize'
         # Pattern matches .humanize at start, after space, after / or ./ AND followed by end, /, or space
-        # This avoids over-blocking .humanizeconfig or .humanize-backup
+        # This avoids over-blocking .humanizeconfig or .humanize-backup.
         if echo "$add_args_normalized" | grep -qE '(^|[[:space:]]|/)\.humanize($|/|[[:space:]])'; then
             return 0
         fi
@@ -1317,6 +1317,60 @@ If you need to add \`.humanize*\` to \`.gitignore\`, follow these steps:
 IMPORTANT: The commit message must NOT contain the literal string \".humanize\" to avoid triggering this protection."
 
     load_and_render_safe "$TEMPLATE_DIR" "block/git-add-humanize.md" "$fallback"
+}
+
+# Return success if local Humanize runtime state has entered git tracking or the index.
+# Untracked .humanize state is allowed; tracked or staged state must be blocked.
+# Usage: git_has_tracked_humanize_state [project_root]
+git_has_tracked_humanize_state() {
+    local project_root="${1:-.}"
+
+    if [[ ! -d "$project_root/.git" ]] && ! git -C "$project_root" rev-parse --git-dir >/dev/null 2>&1; then
+        return 1
+    fi
+
+    if git -C "$project_root" ls-files --error-unmatch .humanize >/dev/null 2>&1; then
+        return 0
+    fi
+    if git -C "$project_root" ls-files '.humanize/*' '.humanize-*' | grep -q '.'; then
+        return 0
+    fi
+
+    if git -C "$project_root" diff --cached --name-only -- .humanize '.humanize-*' | grep -q '.'; then
+        return 0
+    fi
+
+    return 1
+}
+
+# Standard message for blocking tracked/staged .humanize state.
+# Usage: git_tracked_humanize_blocked_message
+git_tracked_humanize_blocked_message() {
+    local fallback="# Tracked Humanize State Blocked
+
+Detected tracked or staged files under \`.humanize/\` (or legacy \`.humanize-*\`).
+
+These files are local Humanize loop state and must remain outside version control.
+
+## Required Fix
+
+1. Remove Humanize state from the index, for example:
+
+       git rm --cached -r .humanize
+
+   If legacy tracked state exists, remove those entries too:
+
+       git rm --cached -r .humanize-*
+
+2. Keep only real project files staged.
+3. Retry the stop action after the local state is no longer tracked.
+
+## Important
+
+- Do NOT use \`git add -f\` on Humanize state files.
+- Do NOT commit RLCR trackers, round summaries, contracts, or cancel/finalize markers."
+
+    load_and_render_safe "$TEMPLATE_DIR" "block/git-tracked-humanize.md" "$fallback"
 }
 
 # Standard message for blocking direct execution of hook scripts

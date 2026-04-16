@@ -622,6 +622,21 @@ if [[ "$GIT_IS_REPO" == "true" ]]; then
     GIT_ISSUES=""
     SPECIAL_NOTES=""
 
+    if git_has_tracked_humanize_state "$PROJECT_ROOT"; then
+        cleanup_stale_index_lock
+        REASON=$(git_tracked_humanize_blocked_message)
+
+        jq -n \
+            --arg reason "$REASON" \
+            --arg msg "Loop: Blocked - tracked Humanize state detected, remove it from git first" \
+            '{
+                "decision": "block",
+                "reason": $reason,
+                "systemMessage": $msg
+            }'
+        exit 0
+    fi
+
     # Check for uncommitted changes (staged or unstaged) using cached status.
     # Exclude untracked .humanize/ paths and .humanize-* dash-separated legacy
     # variants from the dirty determination because local plugin state under

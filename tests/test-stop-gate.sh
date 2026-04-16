@@ -115,30 +115,59 @@ else
     fail "rlcr-stop-gate --project-root output contains expected block reason" "output containing BLOCK:" "$OUTPUT2"
 fi
 
-# Test 3: No active loop -> gate allows exit (exit 0)
+# Test 3: Tracked Humanize state blocks before normal loop validation
 T3_DIR="$TEST_DIR/t3"
-mkdir -p "$T3_DIR/empty-project"
+mkdir -p "$T3_DIR"
+setup_active_loop_fixture "$T3_DIR/project"
+echo "tracked" > "$T3_DIR/project/.humanize/rlcr/2026-03-01_00-00-00/goal-tracker.md"
+git -C "$T3_DIR/project" add -f .humanize/rlcr/2026-03-01_00-00-00/goal-tracker.md
 
 set +e
 (
-    cd "$T3_DIR/empty-project"
+    cd "$T3_DIR/project"
     "$GATE_SCRIPT"
 ) > "$T3_DIR/out.txt" 2>&1
 EXIT3=$?
 set -e
 
-if [[ "$EXIT3" -eq 0 ]]; then
-    pass "rlcr-stop-gate exits 0 when no active loop exists"
+if [[ "$EXIT3" -eq 10 ]]; then
+    pass "rlcr-stop-gate blocks tracked Humanize state"
 else
     OUTPUT3=$(cat "$T3_DIR/out.txt" 2>/dev/null || true)
-    fail "rlcr-stop-gate exits 0 when no active loop exists" "exit 0" "exit $EXIT3; output: $OUTPUT3"
+    fail "rlcr-stop-gate blocks tracked Humanize state" "exit 10" "exit $EXIT3; output: $OUTPUT3"
 fi
 
-if grep -q "^ALLOW:" "$T3_DIR/out.txt" 2>/dev/null; then
-    pass "rlcr-stop-gate reports ALLOW when no active loop"
+if grep -q "Tracked Humanize State Blocked" "$T3_DIR/out.txt" 2>/dev/null; then
+    pass "rlcr-stop-gate reports tracked Humanize state with dedicated reason"
 else
     OUTPUT3=$(cat "$T3_DIR/out.txt" 2>/dev/null || true)
-    fail "rlcr-stop-gate reports ALLOW when no active loop" "output containing ALLOW:" "$OUTPUT3"
+    fail "rlcr-stop-gate reports tracked Humanize state with dedicated reason" "output containing Tracked Humanize State Blocked" "$OUTPUT3"
+fi
+
+# Test 4: No active loop -> gate allows exit (exit 0)
+T4_DIR="$TEST_DIR/t4"
+mkdir -p "$T4_DIR/empty-project"
+
+set +e
+(
+    cd "$T4_DIR/empty-project"
+    "$GATE_SCRIPT"
+) > "$T4_DIR/out.txt" 2>&1
+EXIT4=$?
+set -e
+
+if [[ "$EXIT4" -eq 0 ]]; then
+    pass "rlcr-stop-gate exits 0 when no active loop exists"
+else
+    OUTPUT4=$(cat "$T4_DIR/out.txt" 2>/dev/null || true)
+    fail "rlcr-stop-gate exits 0 when no active loop exists" "exit 0" "exit $EXIT4; output: $OUTPUT4"
+fi
+
+if grep -q "^ALLOW:" "$T4_DIR/out.txt" 2>/dev/null; then
+    pass "rlcr-stop-gate reports ALLOW when no active loop"
+else
+    OUTPUT4=$(cat "$T4_DIR/out.txt" 2>/dev/null || true)
+    fail "rlcr-stop-gate reports ALLOW when no active loop" "output containing ALLOW:" "$OUTPUT4"
 fi
 
 print_test_summary "RLCR Stop Gate Wrapper Test Summary"
