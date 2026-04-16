@@ -476,10 +476,12 @@ AC9_RESULT=$(emit_async_agent_launch_result "toolu_G" "agent_pending_G")
 write_transcript "$AC9_TRANSCRIPT" "$AC9_LAUNCH" "$AC9_RESULT"
 
 AC9_OUT="$AC9_REPO/gate-out.txt"
+# Pass --project-root explicitly so an inherited CLAUDE_PROJECT_DIR
+# from the outer runner cannot redirect the gate to the outer repo.
 set +e
 (
     cd "$AC9_REPO"
-    "$GATE_SCRIPT" --transcript-path "$AC9_TRANSCRIPT"
+    "$GATE_SCRIPT" --project-root "$AC9_REPO" --transcript-path "$AC9_TRANSCRIPT"
 ) > "$AC9_OUT" 2>&1
 AC9_EXIT=$?
 set -e
@@ -561,7 +563,9 @@ AC10C_OUT="$TEST_DIR/ac10c-out.txt"
 set +e
 (
     cd "$AC10C_REPO"
-    HOME="$FAKE_HOME" "$GATE_SCRIPT" --transcript-path "$AC10C_TILDE_PATH"
+    HOME="$FAKE_HOME" "$GATE_SCRIPT" \
+        --project-root "$AC10C_REPO" \
+        --transcript-path "$AC10C_TILDE_PATH"
 ) > "$AC10C_OUT" 2>&1
 AC10C_EXIT=$?
 set -e
@@ -1307,7 +1311,7 @@ AC22_OUT="$TEST_DIR/ac22-out.txt"
 set +e
 (
     cd "$AC22_REPO"
-    "$GATE_SCRIPT" --transcript-path "$AC22_TRANSCRIPT"
+    "$GATE_SCRIPT" --project-root "$AC22_REPO" --transcript-path "$AC22_TRANSCRIPT"
 ) > "$AC22_OUT" 2>&1
 AC22_EXIT=$?
 set -e
@@ -1362,7 +1366,7 @@ AC22B_OUT="$TEST_DIR/ac22b-out.txt"
 set +e
 (
     cd "$AC22B_REPO"
-    "$GATE_SCRIPT"
+    "$GATE_SCRIPT" --project-root "$AC22B_REPO"
 ) > "$AC22B_OUT" 2>&1
 AC22B_EXIT=$?
 set -e
