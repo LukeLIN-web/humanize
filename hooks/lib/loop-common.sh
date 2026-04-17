@@ -173,6 +173,10 @@ LOOP_COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 LOOP_COMMON_PLUGIN_ROOT="$(cd "$LOOP_COMMON_DIR/../.." && pwd)"
 export PLUGIN_ROOT="${PLUGIN_ROOT:-$LOOP_COMMON_PLUGIN_ROOT}"
 
+# Shared project-root resolver (CLAUDE_PROJECT_DIR -> git toplevel,
+# realpath-canonicalized). Must load before any caller needs PROJECT_ROOT.
+source "$LOOP_COMMON_DIR/project-root.sh"
+
 _lc_errexit=false; [[ -o errexit ]] && _lc_errexit=true
 _lc_nounset=false; [[ -o nounset ]] && _lc_nounset=true
 _lc_pipefail=false; [[ -o pipefail ]] && _lc_pipefail=true
@@ -182,11 +186,20 @@ $_lc_nounset && set -u || set +u
 $_lc_pipefail && set -o pipefail || set +o pipefail
 unset _lc_errexit _lc_nounset _lc_pipefail
 
-_LOOP_COMMON_PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+_LOOP_COMMON_PROJECT_ROOT="$(resolve_project_root 2>/dev/null || true)"
 # Config loading is best-effort: use || true so a config-load failure does not
 # abort sourcing before callers' dependency checks (jq, codex) are reached.
 # Stderr is NOT suppressed so malformed config warnings remain visible.
-_LOOP_COMMON_CONFIG="$(load_merged_config "$LOOP_COMMON_PLUGIN_ROOT" "$_LOOP_COMMON_PROJECT_ROOT")" || true
+#
+# Skip config loading when no project root is available (e.g. humanize.sh is
+# sourced from .bashrc/.zshrc in a non-repo directory like $HOME). Passing an
+# empty project_root to load_merged_config would surface a usage error on
+# stderr every time the shell starts.
+if [[ -n "$_LOOP_COMMON_PROJECT_ROOT" ]]; then
+    _LOOP_COMMON_CONFIG="$(load_merged_config "$LOOP_COMMON_PLUGIN_ROOT" "$_LOOP_COMMON_PROJECT_ROOT")" || true
+else
+    _LOOP_COMMON_CONFIG=""
+fi
 
 # Load bitlesson model from merged config (controls which CLI bitlesson-select.sh uses)
 DEFAULT_BITLESSON_MODEL="$(get_config_value "$_LOOP_COMMON_CONFIG" "bitlesson_model" 2>/dev/null || true)"
@@ -1066,10 +1079,20 @@ is_cancel_authorized() {
         return 4
     fi
 
+    # Canonicalize the loop dir (idempotent: resolve_project_root already
+    # canonicalizes, but callers may supply a non-canonical override). Both
+    # sides of the upcoming string comparisons must be canonicalized through
+    # the same transformation or a symlinked prefix in the user's command
+    # (e.g. /var/... vs /private/var/... on macOS) will spuriously fail the
+    # authorization check.
+    local canonical_loop_dir
+    canonical_loop_dir="$(canonicalize_path "${active_loop_dir%/}")"
+    canonical_loop_dir="${canonical_loop_dir:-${active_loop_dir%/}}"
+
     # Normalize: Replace $loop_dir and ${loop_dir} with actual path
     local normalized="$command_lower"
     local loop_dir_lower
-    loop_dir_lower="${active_loop_dir%/}/"
+    loop_dir_lower="${canonical_loop_dir}/"
     loop_dir_lower=$(echo "$loop_dir_lower" | tr '[:upper:]' '[:lower:]')
 
     normalized="${normalized//\$\{loop_dir\}/$loop_dir_lower}"
@@ -1165,32 +1188,50 @@ is_cancel_authorized() {
         return 5
     fi
 
-    # Normalize and validate source path
+    # Normalize and validate source path.
+    #
+    # Canonicalize the user-provided path so a symlinked prefix in the caller's
+    # command (e.g. /Users/x vs /private/Users/x on macOS, or /var vs
+    # /private/var) matches canonical_loop_dir resolved via resolve_project_root.
+    # Re-lowercase after canonicalization because realpath on case-insensitive
+    # filesystems may restore the original casing of path components, which
+    # would diverge from the already-lowercased expected_* values.
     src=$(_normalize_path "$src")
+    local src_canonical
+    src_canonical="$(canonicalize_path "$src")"
+    src_canonical="${src_canonical:-$src}"
+    src_canonical=$(echo "$src_canonical" | tr '[:upper:]' '[:lower:]')
     local expected_src_state="${loop_dir_lower}state.md"
     local expected_src_finalize="${loop_dir_lower}finalize-state.md"
     local expected_src_methodology="${loop_dir_lower}methodology-analysis-state.md"
-    if [[ "$src" != "$expected_src_state" ]] && [[ "$src" != "$expected_src_finalize" ]] && [[ "$src" != "$expected_src_methodology" ]]; then
+    if [[ "$src_canonical" != "$expected_src_state" ]] && [[ "$src_canonical" != "$expected_src_finalize" ]] && [[ "$src_canonical" != "$expected_src_methodology" ]]; then
         return 5
     fi
 
-    # Normalize and validate destination path
+    # Normalize and validate destination path (same canonicalize+lowercase
+    # transformation as source; see src comment above for rationale).
     dest=$(_normalize_path "$dest")
+    local dest_canonical
+    dest_canonical="$(canonicalize_path "$dest")"
+    dest_canonical="${dest_canonical:-$dest}"
+    dest_canonical=$(echo "$dest_canonical" | tr '[:upper:]' '[:lower:]')
     local expected_dest="${loop_dir_lower}cancel-state.md"
-    if [[ "$dest" != "$expected_dest" ]]; then
+    if [[ "$dest_canonical" != "$expected_dest" ]]; then
         return 5
     fi
 
     # SECURITY: Reject if source file is a symlink (filesystem check)
     # Determine source file by comparing against expected paths (not substring match)
     # This avoids vulnerability when loop directory path contains "finalize" or "methodology"
+    # Use canonical_loop_dir so the symlink check runs against the real on-disk
+    # path rather than a user-supplied non-canonical form.
     local src_original
-    if [[ "$src" == "$expected_src_methodology" ]]; then
-        src_original="${active_loop_dir}/methodology-analysis-state.md"
-    elif [[ "$src" == "$expected_src_finalize" ]]; then
-        src_original="${active_loop_dir}/finalize-state.md"
+    if [[ "$src_canonical" == "$expected_src_methodology" ]]; then
+        src_original="${canonical_loop_dir}/methodology-analysis-state.md"
+    elif [[ "$src_canonical" == "$expected_src_finalize" ]]; then
+        src_original="${canonical_loop_dir}/finalize-state.md"
     else
-        src_original="${active_loop_dir}/state.md"
+        src_original="${canonical_loop_dir}/state.md"
     fi
     if [[ -L "$src_original" ]]; then
         return 6  # Source is a symlink
