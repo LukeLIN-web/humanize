@@ -57,6 +57,26 @@ FAKE_HOME="$TEST_DIR/fake-home"
 mkdir -p "$FAKE_HOME"
 
 # ----------------------------------------------------------------------
+# Mock lsof binaries used by the liveness-probe tests (AC-23, AC-24).
+# lsof-alive exits 0 (simulates >= 1 holder: task is running).
+# lsof-dead  exits 1 (simulates   0 holders: task is orphaned/dead).
+# ----------------------------------------------------------------------
+setup_mock_lsof() {
+    mkdir -p "$TEST_DIR/bin"
+    cat > "$TEST_DIR/bin/lsof-alive" << 'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+    chmod +x "$TEST_DIR/bin/lsof-alive"
+
+    cat > "$TEST_DIR/bin/lsof-dead" << 'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+    chmod +x "$TEST_DIR/bin/lsof-dead"
+}
+
+# ----------------------------------------------------------------------
 # Mock codex CLI: records an invocation marker and prints canned feedback.
 # ----------------------------------------------------------------------
 setup_mock_codex() {
@@ -249,7 +269,7 @@ write_transcript() {
 # Sets RUN_EXIT_CODE, RUN_OUTPUT, RUN_MARKER.
 # ----------------------------------------------------------------------
 run_stop_hook_with_input() {
-    local repo_dir="$1" hook_input_json="$2" home_override="${3:-}"
+    local repo_dir="$1" hook_input_json="$2" home_override="${3:-}" lsof_bin_override="${4:-}"
 
     RUN_MARKER="$repo_dir/codex-called.marker"
     rm -f "$RUN_MARKER"
@@ -258,6 +278,7 @@ run_stop_hook_with_input() {
     RUN_OUTPUT=$(
         cd "$repo_dir"
         [[ -n "$home_override" ]] && export HOME="$home_override"
+        [[ -n "$lsof_bin_override" ]] && export LSOF_BIN="$lsof_bin_override"
         CLAUDE_PROJECT_DIR="$repo_dir" \
         MOCK_CODEX_MARKER="$RUN_MARKER" \
         MOCK_CODEX_OUTPUT="Mock review feedback" \
@@ -318,6 +339,7 @@ assert_reached_codex() {
 }
 
 setup_mock_codex
+setup_mock_lsof
 
 # Transcripts live outside any test repo to avoid tripping git cleanliness
 # gates in the stop hook.
@@ -1384,6 +1406,57 @@ else
         "exit 0 + ALLOW: (no 'parked') + marker kept + state.md byte-identical" \
         "exit $AC22B_EXIT; marker=$(test -f "$AC22B_MARKER" && echo present || echo missing); state_unchanged=$([[ "$AC22B_STATE_HASH_BEFORE" == "$AC22B_STATE_HASH_AFTER" ]] && echo yes || echo no); output: $AC22B_BODY"
 fi
+
+# ---------------- AC-23 ----------------
+# Liveness probe positive: a pending task whose output file is open by at
+# least one process (lsof exits 0) must still be treated as running.
+# The short-circuit must fire and emit a systemMessage.
+echo "Test AC-23: liveness probe - alive task (lsof has holder) -> still short-circuits"
+AC23_REPO="$TEST_DIR/ac23"
+AC23_LOOP=$(create_full_fixture "$AC23_REPO")
+AC23_STATE="$AC23_LOOP/state.md"
+AC23_TRANSCRIPT="$TRANSCRIPTS_DIR/ac23.jsonl"
+AC23_TASK_ID="agent_probe_alive"
+AC23_LAUNCH=$(emit_tool_use_assistant "toolu_AC23" "Agent" ',"description":"x","prompt":"x"')
+AC23_RESULT=$(emit_async_agent_launch_result "toolu_AC23" "$AC23_TASK_ID")
+write_transcript "$AC23_TRANSCRIPT" "$AC23_LAUNCH" "$AC23_RESULT"
+
+AC23_UID=$(id -u)
+AC23_SLUG=$(basename "$TRANSCRIPTS_DIR")
+AC23_TASKS_DIR="/tmp/claude-${AC23_UID}/${AC23_SLUG}/ac23/tasks"
+mkdir -p "$AC23_TASKS_DIR"
+touch "$AC23_TASKS_DIR/${AC23_TASK_ID}.output"
+
+AC23_INPUT=$(jq -c -n --arg tp "$AC23_TRANSCRIPT" '{transcript_path:$tp}')
+run_stop_hook_with_input "$AC23_REPO" "$AC23_INPUT" "" "$TEST_DIR/bin/lsof-alive"
+rm -rf "/tmp/claude-${AC23_UID}/${AC23_SLUG}/ac23" 2>/dev/null || true
+assert_systemmessage_only \
+    "AC-23: alive task (lsof has holder) still triggers short-circuit" \
+    "$AC23_REPO" "$AC23_STATE" "1 background task"
+
+# ---------------- AC-24 ----------------
+# Liveness probe negative: a pending task whose output file has no open
+# file descriptors (lsof exits 1) was killed without a completion event.
+# The probe must drop it so the hook proceeds to normal Codex review.
+echo "Test AC-24: liveness probe - dead/orphaned task (lsof no holder) -> reaches Codex"
+AC24_REPO="$TEST_DIR/ac24"
+create_full_fixture "$AC24_REPO" > /dev/null
+AC24_TRANSCRIPT="$TRANSCRIPTS_DIR/ac24.jsonl"
+AC24_TASK_ID="agent_probe_dead"
+AC24_LAUNCH=$(emit_tool_use_assistant "toolu_AC24" "Agent" ',"description":"x","prompt":"x"')
+AC24_RESULT=$(emit_async_agent_launch_result "toolu_AC24" "$AC24_TASK_ID")
+write_transcript "$AC24_TRANSCRIPT" "$AC24_LAUNCH" "$AC24_RESULT"
+
+AC24_UID=$(id -u)
+AC24_SLUG=$(basename "$TRANSCRIPTS_DIR")
+AC24_TASKS_DIR="/tmp/claude-${AC24_UID}/${AC24_SLUG}/ac24/tasks"
+mkdir -p "$AC24_TASKS_DIR"
+touch "$AC24_TASKS_DIR/${AC24_TASK_ID}.output"
+
+AC24_INPUT=$(jq -c -n --arg tp "$AC24_TRANSCRIPT" '{transcript_path:$tp}')
+run_stop_hook_with_input "$AC24_REPO" "$AC24_INPUT" "" "$TEST_DIR/bin/lsof-dead"
+rm -rf "/tmp/claude-${AC24_UID}/${AC24_SLUG}/ac24" 2>/dev/null || true
+assert_reached_codex "AC-24: dead/orphaned task (lsof no holder) is pruned; Codex review runs"
 
 print_test_summary "Stop Hook Background-Task Allow Test Summary"
 exit $?

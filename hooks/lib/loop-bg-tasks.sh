@@ -94,6 +94,65 @@ derive_loop_start_iso_ts() {
     printf '%s' "$utc_iso"
 }
 
+# Derive the Claude Code task-output directory from a transcript path.
+#
+# Claude Code writes background-task output files under:
+#   /tmp/claude-<uid>/<project-slug>/<session-id>/tasks/<task-id>.output
+#
+# The project slug and session id are encoded in the transcript path:
+#   <claude-home>/projects/<slug>/<session-id>.jsonl
+#
+# Usage: derive_tasks_dir_from_transcript "$transcript_path"
+#   Prints the tasks dir path, or nothing when derivation fails.
+derive_tasks_dir_from_transcript() {
+    local transcript_path="$1"
+    [[ -z "$transcript_path" ]] && return
+    local slug sid uid
+    slug=$(basename "$(dirname "$transcript_path")" 2>/dev/null)
+    sid=$(basename "$transcript_path" .jsonl 2>/dev/null)
+    uid=$(id -u 2>/dev/null) || return
+    if [[ -z "$slug" ]] || [[ "$slug" == "." ]] || [[ -z "$sid" ]] || [[ -z "$uid" ]]; then
+        return
+    fi
+    printf '/tmp/claude-%s/%s/%s/tasks' "$uid" "$slug" "$sid"
+}
+
+# Returns 0 if the background task identified by task_id appears to be alive
+# (output file absent, or lsof reports >= 1 holder), 1 if confirmed dead
+# (output file exists and lsof reports 0 holders).
+#
+# Fail-open: returns 0 (alive) when the output file does not exist, when
+# the lsof binary is unavailable, or when lsof exits non-zero for any
+# reason other than "no holders".
+#
+# Set LSOF_BIN to override the lsof binary path (used in tests).
+#
+# Usage: is_bg_task_alive "$task_id" "$tasks_dir"
+is_bg_task_alive() {
+    local task_id="$1" tasks_dir="$2"
+    local lsof_bin="${LSOF_BIN:-lsof}"
+    local output_file="$tasks_dir/$task_id.output"
+    # Output file absent -> fail open (treat as still running).
+    [[ -f "$output_file" ]] || return 0
+    # lsof unavailable -> fail open.
+    command -v "$lsof_bin" >/dev/null 2>&1 || return 0
+    # lsof exits 0 when >= 1 process has the file open, 1 otherwise.
+    "$lsof_bin" "$output_file" >/dev/null 2>&1
+}
+
+# Filter a newline-delimited list of task IDs, retaining only those that
+# pass is_bg_task_alive. Prints surviving IDs one per line.
+#
+# Usage: prune_dead_bg_task_ids "$pending_ids" "$tasks_dir"
+prune_dead_bg_task_ids() {
+    local pending_ids="$1" tasks_dir="$2"
+    local task_id
+    while IFS= read -r task_id; do
+        [[ -z "$task_id" ]] && continue
+        is_bg_task_alive "$task_id" "$tasks_dir" && printf '%s\n' "$task_id"
+    done <<< "$pending_ids"
+}
+
 # Enumerate background-task ids that have been launched but not yet marked
 # completed in a Claude Code transcript.jsonl.
 #
@@ -186,10 +245,23 @@ list_pending_background_task_ids() {
         } | sort -u | sed '/^$/d'
     ) || completed=""
 
-    # Emit launched ids that have no matching completion notification.
-    comm -23 \
+    # Collect launched ids that have no matching completion notification.
+    local pending
+    pending=$(comm -23 \
         <(printf '%s\n' "$launched" | sed '/^$/d') \
-        <(printf '%s\n' "$completed" | sed '/^$/d')
+        <(printf '%s\n' "$completed" | sed '/^$/d'))
+
+    # Apply liveness probe: drop orphaned task IDs whose output file exists
+    # but has zero open file descriptors (killed without a completion event).
+    if [[ -n "$pending" ]]; then
+        local tasks_dir
+        tasks_dir=$(derive_tasks_dir_from_transcript "$transcript_path")
+        if [[ -n "$tasks_dir" ]]; then
+            pending=$(prune_dead_bg_task_ids "$pending" "$tasks_dir")
+        fi
+    fi
+
+    printf '%s\n' "$pending" | sed '/^$/d'
 }
 
 # Returns 0 when the transcript shows at least one pending background task.
