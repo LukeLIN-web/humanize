@@ -61,12 +61,26 @@ GIT_TIMEOUT=30
 # Extract session_id from hook input for session-aware loop filtering
 HOOK_SESSION_ID=$(extract_session_id "$HOOK_INPUT")
 
-LOOP_DIR=$(find_active_loop "$LOOP_BASE_DIR" "$HOOK_SESSION_ID")
+LOOP_DIR=$(find_active_loop "$LOOP_BASE_DIR" "$HOOK_SESSION_ID" true)
 
 # If no active loop (or session_id mismatch), allow exit
 if [[ -z "$LOOP_DIR" ]]; then
     exit 0
 fi
+
+# ========================================
+# Background-Task Guards
+# ========================================
+# Delegates to handle_bg_task_short_circuit (hooks/lib/loop-bg-tasks.sh),
+# which runs four cohesive guards in order:
+#   1. Ambiguous-caller marker guard (no session_id + marker present)
+#   2. Cross-session parked-loop guard (foreign session walking in)
+#   3. Pending-bg short-circuit (this session has async work in flight)
+#   4. Same-session stale-marker cleanup (bg work just finished)
+# When any guard short-circuits, it emits the appropriate JSON on stdout
+# and `exit 0`s directly; we never return from that call. When no guard
+# fires we continue into the normal gate logic below.
+handle_bg_task_short_circuit "$LOOP_DIR" "$HOOK_INPUT" "$HOOK_SESSION_ID"
 
 # ========================================
 # Detect Loop Phase: Normal or Finalize

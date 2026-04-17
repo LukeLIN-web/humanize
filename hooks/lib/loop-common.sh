@@ -242,6 +242,12 @@ extract_session_id() {
     printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null || echo ""
 }
 
+# Background-task helpers (expand_leading_tilde, extract_transcript_path,
+# derive_loop_start_iso_ts, list/has/count_pending_background_task[_ids],
+# handle_bg_task_short_circuit) live in loop-bg-tasks.sh and are sourced
+# at the bottom of this file so every existing consumer of loop-common.sh
+# continues to get them transparently.
+
 # Resolve the active state file for a loop directory
 # Checks for finalize-state.md first, then state.md
 # Usage: resolve_active_state_file "$loop_dir"
@@ -303,10 +309,17 @@ resolve_any_state_file() {
 # Empty stored session_id matches any filter (backward compat for pre-session
 # state files).
 #
+# Third parameter `allow_bg_marker_fallback` (default "false"): when "true",
+# the session-filter branch also considers a mismatched-session dir that holds
+# a `bg-pending.marker` file AND an active state file. Only the RLCR stop
+# hook opts in to this; every other caller (read/write/bash/plan-file
+# validators, ...) keeps strict session isolation.
+#
 # Outputs the directory path to stdout, or empty string if none found
 find_active_loop() {
     local loop_base_dir="$1"
     local filter_session_id="${2:-}"
+    local allow_bg_marker_fallback="${3:-false}"
 
     if [[ ! -d "$loop_base_dir" ]]; then
         echo ""
@@ -330,9 +343,18 @@ find_active_loop() {
         return
     fi
 
-    # Session filter: iterate newest-to-oldest, find the first dir belonging
-    # to this session (any state file), then check if it is still active.
+    # Session filter: iterate newest-to-oldest.
+    #
+    # The caller's own (exact stored session_id) match takes precedence over
+    # any marker-based adoption: with multiple active RLCR loops in the same
+    # repo, a newer dir parked by a different session must not be returned
+    # before an older dir that actually belongs to the caller. Marker
+    # candidates are recorded during the scan and only used as a fallback
+    # when no exact match is found anywhere. Zombie-loop protection
+    # (terminal newest for this session returns empty) still wins over
+    # marker fallback.
     local dir
+    local marker_candidate=""
     while IFS= read -r dir; do
         [[ -z "$dir" ]] && continue
         local trimmed_dir="${dir%/}"
@@ -346,9 +368,9 @@ find_active_loop() {
         local stored_session_id
         stored_session_id=$(sed -n '/^---$/,/^---$/{ /^'"${FIELD_SESSION_ID}"':/{ s/'"${FIELD_SESSION_ID}"': *//; p; } }' "$any_state" 2>/dev/null | tr -d ' ')
 
-        # Empty stored session_id matches any session (backward compat)
+        # Empty stored session_id matches any session (backward compat).
         if [[ -z "$stored_session_id" ]] || [[ "$stored_session_id" == "$filter_session_id" ]]; then
-            # This is the newest dir for this session -- only return if active
+            # Newest dir for this session -- only return if active.
             local active_state
             active_state=$(resolve_active_state_file "$trimmed_dir")
             if [[ -n "$active_state" ]]; then
@@ -356,14 +378,38 @@ find_active_loop() {
                 return
             fi
             # Session's newest loop is in terminal state; do not fall through
+            # to marker-based adoption either.
             echo ""
             return
         fi
+
+        # Session mismatch. Only the stop hook opts in to marker-based
+        # adoption; validators and other callers keep strict isolation, so
+        # the candidate is only recorded when the caller explicitly allows
+        # it.
+        if [[ "$allow_bg_marker_fallback" == "true" ]] \
+           && [[ -z "$marker_candidate" ]] \
+           && [[ -f "$trimmed_dir/bg-pending.marker" ]]; then
+            local candidate_state
+            candidate_state=$(resolve_active_state_file "$trimmed_dir")
+            if [[ -n "$candidate_state" ]]; then
+                marker_candidate="$trimmed_dir"
+            fi
+            # Marker on a terminal loop is stale; leave it alone.
+        fi
     done < <(ls -1d "$loop_base_dir"/*/ 2>/dev/null | sort -r)
+
+    # No exact session match. Fall back to marker-based adoption only when
+    # the caller explicitly opted in -- the stop hook uses this to surface
+    # a "parked by another session" notice or to resume its own parked
+    # loop after a previous session died before the bg completion arrived.
+    if [[ "$allow_bg_marker_fallback" == "true" ]] && [[ -n "$marker_candidate" ]]; then
+        echo "$marker_candidate"
+        return
+    fi
 
     echo ""
 }
-
 
 # Extract current round number from state.md
 # Outputs the round number to stdout, defaults to 0
@@ -1468,3 +1514,15 @@ end_loop() {
         return 1
     fi
 }
+
+# Source background-task helpers. Sourced at the bottom so every function
+# above is available to callers that only need loop-common.sh, while bg-aware
+# callers (the stop hook, the test suite) still get the bg helpers via a
+# single source of loop-common.sh.
+#
+# _LOOP_COMMON_DIR is set here instead of at the top of the file because
+# loop-bg-tasks.sh lives in the same directory as this file and we want to
+# locate it regardless of how loop-common.sh was sourced.
+_LOOP_COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=loop-bg-tasks.sh
+source "$_LOOP_COMMON_DIR/loop-bg-tasks.sh"
