@@ -82,6 +82,24 @@ def _get_rlcr_dir():
     return os.path.join(PROJECT_DIR, '.humanize', 'rlcr')
 
 
+# Session ids on disk are produced exclusively by setup-rlcr-loop.sh
+# via `date +%Y-%m-%d_%H-%M-%S`, so every legitimate id matches the
+# tight regex below. Rejecting anything outside this alphabet stops
+# hostile disk state (a session directory created by hand with
+# quotes or angle brackets in its name) from flowing into the
+# frontend's inline `onclick="navigate('#/session/${s.id}')"`
+# template literals. The frontend still uses HTML-escape for DOM
+# attributes, but the inline-handler template is an uncaught
+# surface — making the id shape dependable here is the cheapest
+# defense-in-depth.
+_SESSION_ID_RE = re.compile(r'^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}$')
+
+
+def _is_safe_session_id(session_id):
+    """Return True iff ``session_id`` matches the generator's format."""
+    return bool(session_id) and bool(_SESSION_ID_RE.match(session_id))
+
+
 def _get_session_dir(session_id):
     """Resolve a session_id to its on-disk directory, or None.
 
@@ -95,19 +113,17 @@ def _get_session_dir(session_id):
     arbitrary files.
 
     Reject:
-      - session_id containing path separators or parent traversal
-        markers (covers `..`, `/etc/passwd`, `foo/bar`, etc.)
+      - session_id that does not match the canonical
+        ``YYYY-MM-DD_HH-MM-SS`` shape (covers path separators, `..`,
+        dotfiles, and anything that could escape from a JS string
+        literal in the frontend's inline onclick handlers)
       - candidates that resolve outside the RLCR dir after
         realpath normalisation (defense against symlink escapes)
       - directories that exist but are not actually RLCR sessions
         (parser.is_valid_session requires state.md or a terminal
         *-state.md file)
     """
-    if not session_id or '/' in session_id or '\\' in session_id:
-        return None
-    if session_id in ('.', '..') or session_id.startswith('.'):
-        # Dotfiles aren't session ids (all real sessions start with
-        # the ISO date prefix like "2026-04-17_16-07-25").
+    if not _is_safe_session_id(session_id):
         return None
     rlcr_dir = _get_rlcr_dir()
     candidate = os.path.join(rlcr_dir, session_id)
@@ -413,8 +429,18 @@ def api_sessions():
     # needs it to pick a log filename and open the SSE stream; without
     # it every active card degrades to the WAITING state regardless of
     # whether cache logs actually exist.
+    #
+    # Filter out any on-disk directory whose name does not match the
+    # canonical session-id shape before emitting. This is the second
+    # line of defence for the inline-onclick XSS vector Codex flagged
+    # — a session directory created by hand with a name like
+    # `2026-04-18_00-34-17'); alert(1); //` should never reach the
+    # frontend where `onclick="navigate('#/session/${s.id}')"` would
+    # break out of the JS string.
     summaries = []
     for s in sessions:
+        if not _is_safe_session_id(s.get('id', '')):
+            continue
         summaries.append({
             'id': s['id'],
             'status': s['status'],
