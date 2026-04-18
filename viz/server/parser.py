@@ -809,7 +809,16 @@ def read_plan_file(session_dir, project_dir):
     if not (inside_project or inside_session):
         return _read_backup()
 
-    if os.path.exists(candidate_real):
+    # `os.path.exists` is True for directories too, so a state.md
+    # containing `plan_file: .` or any directory path would slip past
+    # the existence check and fall into `open(candidate_real, 'r')`,
+    # which raises IsADirectoryError. That surfaces as an uncaught
+    # 500 from /api/sessions/<id>/plan instead of the intended
+    # fallback to the session-local plan.md backup (or a controlled
+    # 404 when no backup is present). `os.path.isfile` is directory-
+    # safe and also returns False for broken symlinks, so no extra
+    # guard is needed.
+    if os.path.isfile(candidate_real):
         with open(candidate_real, 'r', encoding='utf-8') as f:
             return f.read()
 
