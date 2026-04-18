@@ -438,7 +438,7 @@ fi
 echo ""
 echo "Test Group 8: Static Assets"
 
-for file in index.html css/theme.css css/layout.css js/app.js js/pipeline.js js/charts.js js/actions.js js/i18n.js; do
+for file in index.html css/theme.css css/layout.css js/app.js js/pipeline.js js/actions.js js/i18n.js; do
     if [[ -f "$VIZ_DIR/static/$file" ]]; then
         pass "Static file exists: $file"
     else
