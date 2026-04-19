@@ -312,14 +312,21 @@ def parse_git_status(project_dir):
             untracked += 1
             continue
         x, y = xy[0], xy[1]
-        if x == 'M' or y == 'M':
-            modified += 1
+        # Priority matches ``humanize_parse_git_status`` in
+        # ``scripts/humanize.sh``: an index-side ``A`` (``"A "``, ``"AM"``,
+        # ``"AD"``) is always ``added``. The previous ordering checked
+        # ``M in either column`` first, so the common "stage a new file
+        # then tweak it" workflow (``AM``) was mis-counted as modified
+        # and the dashboard git summary disagreed with the terminal
+        # monitor.
+        if x == 'A':
+            added += 1
         elif x == 'R' or y == 'R':
             modified += 1
-        elif x == 'A':
-            added += 1
         elif x == 'D' or y == 'D':
             deleted += 1
+        elif x == 'M' or y == 'M':
+            modified += 1
 
     insertions = deletions = 0
     try:
