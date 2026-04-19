@@ -590,7 +590,19 @@ def api_session_report(session_id):
 
 @app.route('/api/analytics')
 def api_analytics():
-    sessions = list_sessions(PROJECT_DIR)
+    # Drop any on-disk session whose directory name does not match
+    # the canonical shape before feeding it into the analyzer. The
+    # Analytics page's comparison table renders ``session_id`` into
+    # an inline ``onclick="navigate('#/session/${id}')"`` template
+    # and cell HTML; without this filter a crafted directory name
+    # containing quote/JS metacharacters would reach the browser
+    # and could break out of the attribute or inject script, which
+    # is the exact vector ``/api/sessions`` already guards against.
+    # Matching the same filter here keeps both surfaces consistent.
+    sessions = [
+        s for s in list_sessions(PROJECT_DIR)
+        if _is_safe_session_id(s.get('id', ''))
+    ]
     analytics = compute_analytics(sessions)
     return jsonify(analytics)
 

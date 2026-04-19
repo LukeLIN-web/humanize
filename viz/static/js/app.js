@@ -1295,18 +1295,37 @@ function buildCmpTable(stats) {
 
     for (const s of sorted) {
         const vb = s.verdict_breakdown || {}
+        // Escape every attacker-reachable value before splicing into
+        // the innerHTML template. The backend filter on /api/analytics
+        // already rejects session ids outside `[A-Za-z0-9_.-]+`, so in
+        // practice the escape here is defense-in-depth: a future
+        // producer that forgets to apply the filter should still be
+        // safely rendered rather than breaking out of the inline
+        // onclick / cell HTML (the exact regression Codex Round 23
+        // flagged). `s.status` is trusted (enum from parser.py) but
+        // piped through _esc too for consistency.
+        const idEsc = _esc(s.session_id)
         html += `<tr>
-            <td><a onclick="navigate('#/session/${s.session_id}')" style="cursor:pointer">${s.session_id}</a></td>
-            <td><span class="badge badge-${s.status}">${t('status.' + s.status)}</span></td>
-            <td>${s.rounds}</td>
-            <td>${s.avg_duration_minutes != null ? s.avg_duration_minutes + ' min' : '—'}</td>
-            <td>${vb.advanced||0}/${vb.stalled||0}/${vb.regressed||0}</td>
-            <td>${s.rework_count}</td>
-            <td>${s.ac_completion_rate}%</td>
+            <td><a class="cmp-nav" data-session-id="${idEsc}" style="cursor:pointer">${idEsc}</a></td>
+            <td><span class="badge badge-${_esc(s.status)}">${_esc(t('status.' + s.status))}</span></td>
+            <td>${_esc(String(s.rounds))}</td>
+            <td>${s.avg_duration_minutes != null ? _esc(String(s.avg_duration_minutes)) + ' min' : '—'}</td>
+            <td>${_esc(String(vb.advanced||0))}/${_esc(String(vb.stalled||0))}/${_esc(String(vb.regressed||0))}</td>
+            <td>${_esc(String(s.rework_count))}</td>
+            <td>${_esc(String(s.ac_completion_rate))}%</td>
         </tr>`
     }
     html += '</tbody></table>'
     root.innerHTML = html
+    // Bind navigation via data-attribute + delegated listener so the
+    // session id never flows through an inline JS string literal.
+    // Even if a future backend regression lets through a session id
+    // containing quote/script characters, the value only ever touches
+    // dataset (DOM-level string, never re-parsed as JS) and window
+    // navigation, neither of which evaluates markup.
+    root.querySelectorAll('a.cmp-nav').forEach(a => {
+        a.addEventListener('click', () => navigate('#/session/' + a.dataset.sessionId))
+    })
     window._cmpStats = stats
 }
 
