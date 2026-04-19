@@ -23,7 +23,12 @@ def export_session_markdown(session, lang='en'):
     lines.append("| Metric | Value |")
     lines.append("|--------|-------|")
     lines.append(f"| Status | {session['status'].capitalize()} |")
-    lines.append(f"| Rounds | {session['current_round']} |")
+    # ``current_round`` is a 0-based index — a session that only
+    # finished round 0 reports ``current_round=0`` with one entry
+    # in ``rounds``. Use the parsed rounds list length so the
+    # exported Markdown reflects the true completed-round count
+    # instead of underreporting every session by one.
+    lines.append(f"| Rounds | {len(session.get('rounds') or [])} |")
     lines.append(f"| Plan | {session.get('plan_file', 'N/A')} |")
     lines.append(f"| Branch | {session.get('start_branch', 'N/A')} |")
     lines.append(f"| Started | {session.get('started_at', 'N/A')} |")
