@@ -1130,7 +1130,12 @@ def _build_sanitized_issue(session):
     body_lines.append('## Quantitative Summary\n')
     body_lines.append('| Metric | Value |')
     body_lines.append('|--------|-------|')
-    body_lines.append(f'| Total rounds | {s["current_round"]} |')
+    # Reuse the ``round_total`` count computed for the Context section
+    # above — ``s["current_round"]`` is a 0-based index, so a raw read
+    # here would under-report every session (0 for a single-round
+    # session, N-1 for an N-round session) in the Quantitative
+    # Summary table that downstream issue readers rely on.
+    body_lines.append(f'| Total rounds | {round_total} |')
     body_lines.append(f'| Exit reason | {s["status"].capitalize()} |')
     if s.get('ac_total', 0) > 0:
         rate = round(s['ac_done'] / s['ac_total'] * 100) if s['ac_total'] > 0 else 0
