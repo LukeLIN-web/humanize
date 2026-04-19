@@ -32,6 +32,14 @@ PROJECT_DIR = '.'
 STATIC_DIR = '.'
 BIND_HOST = '127.0.0.1'
 AUTH_TOKEN = ''
+# Set by main() when `--trust-proxy` (or HUMANIZE_VIZ_TRUST_PROXY=1)
+# is supplied. Acknowledges that a TLS-terminating reverse proxy is
+# in front of the server, which lets the CSRF host/port matcher
+# honor `X-Forwarded-Proto` for scheme-based port resolution.
+# Localhost-bound dev mode always leaves this False so attacker-
+# supplied `X-Forwarded-Proto` headers cannot trick a direct-
+# connect dashboard into thinking it's HTTPS.
+TRUST_PROXY = False
 _session_cache = {}
 _cache_lock = threading.Lock()
 _ws_clients = set()
@@ -241,6 +249,41 @@ def _default_port_for_scheme(scheme):
     return 443 if scheme == 'https' else 80
 
 
+def _effective_request_scheme():
+    """Return the wire-level scheme the browser actually used.
+
+    Behind a TLS-terminating reverse proxy (the `--trust-proxy`
+    deployment mode), Flask sees the back-channel request as plain
+    HTTP — `request.scheme` is `http`, so the default-port lookup
+    below would collapse to 80 even though the browser spoke to the
+    proxy on 443. That mismatch turns every browser Origin of
+    `https://host` into a 403 at `_origin_matches_request()` because
+    the computed request port (80) differs from the origin port
+    (443), which in turn blocks cancel / generate-report / GitHub-
+    issue submissions in the standard HTTPS-behind-proxy deployment.
+
+    When `TRUST_PROXY` is True, honor `X-Forwarded-Proto`
+    (populated by every reasonable reverse proxy) for scheme
+    resolution so the default-port calculation lines up with the
+    browser's view. Anything other than explicit `https` falls back
+    to Flask's own `request.scheme` so HTTP proxy deployments keep
+    working. When `TRUST_PROXY` is False we ignore the header
+    entirely — otherwise an attacker on a direct-connect localhost
+    dashboard could flip our scheme view with a crafted header.
+    """
+    if TRUST_PROXY:
+        forwarded = (request.headers.get('X-Forwarded-Proto') or '').strip().lower()
+        # Some proxies comma-separate when multiple hops exist; the
+        # first entry is the one the client hit.
+        if forwarded:
+            forwarded = forwarded.split(',', 1)[0].strip()
+        if forwarded == 'https':
+            return 'https'
+        if forwarded == 'http':
+            return 'http'
+    return request.scheme
+
+
 def _parse_request_host_port():
     """Return ``(host, port)`` for the current request's Host header.
 
@@ -256,18 +299,19 @@ def _parse_request_host_port():
     .hostname`` returns the unbracketed form (``::1``). Strip the
     brackets after the host/port split so the comparison matches.
     """
+    scheme = _effective_request_scheme()
     raw = (request.host or '').lower()
     if not raw:
-        return ('', _default_port_for_scheme(request.scheme))
+        return ('', _default_port_for_scheme(scheme))
     if ':' in raw and not raw.endswith(']'):
         host, port_str = raw.rsplit(':', 1)
         try:
             port = int(port_str)
         except ValueError:
-            port = _default_port_for_scheme(request.scheme)
+            port = _default_port_for_scheme(scheme)
     else:
         host = raw
-        port = _default_port_for_scheme(request.scheme)
+        port = _default_port_for_scheme(scheme)
     if host.startswith('[') and host.endswith(']'):
         host = host[1:-1]
     return (host, port)
@@ -1487,11 +1531,14 @@ def main():
                              'HUMANIZE_VIZ_TRUST_PROXY=1 env var.')
     args = parser.parse_args()
 
-    global PROJECT_DIR, STATIC_DIR, BIND_HOST, AUTH_TOKEN, _watcher
+    global PROJECT_DIR, STATIC_DIR, BIND_HOST, AUTH_TOKEN, TRUST_PROXY, _watcher
     PROJECT_DIR = os.path.abspath(args.project)
     STATIC_DIR = os.path.abspath(args.static)
     BIND_HOST = args.host
     AUTH_TOKEN = _resolve_auth_token(args.auth_token)
+    TRUST_PROXY = args.trust_proxy or os.environ.get(
+        'HUMANIZE_VIZ_TRUST_PROXY', ''
+    ).strip() in ('1', 'true', 'yes')
 
     if not _is_localhost_bind() and not AUTH_TOKEN:
         print(
@@ -1509,11 +1556,10 @@ def main():
     # reverse proxy is in front of the server before accepting a
     # non-loopback bind. The flag / env var is a load-bearing
     # declaration: without it we'd rather refuse to start than hand
-    # out an insecure dashboard URL.
-    trust_proxy = args.trust_proxy or os.environ.get(
-        'HUMANIZE_VIZ_TRUST_PROXY', ''
-    ).strip() in ('1', 'true', 'yes')
-    if not _is_localhost_bind() and not trust_proxy:
+    # out an insecure dashboard URL. TRUST_PROXY is resolved above
+    # and also drives the CSRF port-matcher's X-Forwarded-Proto
+    # handling.
+    if not _is_localhost_bind() and not TRUST_PROXY:
         print(
             "Error: binding to a non-localhost host requires a TLS-terminating\n"
             "reverse proxy so the ?token= query parameter is never transmitted\n"
