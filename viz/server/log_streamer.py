@@ -99,6 +99,16 @@ class LogStream:
         self._eof_emitted = False
         self._retained: Deque[Dict] = deque(maxlen=EVENT_RETENTION)
         self._missing_emitted = False
+        # Set by any ``resync`` path (truncated/rotated/recreated) when
+        # the follow-up ``_snapshot_locked`` saw a transiently-empty
+        # file — a common race on CI when the file-system watcher
+        # fires between the writer's ``open('wb')`` (which truncates
+        # to 0) and its subsequent ``write``. While this flag is set,
+        # the next poll that observes content treats the bytes as a
+        # fresh snapshot rather than appending them to the pre-resync
+        # stream, so the protocol's resync→snapshot sequencing is
+        # preserved even when the file starts empty post-resync.
+        self._resync_pending = False
         # All public mutators (snapshot, poll, mark_eof, replay) acquire
         # this lock so concurrent SSE handlers can share the same
         # instance without corrupting offset/retained state. RLock so
@@ -196,7 +206,13 @@ class LogStream:
             self._missing_emitted = False
             self._offset = 0
             self._stat = stat
-            events.extend(self._snapshot_locked())
+            snap = self._snapshot_locked()
+            events.extend(snap)
+            # If the file is transiently empty post-resync (watcher
+            # fired mid-write), defer snapshot delivery to the next
+            # poll so the resync is followed by a real snapshot event
+            # rather than an append when content finally lands.
+            self._resync_pending = not snap
             return events
 
         if stat is not None and self._stat is not None and stat != self._stat:
@@ -207,7 +223,9 @@ class LogStream:
             }))
             self._offset = 0
             self._stat = stat
-            events.extend(self._snapshot_locked())
+            snap = self._snapshot_locked()
+            events.extend(snap)
+            self._resync_pending = not snap
             return events
 
         if size < self._offset:
@@ -218,10 +236,23 @@ class LogStream:
             }))
             self._offset = 0
             self._stat = stat
-            events.extend(self._snapshot_locked())
+            snap = self._snapshot_locked()
+            events.extend(snap)
+            self._resync_pending = not snap
             return events
 
         if size > self._offset:
+            if self._resync_pending:
+                # Post-resync content that could not be snapshotted on
+                # the prior poll (file was 0 bytes at the time). Emit
+                # it as a snapshot now so clients still observe the
+                # contract's resync→snapshot sequence.
+                snap = self._snapshot_locked()
+                events.extend(snap)
+                if self._offset >= size:
+                    self._resync_pending = False
+                self._stat = stat
+                return events
             new_bytes = size - self._offset
             try:
                 f = open(self.path, "rb")
