@@ -1257,17 +1257,22 @@ def _is_terminal_status(status):
     return status not in (None, '', 'active', 'analyzing', 'finalizing', 'unknown')
 
 
-# Terminal-state marker filenames produced by the RLCR loop. Mirrors
-# parser.detect_session_status's map but kept local here so the
-# SSE hot loop can probe disk without importing parser internals.
+# Terminal-state marker filenames produced by the RLCR loop. Only
+# truly-terminal markers belong here: the SSE generator closes the
+# stream as soon as any of these appear, and the dashboard still
+# treats ``methodology-analysis-state.md`` / ``finalize-state.md``
+# as running (``analyzing`` / ``finalizing`` status, still cancellable,
+# still emitting live log bytes). Including those markers in this
+# list used to cause the live log pane to EOF the moment a session
+# entered finalize or analysis, so the finalize-phase / methodology-
+# report output never reached the browser. The list must stay in
+# lock-step with ``_is_terminal_status`` above.
 _TERMINAL_STATE_FILES = (
     'complete-state.md',
     'cancel-state.md',
     'stop-state.md',
     'maxiter-state.md',
     'unexpected-state.md',
-    'methodology-analysis-state.md',
-    'finalize-state.md',
 )
 
 
