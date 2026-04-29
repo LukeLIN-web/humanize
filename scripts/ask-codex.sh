@@ -241,8 +241,23 @@ EOF
 # Build Codex Command
 # ========================================
 
+# Probe whether the installed Codex CLI supports --disable codex_hooks to prevent
+# nested hook recursion when ask-codex.sh is called from inside a running loop.
+# Cache the probe result in the skill directory to avoid repeated probes.
+CODEX_DISABLE_HOOKS_ARGS=()
+_CODEX_DISABLE_HOOKS_CACHE="$SKILL_DIR/.codex-disable-hooks-supported"
+if [[ -f "$_CODEX_DISABLE_HOOKS_CACHE" ]]; then
+    [[ "$(cat "$_CODEX_DISABLE_HOOKS_CACHE")" == "yes" ]] && CODEX_DISABLE_HOOKS_ARGS=(--disable codex_hooks)
+elif codex --help </dev/null 2>&1 | grep -q -- '--disable'; then
+    CODEX_DISABLE_HOOKS_ARGS=(--disable codex_hooks)
+    echo "yes" > "$_CODEX_DISABLE_HOOKS_CACHE" 2>/dev/null || true
+else
+    echo "no" > "$_CODEX_DISABLE_HOOKS_CACHE" 2>/dev/null || true
+fi
+
 # Build codex exec arguments (same pattern as loop-codex-stop-hook.sh)
-CODEX_EXEC_ARGS=("-m" "$CODEX_MODEL")
+# Use ${arr[@]+"${arr[@]}"} to safely expand possibly-empty arrays under set -u (bash 3.2 compat)
+CODEX_EXEC_ARGS=(${CODEX_DISABLE_HOOKS_ARGS[@]+"${CODEX_DISABLE_HOOKS_ARGS[@]}"} "-m" "$CODEX_MODEL")
 if [[ -n "$CODEX_EFFORT" ]]; then
     CODEX_EXEC_ARGS+=("-c" "model_reasoning_effort=${CODEX_EFFORT}")
 fi

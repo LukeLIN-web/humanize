@@ -91,6 +91,15 @@ TEST_SUITES=(
     # Session ID and Agent Teams tests
     "test-session-id.sh"
     "test-agent-teams.sh"
+    # gen-idea companion JSON tests (PR-A)
+    "test-validate-gen-idea-io.sh"
+    "test-directions-json-schema.sh"
+    "test-gen-idea-dual-write.sh"
+    # explore-idea tests (PR-B)
+    "test-validate-explore-idea-io.sh"
+    "test-worker-result-contract.sh"
+    "test-explore-manifest.sh"
+    "test-explore-command-structure.sh"
     # Ask Codex tests
     "test-ask-codex.sh"
     # Bitlesson routing tests
