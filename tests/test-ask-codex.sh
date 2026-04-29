@@ -434,6 +434,114 @@ else
 fi
 
 # ========================================
+# Auto-Probe: Nested Hook Disable Tests
+# ========================================
+
+echo ""
+echo "--- Auto-Probe: Nested Hook Disable Tests ---"
+echo ""
+
+# Setup: create a secondary mock codex binary directory for probe tests,
+# so the probe result is not cached from earlier tests.
+PROBE_BIN_DIR="$TEST_DIR/probe-bin"
+PROBE_PROJECT="$TEST_DIR/probe-project"
+init_test_git_repo "$PROBE_PROJECT"
+mkdir -p "$PROBE_BIN_DIR"
+
+run_ask_codex_probe() {
+    (
+        cd "$PROBE_PROJECT"
+        export CLAUDE_PROJECT_DIR="$PROBE_PROJECT"
+        export XDG_CACHE_HOME="$TEST_DIR/cache-probe"
+        PATH="$PROBE_BIN_DIR:$PATH" bash "$ASK_CODEX_SCRIPT" "$@"
+    )
+}
+
+# Test A: when codex supports --disable, ask-codex.sh injects --disable codex_hooks
+# Create a mock codex that echoes "--disable" in its --help output
+cat > "$PROBE_BIN_DIR/codex" << 'PROBE_MOCK_SUPPORTS'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--help" ]] || echo "$*" | grep -q -- '--help'; then
+    echo "--disable <feature>   Disable a named feature"
+    exit 0
+fi
+if [[ -n "${MOCK_CODEX_STDERR:-}" ]]; then echo "$MOCK_CODEX_STDERR" >&2; fi
+if [[ -n "${MOCK_CODEX_STDOUT:-}" ]]; then echo "$MOCK_CODEX_STDOUT"; fi
+cat > /dev/null
+exit "${MOCK_CODEX_EXIT_CODE:-0}"
+PROBE_MOCK_SUPPORTS
+chmod +x "$PROBE_BIN_DIR/codex"
+
+reset_mock
+export MOCK_CODEX_STDOUT="probe-test-supports"
+run_ask_codex_probe "probe disable test" > /dev/null 2>&1 || true
+
+# Check that the cached probe result is "yes" in the skill dir
+PROBE_SKILL_DIR=$(find "$PROBE_PROJECT/.humanize/skill" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort | tail -1)
+if [[ -n "$PROBE_SKILL_DIR" ]] && [[ -f "$PROBE_SKILL_DIR/.codex-disable-hooks-supported" ]]; then
+    PROBE_RESULT=$(cat "$PROBE_SKILL_DIR/.codex-disable-hooks-supported")
+    if [[ "$PROBE_RESULT" == "yes" ]]; then
+        pass "auto-probe: cached 'yes' when codex supports --disable"
+    else
+        fail "auto-probe: cached 'yes' when codex supports --disable" "yes" "$PROBE_RESULT"
+    fi
+else
+    fail "auto-probe: probe cache file created" "cache file exists" "not found"
+fi
+
+# Test B: when codex does NOT support --disable, probe result is "no"
+PROBE_BIN_NO_DIR="$TEST_DIR/probe-bin-no"
+PROBE_PROJECT_NO="$TEST_DIR/probe-project-no"
+init_test_git_repo "$PROBE_PROJECT_NO"
+mkdir -p "$PROBE_BIN_NO_DIR"
+
+cat > "$PROBE_BIN_NO_DIR/codex" << 'PROBE_MOCK_NO_SUPPORT'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--help" ]] || echo "$*" | grep -q -- '--help'; then
+    echo "Usage: codex exec [options]"
+    echo "  --full-auto   Run without prompts"
+    exit 0
+fi
+if [[ -n "${MOCK_CODEX_STDERR:-}" ]]; then echo "$MOCK_CODEX_STDERR" >&2; fi
+if [[ -n "${MOCK_CODEX_STDOUT:-}" ]]; then echo "$MOCK_CODEX_STDOUT"; fi
+cat > /dev/null
+exit "${MOCK_CODEX_EXIT_CODE:-0}"
+PROBE_MOCK_NO_SUPPORT
+chmod +x "$PROBE_BIN_NO_DIR/codex"
+
+run_ask_codex_probe_no() {
+    (
+        cd "$PROBE_PROJECT_NO"
+        export CLAUDE_PROJECT_DIR="$PROBE_PROJECT_NO"
+        export XDG_CACHE_HOME="$TEST_DIR/cache-probe-no"
+        PATH="$PROBE_BIN_NO_DIR:$PATH" bash "$ASK_CODEX_SCRIPT" "$@"
+    )
+}
+
+reset_mock
+export MOCK_CODEX_STDOUT="probe-test-no-support"
+run_ask_codex_probe_no "probe no-support test" > /dev/null 2>&1 || true
+
+PROBE_NO_SKILL_DIR=$(find "$PROBE_PROJECT_NO/.humanize/skill" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort | tail -1)
+if [[ -n "$PROBE_NO_SKILL_DIR" ]] && [[ -f "$PROBE_NO_SKILL_DIR/.codex-disable-hooks-supported" ]]; then
+    PROBE_NO_RESULT=$(cat "$PROBE_NO_SKILL_DIR/.codex-disable-hooks-supported")
+    if [[ "$PROBE_NO_RESULT" == "no" ]]; then
+        pass "auto-probe: cached 'no' when codex does not support --disable"
+    else
+        fail "auto-probe: cached 'no' when codex does not support --disable" "no" "$PROBE_NO_RESULT"
+    fi
+else
+    fail "auto-probe: probe cache file created for no-support case" "cache file exists" "not found"
+fi
+
+# Test C: ask-codex.sh script contains the probe implementation
+if grep -q "codex_hooks" "$ASK_CODEX_SCRIPT" && grep -q "codex-disable-hooks-supported" "$ASK_CODEX_SCRIPT"; then
+    pass "ask-codex.sh contains nested hook disable auto-probe implementation"
+else
+    fail "ask-codex.sh contains nested hook disable auto-probe implementation" "codex_hooks + probe cache" "not found"
+fi
+
+# ========================================
 # Summary
 # ========================================
 

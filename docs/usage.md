@@ -59,6 +59,8 @@ The quiz is advisory, not a gate. You always have the option to proceed. But tha
 
 | Command | Purpose |
 |---------|---------|
+| `/gen-idea <idea-or-path>` | Generate a repo-grounded idea draft with N parallel directions |
+| `/explore-idea <draft-or-directions.json>` | Launch bounded parallel prototype workers and synthesize a two-tier report |
 | `/start-rlcr-loop <plan.md>` | Start iterative development with Codex review |
 | `/cancel-rlcr-loop` | Cancel active loop |
 | `/gen-plan --input <draft.md> --output <plan.md>` | Generate structured plan from draft |
@@ -66,6 +68,45 @@ The quiz is advisory, not a gate. You always have the option to proceed. But tha
 | `/ask-codex [question]` | One-shot consultation with Codex |
 
 ## Command Reference
+
+### gen-idea
+
+```
+/humanize:gen-idea <idea-text-or-path> [--n <int>] [--output <path>]
+```
+
+Generates a repo-grounded idea draft using directed-diversity exploration. A lead agent picks N orthogonal directions, N parallel Explore subagents develop each direction with objective evidence from the repo, and the lead synthesizes a draft with one primary direction plus N-1 alternatives.
+
+**Outputs:**
+- Draft file: `.humanize/ideas/<slug>-<timestamp>.md` (or `--output` path)
+- Companion JSON: `<draft-path-without-.md>.directions.json` — lossless record of all direction proposals, used as input to `explore-idea`
+
+**Options:**
+- `--n <int>` — number of parallel directions (default: 6)
+- `--output <path>` — custom output path for the draft (must have `.md` suffix)
+
+### explore-idea
+
+```
+/humanize:explore-idea <draft.md | draft.directions.json> [--directions ids] [--concurrency N] [--max-worker-iterations N] [--worker-timeout-min N] [--codex-timeout-min N]
+```
+
+Launches bounded parallel prototype workers — one per selected direction — each running in an isolated git worktree. After all workers complete, synthesizes a two-tier ranking report:
+- **Tier 1**: Best product direction (ranked by user value, evidence, strategic fit)
+- **Tier 2**: Most implementation-ready prototype (ranked by outcome: task status, Codex verdict, tests, commits)
+
+**Options:**
+- `--directions <ids>` — comma-separated `direction_id` or `source_index` values to run (default: first 6 by display order)
+- `--concurrency <N>` — parallel worker count (default: 6, max: 10)
+- `--max-worker-iterations <N>` — per-worker iteration cap (default: 2, max: 3)
+- `--worker-timeout-min <N>` — worker timeout in minutes (default: 60, max: 60)
+- `--codex-timeout-min <N>` — Codex call timeout in minutes (default: 20, max: 20)
+
+**Run artifacts** stored in `.humanize/explore/<RUN_ID>/`:
+- `manifest.json` — coordinator state and per-worker metadata
+- `dispatch-prompts/` — exact prompts sent to each worker
+- `worker-results.jsonl` — machine-readable result rows
+- `report.md` — synthesis report with two-tier rankings and adoption paths
 
 ### start-rlcr-loop
 
