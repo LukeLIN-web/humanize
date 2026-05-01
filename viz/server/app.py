@@ -1614,11 +1614,22 @@ def websocket(ws):
                                 ]
                                 if session.get('status') == 'finalizing':
                                     helper_args.append('--force')
-                                subprocess.run(
-                                    helper_args,
-                                    cwd=PROJECT_DIR, timeout=30,
-                                )
-                                _invalidate_cache(sid)
+                                # Match the REST cancel route: require a
+                                # zero exit code before invalidating
+                                # cache. A non-zero exit means the helper
+                                # did not actually cancel the session, so
+                                # refreshing the dashboard would mask the
+                                # failure.
+                                try:
+                                    subprocess.run(
+                                        helper_args,
+                                        cwd=PROJECT_DIR, timeout=30,
+                                        check=True,
+                                    )
+                                except subprocess.SubprocessError:
+                                    pass
+                                else:
+                                    _invalidate_cache(sid)
             except (json.JSONDecodeError, KeyError):
                 pass
     except Exception:
