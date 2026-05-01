@@ -141,6 +141,7 @@ For each selected direction (in `SELECTED_DIRECTION_IDS`):
    - `<MAX_WORKER_ITERATIONS>` → `MAX_WORKER_ITERATIONS`
    - `<CODEX_TIMEOUT_MIN>` → `CODEX_TIMEOUT_MIN`
    - `<BASE_BRANCH>` → `BASE_BRANCH`
+   - `<BASE_COMMIT>` → `BASE_COMMIT`
    - `<ORIGINAL_IDEA>` → `original_idea` from the directions JSON
 4. Write the prompt to `<RUN_DIR>/dispatch-prompts/<direction_id>.md`.
 5. Compute a SHA-256 hash of the prompt file (using `shasum -a 256` on macOS, `sha256sum` on Linux; try both and use whichever succeeds).
