@@ -654,7 +654,14 @@ Please commit all changes before allowing the loop to exit.
                 exit 0
             fi
         fi
-        # Analysis complete and tree clean, allow exit
+        # Analysis complete and tree clean. Now do the terminal rename so the
+        # active state file stays in place until this cleanliness gate passes.
+        _meth_exit_reason=$(cat "$LOOP_DIR/.methodology-exit-reason" 2>/dev/null | tr -d '[:space:]' || echo "")
+        if [[ -n "$_meth_exit_reason" ]]; then
+            mv "$LOOP_DIR/methodology-analysis-state.md" "$LOOP_DIR/${_meth_exit_reason}-state.md" 2>/dev/null || true
+            rm -f "$LOOP_DIR/.methodology-exit-reason"
+            echo "Methodology analysis complete. State preserved as: $LOOP_DIR/${_meth_exit_reason}-state.md" >&2
+        fi
         exit 0
     else
         # Analysis not yet complete, block
