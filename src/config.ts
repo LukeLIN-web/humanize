@@ -252,6 +252,7 @@ function parseSimpleYaml(
     }
     if ((section === "agents" || section === "agents.extraArgs") && indent === 2) {
       currentAgent = key === "codex" || key === "claude" ? key : undefined;
+      section = "agents";
       continue;
     }
     if (section === "agents" && indent >= 4 && currentAgent !== undefined && value.length > 0) {
