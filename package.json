@@ -18,7 +18,8 @@
     "smoke:btc": "tsx scripts/real-btc-smoke.ts",
     "smoke:nested-market": "npm run build && tsx scripts/nested-market-smoke.ts",
     "test": "vitest run --config vitest.config.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:cache": "vitest run --config vitest.config.ts tests/claude-cache-stability.test.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.23.0",
