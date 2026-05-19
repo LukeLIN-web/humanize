@@ -654,7 +654,14 @@ Please commit all changes before allowing the loop to exit.
                 exit 0
             fi
         fi
-        # Analysis complete and tree clean, allow exit
+        # Analysis complete and tree clean. Now do the terminal rename so the
+        # active state file stays in place until this cleanliness gate passes.
+        _meth_exit_reason=$(cat "$LOOP_DIR/.methodology-exit-reason" 2>/dev/null | tr -d '[:space:]' || echo "")
+        if [[ -n "$_meth_exit_reason" ]]; then
+            mv "$LOOP_DIR/methodology-analysis-state.md" "$LOOP_DIR/${_meth_exit_reason}-state.md" 2>/dev/null || true
+            rm -f "$LOOP_DIR/.methodology-exit-reason"
+            echo "Methodology analysis complete. State preserved as: $LOOP_DIR/${_meth_exit_reason}-state.md" >&2
+        fi
         exit 0
     else
         # Analysis not yet complete, block
@@ -1173,11 +1180,14 @@ CODEX_DISABLE_HOOKS_ARGS=()
 _CODEX_FEATURE_CACHE="$CACHE_DIR/.codex-disable-hooks-supported"
 if [[ -f "$_CODEX_FEATURE_CACHE" ]]; then
     [[ "$(cat "$_CODEX_FEATURE_CACHE")" == "yes" ]] && CODEX_DISABLE_HOOKS_ARGS=(--disable hooks)
-elif codex --help 2>&1 | grep -q -- '--disable'; then
-    CODEX_DISABLE_HOOKS_ARGS=(--disable hooks)
-    echo "yes" > "$_CODEX_FEATURE_CACHE" 2>/dev/null
 else
-    echo "no" > "$_CODEX_FEATURE_CACHE" 2>/dev/null
+    CODEX_HELP_OUTPUT="$(codex --help </dev/null 2>&1 || true)"
+    if grep -q -- '--disable' <<< "$CODEX_HELP_OUTPUT"; then
+        CODEX_DISABLE_HOOKS_ARGS=(--disable hooks)
+        echo "yes" > "$_CODEX_FEATURE_CACHE" 2>/dev/null
+    else
+        echo "no" > "$_CODEX_FEATURE_CACHE" 2>/dev/null
+    fi
 fi
 
 # Build command arguments for summary review (codex exec)
@@ -1258,7 +1268,7 @@ Provider: codex
         echo "# Review base ($review_base_type): $review_base"
         echo "# Timeout: $CODEX_TIMEOUT seconds"
         echo ""
-        echo "codex review ${CODEX_DISABLE_HOOKS_ARGS[*]-} --base $review_base ${CODEX_REVIEW_ARGS[*]}"
+        echo "codex review ${CODEX_DISABLE_HOOKS_ARGS[*]+"${CODEX_DISABLE_HOOKS_ARGS[*]}"} --base $review_base ${CODEX_REVIEW_ARGS[*]}"
     } > "$CODEX_REVIEW_CMD_FILE"
 
     echo "Code review command saved to: $CODEX_REVIEW_CMD_FILE" >&2
@@ -1684,7 +1694,7 @@ CODEX_PROMPT_CONTENT=$(cat "$REVIEW_PROMPT_FILE")
     echo "# Working directory: $PROJECT_ROOT"
     echo "# Timeout: $CODEX_TIMEOUT seconds"
     echo ""
-    echo "codex exec ${CODEX_DISABLE_HOOKS_ARGS[*]-} ${CODEX_EXEC_ARGS[*]} \"<prompt>\""
+    echo "codex exec ${CODEX_DISABLE_HOOKS_ARGS[*]+"${CODEX_DISABLE_HOOKS_ARGS[*]}"} ${CODEX_EXEC_ARGS[*]} \"<prompt>\""
     echo ""
     echo "# Prompt content:"
     echo "$CODEX_PROMPT_CONTENT"
