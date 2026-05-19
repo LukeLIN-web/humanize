@@ -224,6 +224,14 @@ else
         "review --disable hooks" "$(cat "$TEST_DIR/review.args" 2>/dev/null || echo missing)"
 fi
 
+if ! grep -q 'codex --help 2>&1 | grep -q' "$STOP_HOOK"; then
+    pass "stop hook captures codex help before grepping for --disable"
+else
+    fail "stop hook captures codex help before grepping for --disable" \
+        "no codex --help | grep -q pipeline" \
+        "pipeline still present"
+fi
+
 if grep -q -- ' --base ' "$TEST_DIR/review.args" && ! grep -q -- ' -$' "$TEST_DIR/review.args" && ! grep -q '^STDIN:' "$TEST_DIR/review.args"; then
     pass "review-phase codex review uses --base without prompt input"
 else
