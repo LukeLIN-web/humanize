@@ -1536,7 +1536,7 @@ continue_review_loop_with_issues() {
 - [List unresolved items, if any]
 
 ## BitLesson Delta
-- Action: none|add|update
+- Action: none|add|update|deprecate
 - Lesson ID(s): NONE
 - Notes: [what changed and why]
 EOF
@@ -2026,7 +2026,7 @@ if [[ ! -f "$NEXT_SUMMARY_FILE" ]]; then
 - [List unresolved items, if any]
 
 ## BitLesson Delta
-- Action: none|add|update
+- Action: none|add|update|deprecate
 - Lesson ID(s): NONE
 - Notes: [what changed and why]
 EOF
