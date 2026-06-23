@@ -1,7 +1,7 @@
 ---
 name: monitor-claude-goal
 description: Read-only third-party overseer for a SEPARATE Claude Code session that is running a long /goal task. Audits progress from the transcript + git + artifacts, and under a strict gate injects steering into that session via tmux. Use when the user wants to watch, supervise, audit, or steer another running Claude Code /goal session without taking it over. Never edits code, builds, merges, or drives the target autonomously — it is an auditor with an injection protocol.
-argument-hint: <claude-session-id> [<tmux-target>] [--discover] [--cadence 1h] [--decision-timeout 1h] [--notify-only] [--no-schedule] [--principles "<extra rules>"]
+argument-hint: <claude-session-id> [<tmux-target>] [--discover] [--cadence 1h] [--decision-timeout 1h] [--approve-safe-destructive] [--notify-only] [--no-schedule] [--principles "<extra rules>"]
 allowed-tools: Bash, Read, Grep, Glob, Agent, ToolSearch
 ---
 
@@ -20,7 +20,7 @@ A dedicated Claude session acts as a **read-only third-party overseer** of a *se
 
 ```
 /monitor-claude-goal <claude-session-id> [<tmux-target>]
-    [--discover] [--cadence 1h] [--decision-timeout 1h] [--notify-only] [--no-schedule] [--principles "<extra rules>"]
+    [--discover] [--cadence 1h] [--decision-timeout 1h] [--approve-safe-destructive] [--notify-only] [--no-schedule] [--principles "<extra rules>"]
 ```
 
 - `<claude-session-id>` — resolves the transcript at `~/.claude/projects/<cwd-slug>/<session-id>.jsonl`, where `<cwd-slug>` is the target's working directory with `/` and `.` replaced by `-`. Handle **not-found / multiple matches / rotated** gracefully (glob across all project dirs for `<session-id>.jsonl`).
@@ -28,7 +28,8 @@ A dedicated Claude session acts as a **read-only third-party overseer** of a *se
 - `--discover` — list candidate active `/goal` sessions (recently-modified transcripts whose tail shows an in-flight `/goal`) + live tmux windows; **the human confirms the exact (session, window) pair** before anything runs.
 - `--cadence 1h` — cron interval (default hourly).
 - `--decision-timeout 1h` — grace period before the overseer auto-picks the **recommended** option of an unanswered interactive decision prompt (§5.2) **or** injects the poll-and-resume nudge for a resource-blocked target (§5.3). Default `1h`. Set `off` to keep both as permanent notify-only terminals (the pre-this-feature behavior). Disabled by `--notify-only`.
-- `--notify-only` — **kill-switch**: forces always-approve, disables all auto-injection (including §5.2 auto-pick). Every steer goes through PushNotification only.
+- `--approve-safe-destructive` — **opt-in** (default **off**): let the overseer auto-approve a permission prompt that is a *dangerous-command-guard false positive* — but **only** after independently parsing the exact command and **proving it safe** (§5.5). With it off, every destructive confirm stays notify-only. Disabled by `--notify-only`.
+- `--notify-only` — **kill-switch**: forces always-approve, disables all auto-injection (including §5.2 auto-pick and §5.5 approve). Every steer goes through PushNotification only.
 - `--no-schedule` — escape hatch: run a single tick now and **do not** self-schedule a cron; the human re-runs (e.g. wraps in `/loop`) instead. Mutually exclusive with cron self-management in §6.
 - `--principles "<extra rules>"` — additional steering criteria merged with whatever the human has stated inside the target transcript.
 
@@ -52,9 +53,9 @@ Whatever resolved it, before any injection still confirm via `capture-pane` that
 - the `Edit`/`Write`/`NotebookEdit` tools and any editor
 - `git add`/`commit`/`reset`/`checkout`/`clean`/`stash`/`push`
 - builds/tests/installs that mutate state
-- deletes of any kind
+- deletes of any kind — the overseer never *performs* one; it may only *approve* a target's **own** verified-safe destructive command under §5.5, and only when `--approve-safe-destructive` is set
 - **modifying the target transcript**
-- `tmux send-keys` **except inside the approved injection (§5) or interrupt-recovery (§5.1) protocols** — keystrokes only, and **never** a process `kill`/`pkill`/signal against the target or anything it spawned
+- `tmux send-keys` **except inside the approved gated protocols (§5, §5.1, §5.2, §5.3, §5.5)** — keystrokes only, and **never** a process `kill`/`pkill`/signal against the target or anything it spawned
 
 **Subagents are `Explore`-type only** (physically cannot Edit/Write/build); their prompts explicitly forbid mutation and instruct them to return conclusions, not file dumps.
 
@@ -184,6 +185,29 @@ When all hold, nudge via the **normal §5 path** (bounded by the same per-window
 
 This nudge is gated only by its own ≥1×-cadence grace (not `--decision-timeout`, which governs §5.2/§5.3). Under `--notify-only`: never auto-nudge — `PushNotification` the diagnosis ("idle at prompt with open `/goal` work; suggest 'continue'") and let the human act.
 
+### 5.5 Dangerous-command guard false-positive → opt-in verified-safe auto-approve
+
+A target running with auto-approve can still **hard-stall on a permission prompt** when its own command trips Claude Code's *dangerous-command guard* — e.g. `rm $e/*.log` flagged "possibly-empty variable path" even though `$e` is assigned to a non-empty literal two lines up in the **same** command block. This is a **false positive**: the command is in fact scoped and safe, but the run sits frozen on `Do you want to proceed? ❯1.Yes 2.No` until a human says yes. §5.2 deliberately **refuses** this (a "Dangerous rm" is never a provably-safe recommended option), so by default it stays notify-only — and a safe-but-guard-flagged cleanup can stall a `/goal` for hours (observed: a safe in-tree `rm` of stale eval logs froze a run 5.5h).
+
+§5.5 closes that stall **only under explicit opt-in** (`--approve-safe-destructive`, default **off**) and **only** when the overseer can *independently prove the flagged command is safe*. The overseer never relaxes the guard in general; it approves a single, specific, parsed-and-proven-safe invocation. This is the **fifth** sanctioned key-send (with §5, §5.1, §5.2, §5.3). **Disabled by `--notify-only`** and inert unless `--approve-safe-destructive` is set.
+
+Before approving, parse the **exact command shown in the pane** and confirm **all** of:
+- the block is a **guard false positive**, not a genuinely risky op: every variable in a destructive path is **assigned to a non-empty literal earlier in the same command block**, and that assignment is **visible in the captured pane** — never assume a var is set;
+- **every deletion/overwrite target resolves inside the project working tree** (an expected subdir such as the run's own output dir), with **no** unbounded escape: no `/`, `~`, `$HOME`, absolute-root, `..` climb, or bare `*` at a path root; no `rm -rf` of a directory root;
+- the op removes only **regenerable/stale artifacts** (logs, partial/contaminated outputs, caches) — **never** source code, datasets, checkpoints, `.git`, or anything irreplaceable. If it touches data you cannot cheaply rebuild → **notify, never approve**;
+- the prompt is the **standard guard confirm** (`Yes`/`No`, or a numbered proceed), still on screen and unanswered, with **no new human turn** since seen.
+
+If **any** check is uncertain or fails → the §3 default reasserts: **stay in notify, do not approve.** When in doubt, never approve a delete.
+
+When all hold, approve (bounded by the same per-window cap + cooldown):
+1. `tmux capture-pane` — re-confirm the same prompt, the safe option (`Yes`/proceed), and which is highlighted.
+2. Navigate **deterministically** to the proceed option (§5.2 steps: arrow + `capture-pane` after each key; never blind-press), or send nothing if already highlighted.
+3. send `Enter` to confirm.
+4. `tmux capture-pane` — **confirm the command ran and the run resumed** (prompt cleared, job relaunched). If still blocked → do not hammer keys; notify and stop.
+5. **post-hoc `PushNotification`** stating you **approved a verified-safe destructive command** `<the command>`, with the one-line safety proof (which var was set in-block, which dir it scoped to) — always flag this as higher-impact than a plain steer; the human can still object.
+
+Under `--notify-only` or without `--approve-safe-destructive`: never approve — `PushNotification` the diagnosis ("blocked on a dangerous-rm guard false positive; the command is safe because <proof>; press 1 to proceed") and let the human act.
+
 **Kill-switch `--notify-only`** overrides the default and routes *every* steer through approval instead of auto-injecting:
 1. `PushNotification` with the **drafted prompt + a draft-timestamp**
 2. wait for the human
@@ -208,6 +232,7 @@ With `--no-schedule`: run the single tick, report findings, and tell the user to
 - blocked **purely on resource availability** (no free GPU/VRAM/compute — stopped to ask which shared card to use, or idling for capacity) → notify on first sight; if still unanswered past `--decision-timeout` → **inject the poll-and-resume nudge (§5.3)** (re-check now; else set a resumable watcher that auto-starts when a card frees), do **not** `CronDelete`. Never auto-select an option that evicts/kills another job or crowds a card into OOM — those stay human-only. Stays notify-only under `--notify-only` / `--decision-timeout off`
 - target **wedged** — frozen in a non-returning tool/shell while the awaited condition is already satisfied/dead, no transcript progress for ≥2× the cadence → **interrupt-then-steer recovery (§5.1)**, not silent waiting (a self-matching `pgrep` watcher is the canonical case)
 - target **idle-but-unfinished** — a long job (GPU run / eval / download) returned, the agent summarized and **stopped at an idle prompt** with open `/goal` work, nothing running and no question to the human, idle ≥1× cadence → **plain resume nudge (§5.4)** naming the next planned step, not silent waiting (the canonical "gpu run done but it didn't continue" stall). Do **not** `CronDelete` — the run resumes once the nudge lands
+- blocked on a **dangerous-command-guard false positive** — a safe, in-tree `rm` of stale/regenerable artifacts flagged "possibly-empty variable path" while the var is actually set in-block → **notify-only by default**; **only** if `--approve-safe-destructive` is set **and** the overseer independently proves the exact command safe (var set in-block, targets scoped inside the working tree, only regenerable artifacts) → **auto-approve (§5.5)**. Any uncertainty, or a command that could touch irreplaceable data, → stay notify, never approve. Do **not** `CronDelete` — the run resumes once approved
 - target's **own wake-up died** — the agent launched a job/download and delegated re-engagement to its own wake-up (a self-`send-keys` script, background poller, or cron), that wake-up **errored**, so when the job ends nothing re-engages the agent and it waits forever → the overseer is the **independent backup**: it judges completion from the job/artifact directly (never from that broken wake-up) and resolves it as a wedge (still mid-poll → §5.1) or an idle stall (already at the prompt → §5.4), steering **outcome-aware** (clean finish → continue; crash → diagnose/rerun). Never `CronDelete` while the work is unfinished
 - tmux window missing / renamed / reused, or pane doesn't look like Claude Code → **never inject**, notify
 - multiple `/goal` candidates → `--discover` + human confirms the pair
@@ -221,4 +246,5 @@ With `--no-schedule`: run the single tick, report findings, and tell the user to
 - Stale-decision auto-pick (§5.2) is the same kind of bounded expansion for the *other* silent stall — a real `AskUserQuestion` left unanswered while the human is away. It is constrained to only ever **confirm the agent's own recommended default** (never a different branch, never a meta-option, never against a stated principle) and only after a grace period with the prompt provably unchanged and unanswered — so the worst case is "the obvious next step got taken an hour early," which the post-hoc notification lets the human reverse. Picking the default is strictly more useful than waiting forever and barely less safe.
 - Resource-wait nudge (§5.3) covers the stall §5.2 deliberately won't touch — blocked on a *shared* resource (no free GPU) where every menu option is unsafe to choose blind (grab a contended card, evict/kill someone else's job). Its safety comes from separating the **safe invariant** ("wait for capacity to free on its own, then auto-resume" — non-destructive and reversible no matter what) from the **unsafe choice** (which specific shared card / whose job to kill — left to the human forever). The overseer only ever injects the former, so the worst case is "a resumable wait-watcher got set up an hour early," while preemption and eviction remain strictly human-only. This is what turns a multi-hour overnight GPU stall into a self-clearing wait.
 - Idle-resume nudge (§5.4) closes the third silent stall, the twin of §5.1: §5.1 catches the agent hung *inside* a poll-loop after its job finished; §5.4 catches the agent that let the job finish, summarized, and simply *stopped* at an idle prompt with open work. It is the safest of all the gated actions — the agent is already at the prompt so the keystrokes are the ordinary §5 inject (no Escape, no menu navigation, no new capability), and its only judgement is "open work + not asking a human + the thing it waited on is done." The worst case is a redundant "continue" the agent would have needed anyway, so the grace is just 1× cadence rather than 2×.
+- Verified-safe destructive-approval (§5.5) is the most tightly-gated power of all and the only one **off by default**: approving a delete contradicts the read-only contract, so it requires *both* explicit opt-in (`--approve-safe-destructive`) *and* an independent, parsed proof that the flagged command is a guard false positive scoped to regenerable in-tree artifacts. It exists because the dangerous-command guard, by design, cannot tell `rm $e/*.log` with `$e` set in-block from `rm /*` — so a safe cleanup can stall a `/goal` for hours on a prompt no one is watching. The overseer never loosens the guard; it approves one specific invocation it has proven safe, and the post-hoc notification lets the human object. Worst case is "a regenerable log got cleared an hour early," while every unprovable or irreplaceable-touching delete stays human-only forever.
 - Keeping each tick **stateless/fresh** (re-derive criteria, re-locate target every tick) is what makes the skill both reusable across *any* `/goal` session and resilient to the overseer's own multi-hour context growth — the reusability choice and the longevity property are the same choice.
