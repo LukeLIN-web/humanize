@@ -70,6 +70,18 @@
           }
         ]
       }
+    ],
+    "TaskCompleted": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/task-codex-review.sh",
+            "timeout": 1860,
+            "statusMessage": "Codex reviewing finished task..."
+          }
+        ]
+      }
     ]
   }
 }
