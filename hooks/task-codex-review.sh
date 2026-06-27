@@ -61,22 +61,72 @@ key="$(printf '%s' "${task_id:-notask}" | tr -c 'a-zA-Z0-9_-' '_')"
 cnt_file="$state_dir/$key.cnt"
 cnt="$(cat "$cnt_file" 2>/dev/null || echo 0)"
 [[ "$cnt" =~ ^[0-9]+$ ]] || cnt=0
+
+# Incremental review baseline (per repo, per HEAD).
+# The diff under review is scoped to changes made SINCE the last review pass —
+# not the whole uncommitted tree. Without this, completing several tasks before
+# committing makes every task re-review the same accumulated diff, so Codex
+# re-raises identical findings (often diff-local false positives) on each task.
+empty_tree="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"
+repo_key="$(printf '%s' "${repo_root:-norepo}" | tr -c 'a-zA-Z0-9_-' '_')"
+head_ref="HEAD"; git rev-parse --verify HEAD >/dev/null 2>&1 || head_ref="$empty_tree"
+head_sha="$(git rev-parse HEAD 2>/dev/null || echo NOHEAD)"
+base_file="$state_dir/$repo_key.base"
+
+# Snapshot the current working tree (tracked + untracked, honoring .gitignore) as
+# a git tree object, using a throwaway index kept OUTSIDE the work tree so it is
+# never itself picked up by `git add -A`.
+current_tree=""
+_idx="$state_dir/$repo_key.idx.$$"
+rm -f "$_idx"
+GIT_INDEX_FILE="$_idx" git read-tree "$head_ref" >/dev/null 2>&1
+if GIT_INDEX_FILE="$_idx" git add -A >/dev/null 2>&1; then
+  current_tree="$(GIT_INDEX_FILE="$_idx" git write-tree 2>/dev/null)"
+fi
+rm -f "$_idx"
+
+# Advance the baseline to the current snapshot once a task is allowed to complete,
+# so already-reviewed code is not re-reviewed by later task completions.
+advance_baseline() {
+  [ -n "$current_tree" ] && printf '%s %s\n' "$head_sha" "$current_tree" > "$base_file" 2>/dev/null
+}
+
 if [ "$cnt" -ge "$MAX_ROUNDS" ]; then
   rm -f "$cnt_file"
-  exit 0   # already had its review pass; let it complete
+  advance_baseline   # already had its review pass; record it as reviewed
+  exit 0
 fi
 
-# Capture uncommitted changes: tracked diff + untracked file contents (read-only)
-diff="$( {
-  git diff HEAD 2>/dev/null
-  git ls-files --others --exclude-standard 2>/dev/null | while IFS= read -r f; do
-    git diff --no-index -- /dev/null "$f" 2>/dev/null
-  done
-} | head -c "$DIFF_CAP" )"
+# Diff base = last reviewed tree for this HEAD, else HEAD (first review this streak).
+# A baseline from a different HEAD is stale (a commit happened) and is ignored,
+# falling back to the full uncommitted diff.
+diff_base="$head_ref"
+if [ -f "$base_file" ]; then
+  _b_head=""; _b_tree=""
+  read -r _b_head _b_tree < "$base_file" 2>/dev/null
+  if [ "$_b_head" = "$head_sha" ] && [ -n "$_b_tree" ] && git cat-file -e "${_b_tree}^{tree}" 2>/dev/null; then
+    diff_base="$_b_tree"
+  fi
+fi
 
-# Nothing changed -> nothing to review
+# Capture the incremental changes since the baseline (read-only)
+if [ -n "$current_tree" ]; then
+  diff="$(git diff "$diff_base" "$current_tree" 2>/dev/null | head -c "$DIFF_CAP")"
+else
+  # Fallback: snapshot failed — review the whole uncommitted diff
+  diff="$( {
+    git diff HEAD 2>/dev/null
+    git ls-files --others --exclude-standard 2>/dev/null | while IFS= read -r f; do
+      git diff --no-index -- /dev/null "$f" 2>/dev/null
+    done
+  } | head -c "$DIFF_CAP" )"
+fi
+
+# Nothing new since last review -> nothing to review
 if [ -z "${diff//[[:space:]]/}" ]; then
   rm -f "$cnt_file"
+  advance_baseline
   exit 0
 fi
 
@@ -84,6 +134,7 @@ prompt="You are reviewing the uncommitted changes from a just-finished work task
 Task: ${task_title:-（未命名）}
 
 Review the diff below ONLY for issues worth fixing right now: correctness bugs, regressions, broken logic, obvious mistakes. Skip nitpicks and style. Be concise and concrete.
+This diff may be a partial, incremental slice of a larger in-progress change: it can show only some lines of a file. Do NOT flag a missing guard, import, or setup step (e.g. a directory being created before a write) when it could reasonably exist elsewhere in the same file outside this diff — only flag it if the diff itself shows it is actually wrong.
 Do NOT edit any files — output your review as text only.
 End your reply with exactly one line, either:
 VERDICT: APPROVED
@@ -132,5 +183,6 @@ fi
 
 # APPROVED (or no clear verdict) -> allow
 rm -f "$cnt_file"
+advance_baseline
 echo '{"systemMessage":"codex review: APPROVED"}'
 exit 0
