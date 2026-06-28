@@ -10,6 +10,9 @@ disable-model-invocation: true
 
 Transforms a rough draft document into a well-structured implementation plan with clear goals, acceptance criteria (AC-X format), path boundaries, and feasibility suggestions.
 
+> **MANDATORY FIRST STEP — read the papers' `reference/` folder before anything else.**
+> Before analyzing the draft or generating any plan, you MUST read the repository's paper reference folder (`docs/reference/`, e.g. the relevant benchmark/method papers and their notes) to learn **how the papers actually do it** — their evaluation protocol, scoring, and methodology. Ground the plan in what the papers do; do NOT default to repo-internal conventions or your own assumptions. If the `reference/` folder is missing or empty, say so explicitly and ask the user before proceeding.
+
 The installer hydrates this skill with an absolute runtime root path:
 
 ```bash
@@ -22,7 +25,11 @@ flowchart TD
     VALIDATE --> CHECK{Validation passed?}
     CHECK -->|No| REPORT_ERROR[Report validation error<br/>Stop]
     REPORT_ERROR --> END_FAIL([END])
-    CHECK -->|Yes| READ_DRAFT[Read input draft file]
+    CHECK -->|Yes| READ_REF[MANDATORY: Read papers' reference folder<br/>docs/reference/ — how the papers do<br/>eval/scoring/methodology]
+    READ_REF --> REF_OK{reference/ present<br/>and readable?}
+    REF_OK -->|No| ASK_REF[Report missing reference/<br/>Ask user before proceeding]
+    ASK_REF --> END_FAIL
+    REF_OK -->|Yes| READ_DRAFT[Read input draft file]
     READ_DRAFT --> CHECK_RELEVANCE{Is draft relevant to<br/>this repository?}
     CHECK_RELEVANCE -->|No| REPORT_IRRELEVANT[Report: Draft not related to repo<br/>Stop]
     REPORT_IRRELEVANT --> END_FAIL
