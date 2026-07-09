@@ -41,7 +41,9 @@
 
 ## Suggested Productization Flow
 
+Review and discuss this final idea in the session so the requirements are clarified in the conversation, then run:
+
 ```bash
-/humanize:gen-plan --input <FINAL_IDEA_PATH> --output <plan-path>
+/humanize:gen-plan --output <plan-path>
 /humanize:start-rlcr-loop <plan-path>
 ```

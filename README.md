@@ -1,6 +1,6 @@
 # Humanize
 
-**Current Version: 1.19.1**
+**Current Version: 1.20.0**
 
 > Derived from the [GAAC (GitHub-as-a-Context)](https://github.com/SihaoLiu/gaac) project.
 
@@ -55,9 +55,9 @@ Requires [codex CLI](https://github.com/openai/codex) for review. See the full [
    ```
    Dispatches bounded parallel prototype workers (one per direction), each running in an isolated git worktree. After all workers complete, writes `.humanize/explore/<run-id>/explore-report.md` for audit/ranking details and `.humanize/explore/<run-id>/final-idea.md` as the plan-ready synthesis. Worker worktrees are optional prototype fast paths; the default follow-up is to generate a clean plan from `final-idea.md`.
 
-3. **Generate a plan** from your draft or explored final idea:
+3. **Generate a plan** from the clarified conversation. Discuss the idea (or the explored `final-idea.md`) in the session first — e.g. brainstorm plus grill-me style questions and answers — then run:
    ```bash
-   /humanize:gen-plan --input .humanize/explore/<run-id>/final-idea.md --output docs/plan.md
+   /humanize:gen-plan --output docs/plan.md
    ```
 
 4. **Refine an annotated plan** before implementation when reviewers add comments (`CMT:` ... `ENDCMT`, `<cmt>` ... `</cmt>`, or `<comment>` ... `</comment>`):

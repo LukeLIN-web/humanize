@@ -53,10 +53,10 @@
 
 ### Recommended: Generate Plan From Final Idea
 
-Use the plan-ready final idea synthesis as the default productization path. This treats the explore run as research, starts implementation from a clean plan, and keeps worker prototype state optional.
+Use the plan-ready final idea synthesis as the default productization path. This treats the explore run as research, starts implementation from a clean plan, and keeps worker prototype state optional. Review and discuss `<FINAL_IDEA_PATH>` in the session so the requirements are clarified in the conversation, then run:
 
 ```bash
-/humanize:gen-plan --input <FINAL_IDEA_PATH> --output <plan-path>
+/humanize:gen-plan --output <plan-path>
 /humanize:start-rlcr-loop <plan-path>
 ```
 

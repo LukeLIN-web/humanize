@@ -258,7 +258,7 @@ Report to the user:
 - Next-step hints:
   ```
   To explore directions as parallel prototypes, run: /humanize:explore-idea <DIRECTIONS_JSON_FILE>
-  To turn this draft into a plan, run: /humanize:gen-plan --input <OUTPUT_FILE> --output <plan-path>
+  To turn this draft into a plan, review and discuss <OUTPUT_FILE> in the session, then run: /humanize:gen-plan --output <plan-path>
   ```
 
 ---

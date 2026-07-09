@@ -41,7 +41,7 @@ Example: "The implementation includes core feature X with basic validation"
 - Can use: <technologies, approaches, patterns that are allowed>
 - Cannot use: <technologies, approaches, patterns that are prohibited>
 
-> **Note on Deterministic Designs**: If the draft specifies a highly deterministic design with no choices (e.g., "must use JSON format", "must use algorithm X"), then the path boundaries should reflect this narrow constraint. In such cases, upper and lower bounds may converge to the same point, and "Allowed Choices" should explicitly state that the choice is fixed per the draft specification.
+> **Note on Deterministic Designs**: If the requirements specify a highly deterministic design with no choices (e.g., "must use JSON format", "must use algorithm X"), then the path boundaries should reflect this narrow constraint. In such cases, upper and lower bounds may converge to the same point, and "Allowed Choices" should explicitly state that the choice is fixed per the user's specification.
 
 ## Feasibility Hints and Suggestions
 

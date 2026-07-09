@@ -42,9 +42,9 @@ The quiz is advisory, not a gate. You always have the option to proceed. But tha
 
 ## Typical Planning Flow
 
-1. Generate the initial implementation plan:
+1. Clarify the requirements in the conversation (brainstorm plus grill-me style questions and answers), then generate the initial implementation plan:
    ```bash
-   /humanize:gen-plan --input draft.md --output docs/plan.md
+   /humanize:gen-plan --output docs/plan.md
    ```
 2. If the plan is reviewed with comment annotations, refine it and generate a QA ledger:
    ```bash
@@ -63,7 +63,7 @@ The quiz is advisory, not a gate. You always have the option to proceed. But tha
 | `/explore-idea <draft-or-directions.json>` | Launch bounded parallel prototype workers and synthesize a two-tier report |
 | `/start-rlcr-loop <plan.md>` | Start iterative development with Codex review |
 | `/cancel-rlcr-loop` | Cancel active loop |
-| `/gen-plan --input <draft.md> --output <plan.md>` | Generate structured plan from draft |
+| `/gen-plan --output <plan.md>` | Generate structured plan from the clarified conversation |
 | `/refine-plan --input <annotated-plan.md>` | Refine an annotated plan and generate a QA ledger |
 | `/ask-codex [question]` | One-shot consultation with Codex |
 
@@ -109,9 +109,9 @@ Launches bounded parallel prototype workers — one per selected direction — e
 - `explore-report.md` — audit report with two-tier rankings, adoption paths, and cleanup guidance
 - `final-idea.md` — plan-ready synthesis artifact for `/humanize:gen-plan`
 
-Default follow-up:
+Default follow-up: review and discuss `.humanize/explore/<run-id>/final-idea.md` in the session so the requirements are clarified in the conversation, then run:
 ```bash
-/humanize:gen-plan --input .humanize/explore/<run-id>/final-idea.md --output docs/plan.md
+/humanize:gen-plan --output docs/plan.md
 /humanize:start-rlcr-loop docs/plan.md
 ```
 
@@ -150,10 +150,9 @@ OPTIONS:
 ### gen-plan
 
 ```
-/humanize:gen-plan --input <path/to/draft.md> --output <path/to/plan.md> [OPTIONS]
+/humanize:gen-plan --output <path/to/plan.md> [OPTIONS]
 
 OPTIONS:
-  --input   Path to the input draft file (required)
   --output  Path to the output plan file (required)
   --auto-start-rlcr-if-converged
              Start the RLCR loop automatically when the plan is converged
@@ -163,12 +162,16 @@ OPTIONS:
   -h, --help             Show help message
 ```
 
-The gen-plan command transforms rough draft documents into structured implementation plans.
+The gen-plan command transforms the requirements clarified in the current conversation into a
+structured implementation plan. There is no input draft file: clarify the requirements in the
+session first (brainstorm plus grill-me style questions and answers), then run the command. The
+synthesized requirements are archived inside the plan as a "Design Requirements (from
+conversation)" section.
 
 Workflow:
-1. Validates input/output paths
-2. Checks if draft is relevant to the repository
-3. Analyzes draft for clarity, consistency, completeness, and functionality
+1. Validates the output path
+2. Verifies the conversation contains a clarified requirements discussion and synthesizes the Design Requirements summary
+3. Analyzes the requirements for clarity, consistency, completeness, and functionality
 4. Engages user to resolve any issues found
 5. Generates a structured plan.md with acceptance criteria
 6. Optionally starts `/humanize:start-rlcr-loop` if `--auto-start-rlcr-if-converged` conditions are met

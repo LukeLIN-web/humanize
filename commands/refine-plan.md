@@ -25,7 +25,7 @@ Permitted writes are limited to:
 - The QA document under `--qa-dir`
 - Optional translated language variants for the refined plan and QA document
 
-The refined plan MUST reuse the existing `gen-plan` schema. Do not invent new top-level sections. Keep required sections intact, preserve optional sections when present, and preserve any `--- Original Design Draft Start ---` appendix or other non-comment content unless a comment explicitly requires a plan-level change there.
+The refined plan MUST reuse the existing `gen-plan` schema. Do not invent new top-level sections. Keep required sections intact, preserve optional sections when present, and preserve any `--- Design Requirements (from conversation) Start ---` appendix (or the legacy `--- Original Design Draft Start ---` appendix from older plans) or other non-comment content unless a comment explicitly requires a plan-level change there.
 
 ## Workflow Overview
 
@@ -414,7 +414,8 @@ Optional sections that MUST be preserved when present in the input:
 
 - `## Codex Team Workflow`
 - `## Convergence Log`
-- `--- Original Design Draft Start ---` appendix and its matching end marker
+- `--- Design Requirements (from conversation) Start ---` appendix and its matching end marker
+- `--- Original Design Draft Start ---` appendix (legacy, from plans generated before conversation mode) and its matching end marker
 
 ### Refinement Rules
 
