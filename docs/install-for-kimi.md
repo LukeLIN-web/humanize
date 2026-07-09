@@ -9,7 +9,7 @@ Humanize provides four Agent Skills for kimi:
 | Skill | Type | Purpose |
 |-------|------|---------|
 | `humanize` | Standard | General guidance for all workflows |
-| `humanize-gen-plan` | Flow | Generate structured plan from draft |
+| `humanize-gen-plan` | Flow | Generate structured plan from the clarified conversation |
 | `humanize-refine-plan` | Flow | Refine annotated plan with CMT blocks |
 | `humanize-rlcr` | Flow | Iterative development with Codex review |
 
@@ -133,10 +133,11 @@ Look for the "Skills" section in the help output.
 
 ### Use the skills
 
-#### 1. Generate plan from draft
+#### 1. Generate plan from the clarified conversation
 
 ```bash
-# Start the flow (will ask for input/output paths)
+# Start the flow after discussing the requirements in the session
+# (will ask for the output plan path)
 /flow:humanize-gen-plan
 
 # Or load as standard skill

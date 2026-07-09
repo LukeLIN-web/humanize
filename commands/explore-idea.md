@@ -339,7 +339,7 @@ Write `<FINAL_IDEA_PATH>` from `FINAL_IDEA_TEMPLATE`. It must be a plan-ready sy
 - Carry forward the winning direction's rationale, approach summary, objective evidence, constraints, and known risks.
 - Summarize explore outcomes from `worker-results.jsonl`: worker status, Codex verdict, tests, commits, dirty state, and relevant implementation findings.
 - Include cross-direction learnings that affect the final implementation plan.
-- Include the command `/humanize:gen-plan --input <FINAL_IDEA_PATH> --output <plan-path>`.
+- Include the next-step instruction: review and discuss `<FINAL_IDEA_PATH>` in the session so the requirements are clarified in the conversation, then run `/humanize:gen-plan --output <plan-path>`.
 
 Template substitutions for `FINAL_IDEA_TEMPLATE` include:
 - `<TITLE>` → a concise title for the synthesized final approach

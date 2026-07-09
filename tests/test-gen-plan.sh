@@ -566,15 +566,6 @@ if [[ -x "$VALIDATE_SCRIPT" ]]; then
     SCRIPT_TEST_DIR=$(mktemp -d)
     trap "rm -rf $SCRIPT_TEST_DIR" EXIT
 
-    # Test: --input without value should exit 6
-    EXIT_CODE=0
-    "$VALIDATE_SCRIPT" --input 2>/dev/null || EXIT_CODE=$?
-    if [[ $EXIT_CODE -eq 6 ]]; then
-        pass "validate-gen-plan-io: --input without value exits 6"
-    else
-        fail "validate-gen-plan-io: --input without value should exit 6" "6" "$EXIT_CODE"
-    fi
-
     # Test: --output without value should exit 6
     EXIT_CODE=0
     "$VALIDATE_SCRIPT" --output 2>/dev/null || EXIT_CODE=$?
@@ -584,13 +575,21 @@ if [[ -x "$VALIDATE_SCRIPT" ]]; then
         fail "validate-gen-plan-io: --output without value should exit 6" "6" "$EXIT_CODE"
     fi
 
-    # Test: --input followed by another flag should exit 6
+    # Test: Removed --input option should exit 6
     EXIT_CODE=0
-    "$VALIDATE_SCRIPT" --input --output /tmp/out.md 2>/dev/null || EXIT_CODE=$?
+    "$VALIDATE_SCRIPT" --input "$SCRIPT_TEST_DIR/draft.md" --output "$SCRIPT_TEST_DIR/out.md" 2>/dev/null || EXIT_CODE=$?
     if [[ $EXIT_CODE -eq 6 ]]; then
-        pass "validate-gen-plan-io: --input followed by flag exits 6"
+        pass "validate-gen-plan-io: removed --input option exits 6"
     else
-        fail "validate-gen-plan-io: --input followed by flag should exit 6" "6" "$EXIT_CODE"
+        fail "validate-gen-plan-io: removed --input option should exit 6" "6" "$EXIT_CODE"
+    fi
+
+    # Test: Removed --input option should mention conversation-based requirements
+    OUTPUT=$("$VALIDATE_SCRIPT" --input "$SCRIPT_TEST_DIR/draft.md" --output "$SCRIPT_TEST_DIR/out.md" 2>&1) || true
+    if echo "$OUTPUT" | grep -qi "removed.*conversation\|conversation.*removed"; then
+        pass "validate-gen-plan-io: removed --input explains conversation mode"
+    else
+        fail "validate-gen-plan-io: removed --input should explain conversation mode" "removal message" "no explanation produced"
     fi
 
     # Test: Unknown option should exit 6
@@ -602,29 +601,9 @@ if [[ -x "$VALIDATE_SCRIPT" ]]; then
         fail "validate-gen-plan-io: unknown option should exit 6" "6" "$EXIT_CODE"
     fi
 
-    # Test: Input file not found should exit 1
-    EXIT_CODE=0
-    "$VALIDATE_SCRIPT" --input "$SCRIPT_TEST_DIR/nonexistent.md" --output "$SCRIPT_TEST_DIR/out.md" 2>/dev/null || EXIT_CODE=$?
-    if [[ $EXIT_CODE -eq 1 ]]; then
-        pass "validate-gen-plan-io: input not found exits 1"
-    else
-        fail "validate-gen-plan-io: input not found should exit 1" "1" "$EXIT_CODE"
-    fi
-
-    # Test: Empty input file should exit 2
-    touch "$SCRIPT_TEST_DIR/empty.md"
-    EXIT_CODE=0
-    "$VALIDATE_SCRIPT" --input "$SCRIPT_TEST_DIR/empty.md" --output "$SCRIPT_TEST_DIR/out.md" 2>/dev/null || EXIT_CODE=$?
-    if [[ $EXIT_CODE -eq 2 ]]; then
-        pass "validate-gen-plan-io: empty input exits 2"
-    else
-        fail "validate-gen-plan-io: empty input should exit 2" "2" "$EXIT_CODE"
-    fi
-
     # Test: Output directory not found should exit 3
-    echo "content" > "$SCRIPT_TEST_DIR/valid.md"
     EXIT_CODE=0
-    "$VALIDATE_SCRIPT" --input "$SCRIPT_TEST_DIR/valid.md" --output "$SCRIPT_TEST_DIR/nonexistent_dir/out.md" 2>/dev/null || EXIT_CODE=$?
+    "$VALIDATE_SCRIPT" --output "$SCRIPT_TEST_DIR/nonexistent_dir/out.md" 2>/dev/null || EXIT_CODE=$?
     if [[ $EXIT_CODE -eq 3 ]]; then
         pass "validate-gen-plan-io: output dir not found exits 3"
     else
@@ -634,7 +613,7 @@ if [[ -x "$VALIDATE_SCRIPT" ]]; then
     # Test: Output file already exists should exit 4
     touch "$SCRIPT_TEST_DIR/existing.md"
     EXIT_CODE=0
-    "$VALIDATE_SCRIPT" --input "$SCRIPT_TEST_DIR/valid.md" --output "$SCRIPT_TEST_DIR/existing.md" 2>/dev/null || EXIT_CODE=$?
+    "$VALIDATE_SCRIPT" --output "$SCRIPT_TEST_DIR/existing.md" 2>/dev/null || EXIT_CODE=$?
     if [[ $EXIT_CODE -eq 4 ]]; then
         pass "validate-gen-plan-io: output exists exits 4"
     else
@@ -644,25 +623,25 @@ if [[ -x "$VALIDATE_SCRIPT" ]]; then
     # Test: Output path is a directory should exit 4
     mkdir -p "$SCRIPT_TEST_DIR/output_dir"
     EXIT_CODE=0
-    "$VALIDATE_SCRIPT" --input "$SCRIPT_TEST_DIR/valid.md" --output "$SCRIPT_TEST_DIR/output_dir" 2>/dev/null || EXIT_CODE=$?
+    "$VALIDATE_SCRIPT" --output "$SCRIPT_TEST_DIR/output_dir" 2>/dev/null || EXIT_CODE=$?
     if [[ $EXIT_CODE -eq 4 ]]; then
         pass "validate-gen-plan-io: output is directory exits 4"
     else
         fail "validate-gen-plan-io: output is directory should exit 4" "4" "$EXIT_CODE"
     fi
 
-    # Test: Valid paths should exit 0
+    # Test: Valid output path should exit 0
     EXIT_CODE=0
-    "$VALIDATE_SCRIPT" --input "$SCRIPT_TEST_DIR/valid.md" --output "$SCRIPT_TEST_DIR/new-output.md" 2>/dev/null || EXIT_CODE=$?
+    "$VALIDATE_SCRIPT" --output "$SCRIPT_TEST_DIR/new-output.md" 2>/dev/null || EXIT_CODE=$?
     if [[ $EXIT_CODE -eq 0 ]]; then
-        pass "validate-gen-plan-io: valid paths exits 0"
+        pass "validate-gen-plan-io: valid output path exits 0"
     else
-        fail "validate-gen-plan-io: valid paths should exit 0" "0" "$EXIT_CODE"
+        fail "validate-gen-plan-io: valid output path should exit 0" "0" "$EXIT_CODE"
     fi
 
-    # Test: Valid paths with auto-start flag should exit 0
+    # Test: Valid output path with auto-start flag should exit 0
     EXIT_CODE=0
-    "$VALIDATE_SCRIPT" --input "$SCRIPT_TEST_DIR/valid.md" --output "$SCRIPT_TEST_DIR/new-output-auto.md" --auto-start-rlcr-if-converged 2>/dev/null || EXIT_CODE=$?
+    "$VALIDATE_SCRIPT" --output "$SCRIPT_TEST_DIR/new-output-auto.md" --auto-start-rlcr-if-converged 2>/dev/null || EXIT_CODE=$?
     if [[ $EXIT_CODE -eq 0 ]]; then
         pass "validate-gen-plan-io: auto-start flag accepted"
     else
@@ -670,7 +649,7 @@ if [[ -x "$VALIDATE_SCRIPT" ]]; then
     fi
 
     # Test: --discussion flag is recognized (not rejected as unknown)
-    OUTPUT=$("$VALIDATE_SCRIPT" --input /dev/null --output /dev/null --discussion 2>&1) || true
+    OUTPUT=$("$VALIDATE_SCRIPT" --output /dev/null --discussion 2>&1) || true
     if ! echo "$OUTPUT" | grep -qi "unknown option\|unrecognized"; then
         pass "validate script accepts --discussion flag"
     else
@@ -678,7 +657,7 @@ if [[ -x "$VALIDATE_SCRIPT" ]]; then
     fi
 
     # Test: --direct flag is recognized (not rejected as unknown)
-    OUTPUT=$("$VALIDATE_SCRIPT" --input /dev/null --output /dev/null --direct 2>&1) || true
+    OUTPUT=$("$VALIDATE_SCRIPT" --output /dev/null --direct 2>&1) || true
     if ! echo "$OUTPUT" | grep -qi "unknown option\|unrecognized"; then
         pass "validate script accepts --direct flag"
     else
@@ -686,7 +665,7 @@ if [[ -x "$VALIDATE_SCRIPT" ]]; then
     fi
 
     # Test: --discussion and --direct together are rejected as mutually exclusive
-    OUTPUT=$("$VALIDATE_SCRIPT" --input /dev/null --output /dev/null --discussion --direct 2>&1) || true
+    OUTPUT=$("$VALIDATE_SCRIPT" --output /dev/null --discussion --direct 2>&1) || true
     if echo "$OUTPUT" | grep -qi "mutually exclusive\|cannot use"; then
         pass "validate script rejects --discussion and --direct together"
     else

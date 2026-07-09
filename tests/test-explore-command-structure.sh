@@ -290,15 +290,16 @@ if [[ "$ALL_FINAL_PLACEHOLDERS_DOCUMENTED" == "true" ]]; then
     pass "final-idea placeholders are present in template and documented in command"
 fi
 
-if grep -q "/humanize:gen-plan --input <FINAL_IDEA_PATH>" "$REPORT_TEMPLATE"; then
-    pass "report template points gen-plan at final-idea.md"
+if grep -q "discuss \`<FINAL_IDEA_PATH>\` in the session" "$REPORT_TEMPLATE" \
+        && grep -q "/humanize:gen-plan --output <plan-path>" "$REPORT_TEMPLATE"; then
+    pass "report template routes final-idea.md through conversation-mode gen-plan"
 else
-    fail "report template points gen-plan at final-idea.md" \
-        "/humanize:gen-plan --input <FINAL_IDEA_PATH>" \
+    fail "report template routes final-idea.md through conversation-mode gen-plan" \
+        "discuss <FINAL_IDEA_PATH> in the session, then /humanize:gen-plan --output <plan-path>" \
         "missing"
 fi
 
-if grep -q "/humanize:gen-plan --input <FINAL_IDEA_PATH>" "$FINAL_IDEA_TEMPLATE" \
+if grep -q "/humanize:gen-plan --output <plan-path>" "$FINAL_IDEA_TEMPLATE" \
         && grep -q "/humanize:start-rlcr-loop <plan-path>" "$FINAL_IDEA_TEMPLATE"; then
     pass "final-idea template includes full clean productization flow"
 else
@@ -307,12 +308,13 @@ else
         "missing"
 fi
 
-if grep -q "/humanize:gen-plan --input \\.humanize/explore/<run-id>/final-idea\\.md" "$PROJECT_ROOT/docs/usage.md" \
+if grep -q "\\.humanize/explore/<run-id>/final-idea\\.md\` in the session" "$PROJECT_ROOT/docs/usage.md" \
+        && grep -q "/humanize:gen-plan --output docs/plan\\.md" "$PROJECT_ROOT/docs/usage.md" \
         && grep -q "/humanize:start-rlcr-loop docs/plan\\.md" "$PROJECT_ROOT/docs/usage.md"; then
     pass "usage docs show default post-explore productization flow"
 else
     fail "usage docs show default post-explore productization flow" \
-        "gen-plan final-idea.md then start-rlcr-loop docs/plan.md" \
+        "discuss final-idea.md in the session, then gen-plan --output docs/plan.md and start-rlcr-loop docs/plan.md" \
         "missing"
 fi
 
