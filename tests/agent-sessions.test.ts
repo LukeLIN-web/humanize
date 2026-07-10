@@ -236,7 +236,7 @@ describe("buildAgentSessions", () => {
       now: "2026-05-13T18:01:00.000Z",
       metadataByVendorSessionId: {
         "codex-session": {
-          model: "gpt-5.5",
+          model: "gpt-5.6-sol",
           reasoningEffort: "xhigh",
           inputTokens: 7,
           outputTokens: 4,
@@ -254,9 +254,9 @@ describe("buildAgentSessions", () => {
     });
 
     expect(sessions[0]).toMatchObject({
-      model: "gpt-5.5",
+      model: "gpt-5.6-sol",
       reasoningEffort: "xhigh",
-      modelLabel: "gpt-5.5 xhigh",
+      modelLabel: "gpt-5.6-sol xhigh",
       stats: {
         inputTokens: 7,
         outputTokens: 4,
@@ -307,7 +307,7 @@ describe("buildAgentSessions", () => {
         id: "codex-run",
         shortName: "codex-run",
         agent: "codex",
-        model: "gpt-5.5",
+        model: "gpt-5.6-sol",
         outputEvents: [
           event("stdout", '{"type":"turn.completed","usage":{"input_tokens":1000,"cached_input_tokens":800,"output_tokens":90,"reasoning_output_tokens":30}}\n')
         ]

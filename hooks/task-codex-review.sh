@@ -11,7 +11,7 @@
 # Reads the TaskCompleted JSON payload on stdin. Emits a hook JSON decision on stdout.
 #
 # Tunable via env:
-#   TASK_REVIEW_MODEL     (default gpt-5.5)
+#   TASK_REVIEW_MODEL     (default gpt-5.6-sol)
 #   TASK_REVIEW_EFFORT    (default xhigh)
 #   TASK_REVIEW_TIMEOUT   (default 1800 seconds, codex)
 #   TASK_REVIEW_MAX_ROUNDS(default 1  — blocks at most this many times per task)
@@ -22,7 +22,7 @@ set -uo pipefail
 # Locate ask-codex.sh: prefer the running plugin's own copy, fall back to the
 # installed marketplace path when CLAUDE_PLUGIN_ROOT is not set (e.g. manual runs).
 ASK_CODEX="${ASK_CODEX_BIN:-${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/plugins/marketplaces/PolyArch}/scripts/ask-codex.sh}"
-MODEL="${TASK_REVIEW_MODEL:-gpt-5.5}"
+MODEL="${TASK_REVIEW_MODEL:-gpt-5.6-sol}"
 EFFORT="${TASK_REVIEW_EFFORT:-xhigh}"
 TIMEOUT="${TASK_REVIEW_TIMEOUT:-1800}"
 MAX_ROUNDS="${TASK_REVIEW_MAX_ROUNDS:-1}"

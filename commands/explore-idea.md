@@ -31,7 +31,7 @@ Read and execute below with ultrathink.
 - Worker branches follow the format `explore/<RUN_ID>/<dir_slug>` exactly, and MUST be created by running `git checkout -b` from the current HEAD after asserting `HEAD == <BASE_COMMIT>`; workers MUST NOT run `git checkout <BASE_BRANCH>` (that branch is already checked out in the coordinator worktree, and Git forbids two worktrees from checking out the same branch simultaneously); a HEAD mismatch is a fatal worker error.
 - Workers MUST run only targeted tests for the files they touched, not the full test suite.
 - Worker Codex calls must be scoped to the worker worktree root via `CLAUDE_PROJECT_DIR="$PWD"`.
-- Worker Codex review calls must use the validation-provided `CODEX_REVIEW_MODEL_SPEC` exactly. The generated value is expected to be `gpt-5.5:xhigh`.
+- Worker Codex review calls must use the validation-provided `CODEX_REVIEW_MODEL_SPEC` exactly. The generated value is expected to be `gpt-5.6-sol:xhigh`.
 - All worker results must be recorded in `worker-results.jsonl`; no result may be silently dropped.
 
 ## Worker Constraint Sync
@@ -64,7 +64,7 @@ Handle exit codes:
   `SELECTED_DIRECTION_IDS`, `EFFECTIVE_CONCURRENCY`, `MAX_WORKER_ITERATIONS`,
   `WORKER_TIMEOUT_MIN`, `CODEX_TIMEOUT_MIN`, `WORKER_PROMPT_TEMPLATE`, `REPORT_TEMPLATE`.
   Continue to Phase 2.
-  Parse values by splitting each line on the first literal `": "` only. Values can contain additional colons, for example `CODEX_REVIEW_MODEL_SPEC: gpt-5.5:xhigh`.
+  Parse values by splitting each line on the first literal `": "` only. Values can contain additional colons, for example `CODEX_REVIEW_MODEL_SPEC: gpt-5.6-sol:xhigh`.
 - `1`: Report "No input path provided" and stop.
 - `2`: Report "Input file not found" and stop.
 - `3`: Report "Companion .directions.json missing — regenerate the idea draft with `/humanize:gen-idea`" and stop.
@@ -151,7 +151,7 @@ For each selected direction (in `SELECTED_DIRECTION_IDS`):
    - `<CONFIDENCE>` → `confidence`
    - `<MAX_WORKER_ITERATIONS>` → `MAX_WORKER_ITERATIONS`
    - `<CODEX_TIMEOUT_MIN>` → `CODEX_TIMEOUT_MIN`
-   - `<CODEX_REVIEW_MODEL_SPEC>` → `CODEX_REVIEW_MODEL_SPEC` from validation stdout (expected rendered value: `gpt-5.5:xhigh`)
+   - `<CODEX_REVIEW_MODEL_SPEC>` → `CODEX_REVIEW_MODEL_SPEC` from validation stdout (expected rendered value: `gpt-5.6-sol:xhigh`)
    - `<BASE_BRANCH>` → `BASE_BRANCH`
    - `<BASE_COMMIT>` → `BASE_COMMIT`
    - `<ORIGINAL_IDEA>` → `original_idea` from the directions JSON
