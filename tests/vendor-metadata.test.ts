@@ -13,7 +13,7 @@ describe("vendor session metadata", () => {
     const sessionDir = join(home, ".codex", "sessions", "2026", "05", "13");
     await mkdir(sessionDir, { recursive: true });
     await writeFile(join(sessionDir, "rollout-2026-05-13T00-00-00-codex-session.jsonl"), [
-      json({ timestamp: "2026-05-13T18:00:00.000Z", type: "turn_context", payload: { model: "gpt-5.5", effort: "xhigh" } }),
+      json({ timestamp: "2026-05-13T18:00:00.000Z", type: "turn_context", payload: { model: "gpt-5.6-sol", effort: "xhigh" } }),
       json({ timestamp: "2026-05-13T18:00:01.000Z", type: "event_msg", payload: { type: "task_started", model_context_window: 258400 } }),
       json({
         timestamp: "2026-05-13T18:00:02.000Z",
@@ -64,7 +64,7 @@ describe("vendor session metadata", () => {
     const metadata = loadVendorSessionMetadataForRuns([run("codex", "codex-session")], home);
 
     expect(metadata["codex-session"]).toMatchObject({
-      model: "gpt-5.5",
+      model: "gpt-5.6-sol",
       reasoningEffort: "xhigh",
       inputTokens: 800,
       cacheReadInputTokens: 700,

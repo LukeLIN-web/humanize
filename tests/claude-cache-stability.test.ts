@@ -39,7 +39,7 @@ interface CacheEstimate {
 function withSameClaudeCodeVersionEnvelope(claudeCodeVersion: string, prompt: string): string {
   return [
     `Claude Code version: ${claudeCodeVersion}`,
-    "Model: gpt-5.5",
+    "Model: gpt-5.6-sol",
     "Permission mode: bypassPermissions",
     "Output format: stream-json",
     "",

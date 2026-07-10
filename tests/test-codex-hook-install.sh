@@ -162,11 +162,11 @@ else
     fail "Codex install writes a PATH-ready bitlesson-selector shim" "$COMMAND_BIN_DIR/bitlesson-selector exists" "missing"
 fi
 
-if [[ "$(jq -r '.bitlesson_model // empty' "$HUMANIZE_USER_CONFIG")" == "gpt-5.5" ]]; then
+if [[ "$(jq -r '.bitlesson_model // empty' "$HUMANIZE_USER_CONFIG")" == "gpt-5.6-sol" ]]; then
     pass "Codex install seeds bitlesson_model with a Codex/OpenAI model"
 else
     fail "Codex install seeds bitlesson_model with a Codex/OpenAI model" \
-        "gpt-5.5" "$(jq -c '.' "$HUMANIZE_USER_CONFIG" 2>/dev/null || echo MISSING)"
+        "gpt-5.6-sol" "$(jq -c '.' "$HUMANIZE_USER_CONFIG" 2>/dev/null || echo MISSING)"
 fi
 
 if [[ "$(jq -r '.provider_mode // empty' "$HUMANIZE_USER_CONFIG")" == "codex-only" ]]; then
@@ -520,13 +520,13 @@ else
         "native hook text absent" "native hook text present"
 fi
 
-if grep -q "gpt-5.5:high" "$KIMI_RLCR_SKILL" 2>/dev/null \
-        && ! grep -q "gpt-5.4:high" "$KIMI_RLCR_SKILL" 2>/dev/null; then
+if grep -q "gpt-5.6-sol:high" "$KIMI_RLCR_SKILL" 2>/dev/null \
+        && ! grep -q "gpt-5.5:high" "$KIMI_RLCR_SKILL" 2>/dev/null; then
     pass "Kimi humanize-rlcr/SKILL.md documents current Codex default model"
 else
     fail "Kimi humanize-rlcr/SKILL.md documents current Codex default model" \
-        "gpt-5.5:high present and gpt-5.4:high absent" \
-        "$(grep -n "gpt-5\\.[45]:high" "$KIMI_RLCR_SKILL" 2>/dev/null || echo MISSING)"
+        "gpt-5.6-sol:high present and gpt-5.5:high absent" \
+        "$(grep -n "gpt-5\\.5:high\\|gpt-5\\.6-sol:high" "$KIMI_RLCR_SKILL" 2>/dev/null || echo MISSING)"
 fi
 
 # --- --target both provider_mode test ---

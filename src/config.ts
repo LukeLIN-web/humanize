@@ -39,7 +39,7 @@ export interface WorkflowConfig {
 
 export const DEFAULT_AGENT_MODEL_DEFAULTS: AgentModelDefaultsByAgent = {
   codex: {
-    model: "gpt-5.5",
+    model: "gpt-5.6-sol",
     reasoningEffort: "xhigh"
   },
   claude: {

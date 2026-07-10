@@ -516,7 +516,7 @@ function contextWindowTokensForModel(model: string | undefined): number | undefi
   if (/claude|opus|sonnet|haiku/.test(normalized)) {
     return 200_000;
   }
-  if (/^gpt-5\.5\b/.test(normalized)) {
+  if (/^gpt-5\.(5|6-sol)\b/.test(normalized)) {
     return 258_400;
   }
   if (/^gpt-5\b/.test(normalized)) {

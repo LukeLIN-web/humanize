@@ -35,7 +35,7 @@ describe("humanize2 user config", () => {
     expect(contents).toContain("defaultTheme: dark");
     expect(contents).toContain("agents:");
     expect(config.agentDefaults.codex).toMatchObject({
-      model: "gpt-5.5",
+      model: "gpt-5.6-sol",
       reasoningEffort: "xhigh"
     });
   });
@@ -141,7 +141,7 @@ describe("humanize2 user config", () => {
       "agents:",
       "  codex:",
       "    extraArgs: []",
-      "    model: gpt-5.5",
+      "    model: gpt-5.6-sol",
       "    reasoningEffort: xhigh",
       ""
     ].join("\n");
@@ -150,7 +150,7 @@ describe("humanize2 user config", () => {
     const config = await loadHumanizeConfig({ HUMANIZE2_CONFIG: configPath }, home);
 
     expect(config.agentDefaults.codex).toMatchObject({
-      model: "gpt-5.5",
+      model: "gpt-5.6-sol",
       reasoningEffort: "xhigh",
       extraArgs: []
     });
@@ -174,7 +174,7 @@ describe("humanize2 user config", () => {
       "      - git.statusClean",
       "agents:",
       "  codex:",
-      "    model: gpt-5.5",
+      "    model: gpt-5.6-sol",
       "    reasoningEffort: xhigh",
       "  claude:",
       "    model: claude-opus-4-7",
