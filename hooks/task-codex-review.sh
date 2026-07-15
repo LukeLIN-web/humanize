@@ -3,10 +3,17 @@
 # task-codex-review.sh — TaskCompleted hook
 #
 # When a Task (TaskCreate/TaskUpdate) is marked complete, ask Codex to review the
-# uncommitted working-tree changes (tracked + untracked). If Codex requests changes,
-# BLOCK the task completion and feed the review back so Claude applies the fixes,
-# then re-completes the task. One review/fix pass per task by default (MAX_ROUNDS),
-# so a /goal run keeps moving.
+# changes made by THIS session's task. The diff is scoped two ways:
+#   1) file scope — only files this session actually edited (Edit/Write/NotebookEdit
+#      tool calls in the session transcript), so uncommitted changes from OTHER
+#      sessions/tasks sharing the worktree never leak into the review;
+#   2) time scope — only changes since the last review pass (per-repo, per-session
+#      baseline tree), so completing several tasks before committing doesn't
+#      re-review the same accumulated diff.
+# Falls back to the full working-tree diff when the transcript is unavailable.
+# If Codex requests changes, BLOCK the task completion and feed the review back so
+# Claude applies the fixes, then re-completes the task. One review/fix pass per
+# task by default (MAX_ROUNDS), so a /goal run keeps moving.
 #
 # Reads the TaskCompleted JSON payload on stdin. Emits a hook JSON decision on stdout.
 #
@@ -72,7 +79,37 @@ repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"
 repo_key="$(printf '%s' "${repo_root:-norepo}" | tr -c 'a-zA-Z0-9_-' '_')"
 head_ref="HEAD"; git rev-parse --verify HEAD >/dev/null 2>&1 || head_ref="$empty_tree"
 head_sha="$(git rev-parse HEAD 2>/dev/null || echo NOHEAD)"
-base_file="$state_dir/$repo_key.base"
+# Baseline is per session so one session's review pass never marks another
+# concurrent session's still-unreviewed changes as already reviewed.
+session_id="$(get '.session_id')"
+sess_key="$(printf '%s' "${session_id:-nosess}" | tr -c 'a-zA-Z0-9_-' '_')"
+base_file="$state_dir/$repo_key.$sess_key.base"
+
+# File scope: files THIS session actually edited (Edit/Write/NotebookEdit tool
+# calls in the transcript, sidechains included), as repo-relative paths. Files
+# changed via Bash are not captured — acceptable; the alternative is leaking
+# other sessions' changes into the review.
+transcript="$(get '.transcript_path')"
+scope="full"
+scoped_files=()
+if [ -n "$transcript" ] && [ -f "$transcript" ] && [ -n "$repo_root" ]; then
+  scope="session"
+  while IFS= read -r f; do
+    case "$f" in
+      "$repo_root"/*) rel="${f#"$repo_root"/}" ;;
+      /*) continue ;;                # absolute path outside this repo
+      ..*|*/../*) continue ;;        # escapes the repo
+      *) rel="$f" ;;                 # repo-relative tool-call path
+    esac
+    scoped_files+=("$rel")
+  done < <(jq -r '
+      select(.type=="assistant")
+      | .message.content[]?
+      | select(.type=="tool_use")
+      | select(.name=="Edit" or .name=="Write" or .name=="MultiEdit" or .name=="NotebookEdit")
+      | .input.file_path // .input.notebook_path // empty
+    ' "$transcript" 2>/dev/null | sort -u)
+fi
 
 # Snapshot the current working tree (tracked + untracked, honoring .gitignore) as
 # a git tree object, using a throwaway index kept OUTSIDE the work tree so it is
@@ -110,11 +147,34 @@ if [ -f "$base_file" ]; then
   fi
 fi
 
-# Capture the incremental changes since the baseline (read-only)
+# Session edited no files in this repo -> nothing this task should be reviewed on
+if [ "$scope" = "session" ] && [ "${#scoped_files[@]}" -eq 0 ]; then
+  rm -f "$cnt_file"
+  advance_baseline
+  exit 0
+fi
+
+# Capture the incremental changes since the baseline (read-only), restricted to
+# this session's files when the transcript gave us that scope.
 if [ -n "$current_tree" ]; then
-  diff="$(git diff "$diff_base" "$current_tree" 2>/dev/null | head -c "$DIFF_CAP")"
+  if [ "$scope" = "session" ]; then
+    diff="$(git -C "$repo_root" diff "$diff_base" "$current_tree" -- "${scoped_files[@]}" 2>/dev/null | head -c "$DIFF_CAP")"
+  else
+    diff="$(git diff "$diff_base" "$current_tree" 2>/dev/null | head -c "$DIFF_CAP")"
+  fi
+elif [ "$scope" = "session" ]; then
+  # Fallback: snapshot failed — per-file diff of just the session's files
+  diff="$( {
+    for f in "${scoped_files[@]}"; do
+      if git -C "$repo_root" ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then
+        git -C "$repo_root" diff "$head_ref" -- "$f" 2>/dev/null
+      elif [ -f "$repo_root/$f" ]; then
+        git -C "$repo_root" diff --no-index -- /dev/null "$repo_root/$f" 2>/dev/null
+      fi
+    done
+  } | head -c "$DIFF_CAP" )"
 else
-  # Fallback: snapshot failed — review the whole uncommitted diff
+  # Fallback: snapshot failed and no transcript — review the whole uncommitted diff
   diff="$( {
     git diff HEAD 2>/dev/null
     git ls-files --others --exclude-standard 2>/dev/null | while IFS= read -r f; do
@@ -130,10 +190,15 @@ if [ -z "${diff//[[:space:]]/}" ]; then
   exit 0
 fi
 
+scope_note=""
+[ "$scope" = "session" ] && scope_note="The diff is limited to the files this task's session edited; other uncommitted changes in the worktree belong to other tasks — do not review or mention them.
+"
+
 prompt="You are reviewing the uncommitted changes from a just-finished work task during an autonomous coding run.
 Task: ${task_title:-（未命名）}
 
 Review the diff below ONLY for issues worth fixing right now: correctness bugs, regressions, broken logic, obvious mistakes. Skip nitpicks and style. Be concise and concrete.
+${scope_note}
 This diff may be a partial, incremental slice of a larger in-progress change: it can show only some lines of a file. Do NOT flag a missing guard, import, or setup step (e.g. a directory being created before a write) when it could reasonably exist elsewhere in the same file outside this diff — only flag it if the diff itself shows it is actually wrong.
 Do NOT edit any files — output your review as text only.
 End your reply with exactly one line, either:
