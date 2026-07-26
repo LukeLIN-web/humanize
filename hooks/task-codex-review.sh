@@ -2,37 +2,35 @@
 #
 # task-codex-review.sh — TaskCompleted hook
 #
-# When a Task (TaskCreate/TaskUpdate) is marked complete, ask Codex to review the
-# changes made by THIS session's task. The diff is scoped two ways:
-#   1) file scope — only files this session actually edited (Edit/Write/NotebookEdit
-#      tool calls in the session transcript), so uncommitted changes from OTHER
-#      sessions/tasks sharing the worktree never leak into the review;
-#   2) time scope — only changes since the last review pass (per-repo, per-session
-#      baseline tree), so completing several tasks before committing doesn't
-#      re-review the same accumulated diff.
-# Falls back to the full working-tree diff when the transcript is unavailable.
-# If Codex requests changes, BLOCK the task completion and feed the review back so
-# Claude applies the fixes, then re-completes the task. One review/fix pass per
-# task by default (MAX_ROUNDS), so a /goal run keeps moving.
+# When a Task (TaskCreate/TaskUpdate) is marked complete, first block once so
+# Claude runs a /simplify pass over the task's changes, then (on re-completion)
+# ask Codex to review the simplified diff.
+# Codex review scope: the uncommitted changes made by THIS session: file paths are taken from the session
+# transcript's Edit/Write/NotebookEdit tool calls, so unrelated uncommitted changes
+# from other sessions/tasks in the same worktree are not sent to Codex. Falls back
+# to the full working-tree diff only when the transcript is unavailable. If Codex
+# requests changes, BLOCK the task completion and feed the review back so Claude
+# applies the fixes, then re-completes the task. One review/fix pass per task by
+# default (MAX_ROUNDS), so a /goal run keeps moving.
 #
 # Reads the TaskCompleted JSON payload on stdin. Emits a hook JSON decision on stdout.
 #
 # Tunable via env:
-#   TASK_REVIEW_MODEL     (default gpt-5.6-sol)
-#   TASK_REVIEW_EFFORT    (default xhigh)
-#   TASK_REVIEW_TIMEOUT   (default 1800 seconds, codex)
+#   TASK_REVIEW_MODEL     (default gpt-5.5)
+#   TASK_REVIEW_EFFORT    (default medium)
+#   TASK_REVIEW_TIMEOUT   (default 600 seconds, codex)
 #   TASK_REVIEW_MAX_ROUNDS(default 1  — blocks at most this many times per task)
+#   TASK_REVIEW_SIMPLIFY  (default 1  — set 0 to skip the pre-review /simplify pass)
 #   TASK_REVIEW_DRYRUN    (if set, use its value as the mock codex review; skips codex)
 
 set -uo pipefail
 
-# Locate ask-codex.sh: prefer the running plugin's own copy, fall back to the
-# installed marketplace path when CLAUDE_PLUGIN_ROOT is not set (e.g. manual runs).
-ASK_CODEX="${ASK_CODEX_BIN:-${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/plugins/marketplaces/PolyArch}/scripts/ask-codex.sh}"
-MODEL="${TASK_REVIEW_MODEL:-gpt-5.6-sol}"
-EFFORT="${TASK_REVIEW_EFFORT:-xhigh}"
-TIMEOUT="${TASK_REVIEW_TIMEOUT:-1800}"
+ASK_CODEX="${ASK_CODEX_BIN:-$HOME/.claude/plugins/marketplaces/PolyArch/scripts/ask-codex.sh}"
+MODEL="${TASK_REVIEW_MODEL:-gpt-5.5}"
+EFFORT="${TASK_REVIEW_EFFORT:-medium}"
+TIMEOUT="${TASK_REVIEW_TIMEOUT:-600}"
 MAX_ROUNDS="${TASK_REVIEW_MAX_ROUNDS:-1}"
+SIMPLIFY="${TASK_REVIEW_SIMPLIFY:-1}"
 DIFF_CAP=200000
 
 payload="$(cat)"
@@ -66,115 +64,68 @@ fi
 # Round counter (per task) — check BEFORE running codex so we never loop forever
 key="$(printf '%s' "${task_id:-notask}" | tr -c 'a-zA-Z0-9_-' '_')"
 cnt_file="$state_dir/$key.cnt"
+simp_file="$state_dir/$key.simplified"
 cnt="$(cat "$cnt_file" 2>/dev/null || echo 0)"
 [[ "$cnt" =~ ^[0-9]+$ ]] || cnt=0
+if [ "$cnt" -ge "$MAX_ROUNDS" ]; then
+  rm -f "$cnt_file" "$simp_file"
+  exit 0   # already had its review pass; let it complete
+fi
 
-# Incremental review baseline (per repo, per HEAD).
-# The diff under review is scoped to changes made SINCE the last review pass —
-# not the whole uncommitted tree. Without this, completing several tasks before
-# committing makes every task re-review the same accumulated diff, so Codex
-# re-raises identical findings (often diff-local false positives) on each task.
-empty_tree="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
-repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"
-repo_key="$(printf '%s' "${repo_root:-norepo}" | tr -c 'a-zA-Z0-9_-' '_')"
-head_ref="HEAD"; git rev-parse --verify HEAD >/dev/null 2>&1 || head_ref="$empty_tree"
-head_sha="$(git rev-parse HEAD 2>/dev/null || echo NOHEAD)"
-# Baseline is per session so one session's review pass never marks another
-# concurrent session's still-unreviewed changes as already reviewed.
-session_id="$(get '.session_id')"
-sess_key="$(printf '%s' "${session_id:-nosess}" | tr -c 'a-zA-Z0-9_-' '_')"
-base_file="$state_dir/$repo_key.$sess_key.base"
-
-# File scope: files THIS session actually edited (Edit/Write/NotebookEdit tool
-# calls in the transcript, sidechains included), as repo-relative paths. Files
-# changed via Bash are not captured — acceptable; the alternative is leaking
-# other sessions' changes into the review.
+# Scope the review to files THIS session actually edited (Edit/Write/NotebookEdit
+# tool calls in the transcript, sidechains included). Files changed via Bash are
+# not captured — acceptable; the alternative is leaking other sessions' changes.
 transcript="$(get '.transcript_path')"
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"
 scope="full"
-scoped_files=()
+scoped_files=""
 if [ -n "$transcript" ] && [ -f "$transcript" ] && [ -n "$repo_root" ]; then
   scope="session"
-  while IFS= read -r f; do
-    case "$f" in
-      "$repo_root"/*) rel="${f#"$repo_root"/}" ;;
-      /*) continue ;;                # absolute path outside this repo
-      ..*|*/../*) continue ;;        # escapes the repo
-      *) rel="$f" ;;                 # repo-relative tool-call path
-    esac
-    scoped_files+=("$rel")
-  done < <(jq -r '
+  scoped_files="$(jq -r '
       select(.type=="assistant")
       | .message.content[]?
       | select(.type=="tool_use")
       | select(.name=="Edit" or .name=="Write" or .name=="MultiEdit" or .name=="NotebookEdit")
       | .input.file_path // .input.notebook_path // empty
-    ' "$transcript" 2>/dev/null | sort -u)
+    ' "$transcript" 2>/dev/null | sort -u | while IFS= read -r f; do
+      case "$f" in
+        "$repo_root"/*) rel="${f#"$repo_root"/}" ;;
+        /*) continue ;;                # absolute path outside this repo
+        ..*|*/../*) continue ;;        # escapes the repo
+        *) rel="$f" ;;                 # repo-relative tool-call path
+      esac
+      printf '%s\n' "$rel"
+    done)"
+  # empty extraction (jq failure, schema drift, edits via unmatched tools):
+  # fall back to the full-tree review rather than silently skipping
+  [ -n "$scoped_files" ] || scope="full"
 fi
 
-# Snapshot the current working tree (tracked + untracked, honoring .gitignore) as
-# a git tree object, using a throwaway index kept OUTSIDE the work tree so it is
-# never itself picked up by `git add -A`.
-current_tree=""
-_idx="$state_dir/$repo_key.idx.$$"
-rm -f "$_idx"
-GIT_INDEX_FILE="$_idx" git read-tree "$head_ref" >/dev/null 2>&1
-if GIT_INDEX_FILE="$_idx" git add -A >/dev/null 2>&1; then
-  current_tree="$(GIT_INDEX_FILE="$_idx" git write-tree 2>/dev/null)"
-fi
-rm -f "$_idx"
-
-# Advance the baseline to the current snapshot once a task is allowed to complete,
-# so already-reviewed code is not re-reviewed by later task completions.
-advance_baseline() {
-  [ -n "$current_tree" ] && printf '%s %s\n' "$head_sha" "$current_tree" > "$base_file" 2>/dev/null
-}
-
-if [ "$cnt" -ge "$MAX_ROUNDS" ]; then
-  rm -f "$cnt_file"
-  advance_baseline   # already had its review pass; record it as reviewed
-  exit 0
-fi
-
-# Diff base = last reviewed tree for this HEAD, else HEAD (first review this streak).
-# A baseline from a different HEAD is stale (a commit happened) and is ignored,
-# falling back to the full uncommitted diff.
-diff_base="$head_ref"
-if [ -f "$base_file" ]; then
-  _b_head=""; _b_tree=""
-  read -r _b_head _b_tree < "$base_file" 2>/dev/null
-  if [ "$_b_head" = "$head_sha" ] && [ -n "$_b_tree" ] && git cat-file -e "${_b_tree}^{tree}" 2>/dev/null; then
-    diff_base="$_b_tree"
-  fi
-fi
-
-# Session edited no files in this repo -> nothing this task should be reviewed on
-if [ "$scope" = "session" ] && [ "${#scoped_files[@]}" -eq 0 ]; then
-  rm -f "$cnt_file"
-  advance_baseline
-  exit 0
-fi
-
-# Capture the incremental changes since the baseline (read-only), restricted to
-# this session's files when the transcript gave us that scope.
-if [ -n "$current_tree" ]; then
-  if [ "$scope" = "session" ]; then
-    diff="$(git -C "$repo_root" diff "$diff_base" "$current_tree" -- "${scoped_files[@]}" 2>/dev/null | head -c "$DIFF_CAP")"
-  else
-    diff="$(git diff "$diff_base" "$current_tree" 2>/dev/null | head -c "$DIFF_CAP")"
-  fi
-elif [ "$scope" = "session" ]; then
-  # Fallback: snapshot failed — per-file diff of just the session's files
+# Capture uncommitted changes (read-only): session-scoped when possible,
+# otherwise the full working tree (tracked diff + untracked file contents).
+if [ "$scope" = "session" ]; then
   diff="$( {
-    for f in "${scoped_files[@]}"; do
-      if git -C "$repo_root" ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then
-        git -C "$repo_root" diff "$head_ref" -- "$f" 2>/dev/null
-      elif [ -f "$repo_root/$f" ]; then
-        git -C "$repo_root" diff --no-index -- /dev/null "$repo_root/$f" 2>/dev/null
+    printf '%s\n' "$scoped_files" | while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      if git ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then
+        git diff HEAD -- "$f" 2>/dev/null
+      elif [ -f "$f" ]; then
+        git diff --no-index -- /dev/null "$f" 2>/dev/null
       fi
     done
   } | head -c "$DIFF_CAP" )"
-else
-  # Fallback: snapshot failed and no transcript — review the whole uncommitted diff
+  # Scoped diff empty: legitimate only if every session file is actually clean
+  # in git (edits committed => reviewed at commit time). Anything else means
+  # the extraction missed changes — fall back to the full tree.
+  if [ -z "${diff//[[:space:]]/}" ]; then
+    dirty="$(printf '%s\n' "$scoped_files" | while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      git status --porcelain -- "$f" 2>/dev/null
+    done)"
+    [ -z "${dirty//[[:space:]]/}" ] || scope="full"
+  fi
+fi
+if [ "$scope" = "full" ]; then
   diff="$( {
     git diff HEAD 2>/dev/null
     git ls-files --others --exclude-standard 2>/dev/null | while IFS= read -r f; do
@@ -183,23 +134,31 @@ else
   } | head -c "$DIFF_CAP" )"
 fi
 
-# Nothing new since last review -> nothing to review
+# Nothing changed (in scope) -> nothing to review
 if [ -z "${diff//[[:space:]]/}" ]; then
-  rm -f "$cnt_file"
-  advance_baseline
+  rm -f "$cnt_file" "$simp_file"
   exit 0
 fi
 
-scope_note=""
-[ "$scope" = "session" ] && scope_note="The diff is limited to the files this task's session edited; other uncommitted changes in the worktree belong to other tasks — do not review or mention them.
-"
+# Stage 1: before the codex review, block once so Claude runs a /simplify pass
+# over this task's changes. The re-completion (sentinel present) goes to codex.
+if [ "$SIMPLIFY" = "1" ] && [ ! -f "$simp_file" ]; then
+  touch "$simp_file"
+  jq -n '{decision:"block", reason:"Pre-review step: run the simplify skill (Skill tool, skill: \"simplify\") over the changes this task made and apply its fixes (reuse, simplification, efficiency, altitude cleanups — no behavior changes). Then mark the task complete again; the Codex review will run on the simplified diff."}'
+  exit 0
+fi
+
+if [ "$scope" = "session" ]; then
+  scope_line="The diff is limited to the files this task's session edited; other uncommitted changes in the worktree belong to other tasks — do not review or mention them."
+else
+  scope_line="Session scoping was unavailable, so the diff below may span the FULL working tree, including changes from other tasks."
+fi
 
 prompt="You are reviewing the uncommitted changes from a just-finished work task during an autonomous coding run.
 Task: ${task_title:-（未命名）}
 
 Review the diff below ONLY for issues worth fixing right now: correctness bugs, regressions, broken logic, obvious mistakes. Skip nitpicks and style. Be concise and concrete.
-${scope_note}
-This diff may be a partial, incremental slice of a larger in-progress change: it can show only some lines of a file. Do NOT flag a missing guard, import, or setup step (e.g. a directory being created before a write) when it could reasonably exist elsewhere in the same file outside this diff — only flag it if the diff itself shows it is actually wrong.
+$scope_line
 Do NOT edit any files — output your review as text only.
 End your reply with exactly one line, either:
 VERDICT: APPROVED
@@ -225,14 +184,14 @@ fi
 # Out of quota / rate-limited -> trip the breaker so later tasks skip fast, allow this one
 if printf '%s' "$err" | grep -qiE 'quota|usage limit|rate.?limit|too many requests|\b429\b|\b402\b|insufficient|payment required|out of credit|credit balance|billing'; then
   touch "$breaker" 2>/dev/null
-  rm -f "$cnt_file"
+  rm -f "$cnt_file" "$simp_file"
   echo '{"systemMessage":"codex quota/limit reached — skipping reviews for a while; task allowed to complete"}'
   exit 0
 fi
 
 # Any other codex failure/timeout/empty -> don't hold up the run
 if [ "$rc" -ne 0 ] || [ -z "${review//[[:space:]]/}" ]; then
-  rm -f "$cnt_file"
+  rm -f "$cnt_file" "$simp_file"
   echo '{"systemMessage":"codex review skipped (codex error/timeout); task allowed to complete"}'
   exit 0
 fi
@@ -247,7 +206,6 @@ if [ "$verdict" = "CHANGES_REQUESTED" ]; then
 fi
 
 # APPROVED (or no clear verdict) -> allow
-rm -f "$cnt_file"
-advance_baseline
+rm -f "$cnt_file" "$simp_file"
 echo '{"systemMessage":"codex review: APPROVED"}'
 exit 0
