@@ -178,16 +178,7 @@ Create the output plan file by copying the template:
 ```bash
 cp "$TEMPLATE_FILE" "$OUTPUT_FILE"
 ```
-Then use the Edit tool to append the human-input archive to the end of the output file, in this exact form:
-
-```text
-
---- Design Requirements (from conversation) Start ---
-
-<the Design Requirements summary>
-
---- Design Requirements (from conversation) End ---
-```
+The Design Requirements summary stays in memory only. Do NOT append it (or any other requirements archive) to the output file; the plan body itself must carry all requirements (see Generation Rule 11).
 
 Then continue to Phase 3.
 
@@ -544,21 +535,20 @@ When `alternative_plan_language` is empty, absent, set to `"English"`, or set to
 
 ## Phase 8: Write and Complete
 
-The output file already contains the plan template structure and the Design Requirements (from conversation) section (combined in Phase 2). Now complete the plan through the following steps:
+The output file already contains the plan template structure (created in Phase 2). Now complete the plan through the following steps:
 
 ### Step 1: Update Plan Content
 
 Use the **Edit tool** (not Write) to update the plan file with the generated content:
 - Replace template placeholders with actual plan content
-- Keep the Design Requirements (from conversation) section intact at the bottom of the file
-- The final file should contain both the structured plan AND the requirements archive for reference
+- Do NOT append the Design Requirements summary to the file; its content must already be fully incorporated into the plan sections (Generation Rule 11)
 
 ### Step 2: Comprehensive Review
 
 After updating, **read the complete plan file** and verify:
 - The plan is complete and comprehensive
 - All sections are consistent with each other
-- The structured plan aligns with the Design Requirements (from conversation) section
+- The structured plan is a superset of the in-memory Design Requirements summary — every requirement, constraint, and user decision appears in some plan section
 - Claude/Codex disagreement handling is explicit and correctly reflected
 - No contradictions exist between different parts of the document
 
@@ -599,7 +589,6 @@ Algorithm:
 - Translate the main plan file's current content (after any Language Unification from Step 3) into `ALT_PLAN_LANGUAGE`. For Chinese, default to Simplified Chinese.
 - Section headings, AC labels, task IDs, file paths, API names, and command flags MUST remain unchanged (identifiers are language-neutral).
 - The variant file is a translated reading view of the same plan; it must not add new information not present in the main file.
-- The Design Requirements (from conversation) section at the bottom should be kept as-is (not re-translated).
 
 If `ALT_PLAN_LANGUAGE` is empty (the default), do NOT create a translated variant file.
 
