@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 # Humanize Generate Plan
 
-Transforms the requirements clarified in the current conversation (e.g., through a brainstorm and grill-me style clarification discussion) into a well-structured implementation plan with clear goals, acceptance criteria (AC-X format), path boundaries, and feasibility suggestions. There is no input draft file: the conversation itself is the requirements source, and a Design Requirements (from conversation) summary is archived inside the plan.
+Transforms the requirements clarified in the current conversation (e.g., through a brainstorm and grill-me style clarification discussion) into a well-structured implementation plan with clear goals, acceptance criteria (AC-X format), path boundaries, and feasibility suggestions. There is no input draft file: the conversation itself is the requirements source. The synthesized Design Requirements summary is fully incorporated into the plan sections — it is never appended as a separate archive at the end of the file.
 
 > **MANDATORY FIRST STEP — read the papers' `reference/` folder before anything else.**
 > Before analyzing the requirements or generating any plan, you MUST read the repository's paper reference folder (`docs/reference/`, e.g. the relevant benchmark/method papers and their notes) to learn **how the papers actually do it** — their evaluation protocol, scoring, and methodology. Ground the plan in what the papers do; do NOT default to repo-internal conventions or your own assumptions. If the `reference/` folder is missing or empty, say so explicitly and ask the user before proceeding.
@@ -41,7 +41,7 @@ flowchart TD
     CHECK_METRICS -->|Yes| CONFIRM_METRICS[Confirm metrics with user:<br/>Hard requirement or trend?]
     CONFIRM_METRICS --> GEN_PLAN
     CHECK_METRICS -->|No| GEN_PLAN[Generate structured plan:<br/>- Goal Description<br/>- Acceptance Criteria with TDD tests<br/>- Path Boundaries<br/>- Feasibility Hints<br/>- Dependencies & Milestones]
-    GEN_PLAN --> WRITE[Write plan to output file<br/>using Edit tool to preserve the<br/>Design Requirements section]
+    GEN_PLAN --> WRITE[Write plan to output file<br/>using Edit tool<br/>no requirements appendix at the end]
     WRITE --> REVIEW[Review complete plan<br/>Check for inconsistencies]
     REVIEW --> INCONSISTENT{Inconsistencies?}
     INCONSISTENT -->|Yes| FIX[Fix inconsistencies]
@@ -59,7 +59,7 @@ flowchart TD
 - `--output <path/to/plan.md>` - Where to write the plan
 
 **Requirements Source:**
-The current conversation must already contain a clarified requirements discussion (brainstorm plus grill-me style questions and answers). No input draft file is read or written; the skill synthesizes a Design Requirements (from conversation) summary and archives it at the bottom of the generated plan.
+The current conversation must already contain a clarified requirements discussion (brainstorm plus grill-me style questions and answers). No input draft file is read or written; the skill synthesizes a Design Requirements summary in memory and incorporates all of it into the plan sections (no appendix is added at the bottom of the generated plan).
 
 ## Plan Structure Output
 
