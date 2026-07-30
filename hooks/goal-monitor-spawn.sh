@@ -93,6 +93,7 @@ claude_bin="${GOAL_MONITOR_CLAUDE_BIN:-$(command -v claude 2>/dev/null)}"
 
 state_dir="${TMPDIR:-/tmp}/claude-goal-monitor"
 mkdir -p "$state_dir" 2>/dev/null || exit 0
+chmod 700 "$state_dir" 2>/dev/null   # the prompt file below holds the goal text
 pfile="$state_dir/$mon.prompt"
 
 goal_head="$(printf '%s' "$prompt" | head -c 600)"
