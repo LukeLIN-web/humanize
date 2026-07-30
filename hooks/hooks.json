@@ -7,6 +7,12 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/loop-plan-file-validator.sh"
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/goal-monitor-spawn.sh",
+            "timeout": 20,
+            "statusMessage": "Starting goal overseer..."
           }
         ]
       }
