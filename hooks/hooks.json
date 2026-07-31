@@ -17,6 +17,17 @@
         ]
       }
     ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/goal-monitor-spawn.sh",
+            "timeout": 20
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Write",

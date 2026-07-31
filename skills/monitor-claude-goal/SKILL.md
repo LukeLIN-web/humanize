@@ -56,6 +56,7 @@ Whatever resolved it, before any injection still confirm via `capture-pane` that
 - deletes of any kind — the overseer never *performs* one; it may only *approve* a target's **own** verified-safe destructive command under §5.5, and only when `--approve-safe-destructive` is set
 - **modifying the target transcript**
 - `tmux send-keys` **except inside the approved gated protocols (§5, §5.1, §5.2, §5.3, §5.5, §5.6)** — keystrokes only, and **never** a process `kill`/`pkill`/signal against the target or anything it spawned
+- killing any tmux session — with exactly **one** exception: the overseer's **own** monitor session, at a true terminal, per **§6.1 self-teardown**. The target's session, windows and panes are untouchable forever.
 
 **Subagents are `Explore`-type only** (physically cannot Edit/Write/build); their prompts explicitly forbid mutation and instruct them to return conclusions, not file dumps.
 
@@ -243,12 +244,22 @@ Each tick **re-enters fresh** — the Explore subagents do the heavy transcript/
 
 > **Caveat (document to the user):** the monitor session and its tmux window must stay alive — closing the monitor kills the cron.
 
+### 6.1 Self-teardown at a true terminal
+
+The overseer outlives the run it watches unless it ends itself, so a finished `/goal` otherwise leaves a dead monitor session (and an idle tmux pane) behind for every run. At a **true terminal only** — the `/goal` is **genuinely complete** (idle-and-done, §5/§7) or the target session is **gone** — wind down in this order:
+
+1. `PushNotification` with the terminal verdict (so the human learns *why* the watcher stopped);
+2. `CronDelete` the cron;
+3. as the **final** action, kill the overseer's own tmux session: `tmux -S <socket> kill-session -t '=<monitor-session>'`. When spawned by the `goal-monitor-spawn.sh` hook, the exact command is given verbatim in the invoking prompt — use it as-is rather than deriving one; otherwise resolve it from this session's own `$TMUX` (`tmux display-message -p '#{session_name}'`).
+
+This is the one carve-out in §3's kill ban: it closes **the watcher's own** session, never the target's. **Never self-tear-down for a resumable state** — wedged (§5.1), awaiting a decision (§5.2), resource-blocked (§5.3), idle-but-unfinished (§5.4), guard-blocked (§5.5), rate-limited (§5.6) all keep the run alive and need the overseer alive with it. When in doubt about "complete vs. merely quiet", stay up: a redundant watcher costs a tick, a premature teardown loses the watchdog silently.
+
 With `--no-schedule`: run the single tick, report findings, and tell the user to re-run (e.g. via `/loop <cadence> /monitor-claude-goal …`).
 
 ## 7. Failure modes (explicit)
 
 - transcript missing / ambiguous / rotated → resolve via discovery+confirm, never guess
-- session ended or `/goal` genuinely complete → notify, offer `CronDelete`
+- session ended or `/goal` genuinely complete → notify, `CronDelete`, then **self-teardown (§6.1)** — the only two states in which the overseer closes its own tmux session
 - blocked **awaiting a human decision** (interactive menu / permission prompt) → notify on first sight; if still unanswered past `--decision-timeout` → **auto-pick the recommended option (§5.2)**, do **not** `CronDelete` (the `/goal` resumes once the choice lands). Stays notify-only under `--notify-only` / `--decision-timeout off`
 - blocked **purely on resource availability** (no free GPU/VRAM/compute — stopped to ask which shared card to use, or idling for capacity) → notify on first sight; if still unanswered past `--decision-timeout` → **inject the poll-and-resume nudge (§5.3)** (re-check now; else set a resumable watcher that auto-starts when a card frees), do **not** `CronDelete`. Never auto-select an option that evicts/kills another job or crowds a card into OOM — those stay human-only. Stays notify-only under `--notify-only` / `--decision-timeout off`
 - target **wedged** — frozen in a non-returning tool/shell while the awaited condition is already satisfied/dead, no transcript progress for ≥2× the cadence → **interrupt-then-steer recovery (§5.1)**, not silent waiting (a self-matching `pgrep` watcher is the canonical case)
