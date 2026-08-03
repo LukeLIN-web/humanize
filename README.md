@@ -41,6 +41,41 @@ The loop has two phases: **Implementation** (Claude works, Codex reviews summari
 
 Requires [codex CLI](https://github.com/openai/codex) for review. See the full [Installation Guide](docs/install-for-claude.md) for prerequisites and alternative setup options.
 
+### Developing against a checkout
+
+A plugin install is a **copy** under `~/.claude/plugins/cache/PolyArch/humanize/<version>/`, and
+`${CLAUDE_PLUGIN_ROOT}` points at that copy — not at your clone. Editing the clone changes nothing
+until the copy is refreshed, which is how two differently-configured versions of the same hook can
+end up running for a month. Point the install at the clone instead:
+
+```bash
+# one-off, per session (supported flag, nothing to undo)
+claude --plugin-dir /path/to/humanize
+
+# persistent: make the installed plugin BE the clone
+CACHE=~/.claude/plugins/cache/PolyArch/humanize
+mv "$CACHE/<version>" "$CACHE/<version>.bak-orig"     # keep the real dir as a restore point
+ln -s /path/to/humanize "$CACHE/<version>"
+```
+
+Then edits are live everywhere and `git pull` is the upgrade. Two caveats: it also lands every
+commit your clone is ahead by, and **`/plugin update humanize@PolyArch` reinstalls the plugin —
+it replaces the symlink with a freshly downloaded directory**, silently putting you back on the
+published version. Upgrade with `git pull` in the clone, and restore `<version>.bak-orig` before
+running a plugin update.
+
+### Hooks only (projects or machines without the plugin)
+
+```bash
+scripts/install-hooks.sh /path/to/project        # symlinks hooks + registers them in .claude/settings.json
+scripts/install-hooks.sh /path/to/project --uninstall
+```
+
+Symlinks, never copies, and records everything it created in `<project>/.humanize/installed-hooks.txt`,
+so uninstall touches only its own entries. It refuses to overwrite a hook file it did not create, and
+warns when the plugin already registers the same hooks (two registrations fire twice; the hooks
+single-flight so only one review runs, but one registration is better than two).
+
 ## Quick Start
 
 1. **Generate an idea draft** from a loose thought (optional — skip if you already have a draft):
