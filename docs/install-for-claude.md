@@ -26,6 +26,46 @@ If you have the plugin cloned locally:
 claude --plugin-dir /path/to/humanize
 ```
 
+### Option 2b: Persistent checkout install (edit = live)
+
+`--plugin-dir` lasts one session. For a permanent one, replace the installed copy with a symlink to
+the clone. A normal plugin install copies the repo to
+`~/.claude/plugins/cache/PolyArch/humanize/<version>/`, and `${CLAUDE_PLUGIN_ROOT}` resolves to that
+copy — so a clone that is ahead of it simply does not run.
+
+```bash
+CACHE=~/.claude/plugins/cache/PolyArch/humanize
+VERSION=$(ls "$CACHE")                                # the installed version directory
+mv "$CACHE/$VERSION" "$CACHE/$VERSION.bak-orig"       # restore point — do not delete it
+ln -s /path/to/humanize "$CACHE/$VERSION"
+```
+
+Verify: `readlink -f "$CACHE/$VERSION"` should print your clone, and
+`ls "$CACHE/$VERSION/hooks/hooks.json"` should succeed.
+
+Trade-offs:
+
+- Everything the clone is ahead by goes live at once — check `git log` against the installed version first.
+- `/plugin update humanize@PolyArch` **reinstalls** the plugin: it removes the path and writes a fresh
+  downloaded directory, which discards the symlink and returns you to the published version. Upgrade
+  with `git pull` in the clone instead; if you do want a plugin update, restore `<version>.bak-orig` first.
+- `installed_plugins.json` keeps recording the old version string. It is only a label; the code that
+  runs is whatever the symlink points at.
+
+### Option 2c: Hooks without the plugin
+
+For a project or machine that should get the hooks but not the whole plugin:
+
+```bash
+scripts/install-hooks.sh /path/to/project              # --dry-run to preview, --hooks a,b to select
+scripts/install-hooks.sh /path/to/project --uninstall
+```
+
+It symlinks each hook into `<project>/.claude/hooks/`, registers it in `.claude/settings.json`, and
+records what it created in `<project>/.humanize/installed-hooks.txt`. Never copies a hook (copies
+drift), never overwrites a file it did not create, and warns if the plugin already registers the same
+hooks for every project.
+
 ## Option 3: Try Experimental Features (dev branch)
 
 The `dev` branch contains experimental features that are not yet released to `main`. To try them locally:
