@@ -28,6 +28,8 @@ set -uo pipefail
 command -v jq >/dev/null 2>&1 || exit 0
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=lib/task-review-prompt.sh
+. "$SCRIPT_DIR/lib/task-review-prompt.sh" 2>/dev/null || exit 0
 ASK_CODEX="${ASK_CODEX_BIN:-$SCRIPT_DIR/../scripts/ask-codex.sh}"
 MODEL="${TASK_REVIEW_MODEL:-gpt-5.6-sol}"
 EFFORT="${TASK_REVIEW_EFFORT:-medium}"
@@ -188,19 +190,16 @@ else
   scope_line="Turn-level scoping was unavailable, so this diff may span the full working tree. Treat unrelated pre-existing changes cautiously."
 fi
 
-prompt="You are a fresh, independent reviewer of the uncommitted changes from a just-finished Codex work turn.
-Task: $task_title
+# Route by what the diff contains: prose reviewed by the code prompt yields
+# formatting nitpicks, and an assets-only diff has nothing textual to review.
+kind="$(review_diff_kind "$diff")"
+if [ "$kind" = "assets" ]; then
+  clear_cycle
+  echo '{"systemMessage":"Codex review skipped: the turn touched only binary/figure assets"}'
+  exit 0
+fi
 
-Review the diff only for issues worth fixing now: correctness bugs, regressions, broken logic, unsafe behavior, or missing verification that invalidates the result. Skip style and minor nitpicks. Be concise and concrete.
-$scope_line
-Do not edit files or run mutating commands; return review text only.
-End with exactly one line:
-VERDICT: APPROVED
-or
-VERDICT: CHANGES_REQUESTED
-
---- DIFF ---
-$diff"
+prompt="$(review_prompt "$kind" "$task_title" "$scope_line" "$repo_root" "$diff")"
 
 if [ -n "${TASK_REVIEW_DRYRUN+x}" ]; then
   review="$TASK_REVIEW_DRYRUN"
@@ -212,9 +211,11 @@ elif [ ! -x "$ASK_CODEX" ]; then
   exit 0
 else
   err_file="$(mktemp 2>/dev/null || printf '%s/err.%s' "$state_dir" "$$")"
+  # read-only: the reviewer may open files for context but cannot edit the tree
+  # it is reviewing.
   review="$(CODEX_TASK_REVIEW_ACTIVE=1 "$ASK_CODEX" \
     --codex-model "${MODEL}:${EFFORT}" --codex-timeout "$TIMEOUT" \
-    "$prompt" 2>"$err_file")"
+    --codex-sandbox read-only "$prompt" 2>"$err_file")"
   rc=$?
   err="$(cat "$err_file" 2>/dev/null)"
   rm -f "$err_file"

@@ -1,7 +1,7 @@
 ---
 name: ask-codex
 description: Consult Codex as an independent expert. Sends a question or task to codex exec and returns the response.
-argument-hint: "[--codex-model MODEL:EFFORT] [--codex-timeout SECONDS] [question or task]"
+argument-hint: "[--codex-model MODEL:EFFORT] [--codex-timeout SECONDS] [--codex-sandbox MODE] [question or task]"
 allowed-tools: "Bash(${CLAUDE_PLUGIN_ROOT}/scripts/ask-codex.sh:*)"
 ---
 
@@ -19,7 +19,7 @@ If the user only supplied a question or task, execute:
 "${CLAUDE_PLUGIN_ROOT}/scripts/ask-codex.sh" "$ARGUMENTS"
 ```
 
-If the user supplied flags such as `--codex-model` or `--codex-timeout`, reconstruct the command so those flags remain separate shell arguments and the remaining free-form question is passed as one quoted final argument.
+If the user supplied flags such as `--codex-model`, `--codex-timeout`, or `--codex-sandbox`, reconstruct the command so those flags remain separate shell arguments and the remaining free-form question is passed as one quoted final argument.
 
 Example:
 

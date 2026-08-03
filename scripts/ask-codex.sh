@@ -41,6 +41,7 @@ DEFAULT_ASK_CODEX_TIMEOUT=3600
 CODEX_MODEL="$DEFAULT_CODEX_MODEL"
 CODEX_EFFORT="$DEFAULT_CODEX_EFFORT"
 CODEX_TIMEOUT="$DEFAULT_ASK_CODEX_TIMEOUT"
+CODEX_SANDBOX=""   # empty = keep the default --full-auto (workspace-write)
 
 # ========================================
 # Help
@@ -58,6 +59,10 @@ OPTIONS:
                        Codex model and reasoning effort (default from config, fallback gpt-5.6-sol:high)
   --codex-timeout <SECONDS>
                        Timeout for the Codex query in seconds (default: 3600)
+  --codex-sandbox <MODE>
+                       Codex sandbox policy: read-only, workspace-write, or
+                       danger-full-access. Default is workspace-write (--full-auto).
+                       Use read-only for consultations that must not touch files.
   -h, --help           Show this help message
 
 DESCRIPTION:
@@ -127,6 +132,20 @@ while [[ $# -gt 0 ]]; do
                 exit 1
             fi
             CODEX_TIMEOUT="$2"
+            shift 2
+            ;;
+        --codex-sandbox)
+            if [[ -z "${2:-}" ]]; then
+                echo "Error: --codex-sandbox requires a MODE argument" >&2
+                exit 1
+            fi
+            case "$2" in
+                read-only|workspace-write|danger-full-access) CODEX_SANDBOX="$2" ;;
+                *)
+                    echo "Error: --codex-sandbox must be read-only, workspace-write, or danger-full-access, got: $2" >&2
+                    exit 1
+                    ;;
+            esac
             shift 2
             ;;
         -*)
@@ -265,13 +284,20 @@ if [[ -n "$CODEX_EFFORT" ]]; then
     CODEX_EXEC_ARGS+=("-c" "model_reasoning_effort=${CODEX_EFFORT}")
 fi
 
-# Determine automation flag based on environment variable
-CODEX_AUTO_FLAG="--full-auto"
-if [[ "${HUMANIZE_CODEX_BYPASS_SANDBOX:-}" == "true" ]] || [[ "${HUMANIZE_CODEX_BYPASS_SANDBOX:-}" == "1" ]]; then
-    CODEX_AUTO_FLAG="--dangerously-bypass-approvals-and-sandbox"
+# Sandbox policy. An explicit --codex-sandbox wins over the bypass env var:
+# a caller that asked for read-only (reviews, audits) must not be silently
+# upgraded to write access by an environment setting.
+if [[ -n "$CODEX_SANDBOX" ]]; then
+    CODEX_EXEC_ARGS+=("-s" "$CODEX_SANDBOX")
+else
+    CODEX_AUTO_FLAG="--full-auto"
+    if [[ "${HUMANIZE_CODEX_BYPASS_SANDBOX:-}" == "true" ]] || [[ "${HUMANIZE_CODEX_BYPASS_SANDBOX:-}" == "1" ]]; then
+        CODEX_AUTO_FLAG="--dangerously-bypass-approvals-and-sandbox"
+    fi
+    CODEX_EXEC_ARGS+=("$CODEX_AUTO_FLAG")
 fi
 
-CODEX_EXEC_ARGS+=("$CODEX_AUTO_FLAG" "-C" "$PROJECT_ROOT")
+CODEX_EXEC_ARGS+=("-C" "$PROJECT_ROOT")
 
 # ========================================
 # Save Debug Command
@@ -339,6 +365,7 @@ if [[ $CODEX_EXIT_CODE -eq 124 ]]; then
 tool: codex
 model: $CODEX_MODEL
 effort: $CODEX_EFFORT
+sandbox: ${CODEX_SANDBOX:-workspace-write}
 timeout: $CODEX_TIMEOUT
 exit_code: 124
 duration: ${DURATION}s
@@ -366,6 +393,7 @@ if [[ $CODEX_EXIT_CODE -ne 0 ]]; then
 tool: codex
 model: $CODEX_MODEL
 effort: $CODEX_EFFORT
+sandbox: ${CODEX_SANDBOX:-workspace-write}
 timeout: $CODEX_TIMEOUT
 exit_code: $CODEX_EXIT_CODE
 duration: ${DURATION}s
@@ -392,6 +420,7 @@ if [[ ! -s "$CODEX_STDOUT_FILE" ]]; then
 tool: codex
 model: $CODEX_MODEL
 effort: $CODEX_EFFORT
+sandbox: ${CODEX_SANDBOX:-workspace-write}
 timeout: $CODEX_TIMEOUT
 exit_code: 0
 duration: ${DURATION}s
@@ -415,6 +444,7 @@ cat > "$SKILL_DIR/metadata.md" << EOF
 tool: codex
 model: $CODEX_MODEL
 effort: $CODEX_EFFORT
+sandbox: ${CODEX_SANDBOX:-workspace-write}
 timeout: $CODEX_TIMEOUT
 exit_code: 0
 duration: ${DURATION}s
