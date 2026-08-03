@@ -21,9 +21,18 @@
 #   TASK_REVIEW_TIMEOUT   (default 600 seconds, codex)
 #   TASK_REVIEW_MAX_ROUNDS(default 1  — blocks at most this many times per task)
 #   TASK_REVIEW_SIMPLIFY  (default 1  — set 0 to skip the pre-review /simplify pass)
+#   TASK_REVIEW_DEDUP_TTL (default 120 seconds — single-flight window, see below)
 #   TASK_REVIEW_DRYRUN    (if set, use its value as the mock codex review; skips codex)
+#
+# Effort/timeout defaults are deliberately medium/600: measured over 395 real
+# review calls, raising effort to xhigh changed neither latency (17s vs 16s
+# median) nor findings — the reviewer answers from the pasted diff in one turn.
 
 set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=lib/task-review-prompt.sh
+. "$SCRIPT_DIR/lib/task-review-prompt.sh" 2>/dev/null || exit 0
 
 ASK_CODEX="${ASK_CODEX_BIN:-$HOME/.claude/plugins/marketplaces/PolyArch/scripts/ask-codex.sh}"
 MODEL="${TASK_REVIEW_MODEL:-gpt-5.5}"
@@ -31,13 +40,13 @@ EFFORT="${TASK_REVIEW_EFFORT:-medium}"
 TIMEOUT="${TASK_REVIEW_TIMEOUT:-600}"
 MAX_ROUNDS="${TASK_REVIEW_MAX_ROUNDS:-1}"
 SIMPLIFY="${TASK_REVIEW_SIMPLIFY:-1}"
+DEDUP_TTL="${TASK_REVIEW_DEDUP_TTL:-120}"
 DIFF_CAP=200000
 
 payload="$(cat)"
 get() { printf '%s' "$payload" | jq -r "$1 // empty" 2>/dev/null; }
 
 task_id="$(get '.task_id')";    [ -z "$task_id" ] && task_id="$(get '.task.id')"
-task_title="$(get '.task_title')"; [ -z "$task_title" ] && task_title="$(get '.task.title')"
 cwd="$(get '.cwd')"
 [ -n "$cwd" ] && cd "$cwd" 2>/dev/null
 [ -z "$cwd" ] && [ -n "${CLAUDE_PROJECT_DIR:-}" ] && cd "$CLAUDE_PROJECT_DIR" 2>/dev/null
@@ -47,6 +56,9 @@ git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
 
 state_dir="${TMPDIR:-/tmp}/claude-task-review"
 mkdir -p "$state_dir" 2>/dev/null
+# Expired single-flight claims (see below) are inert; sweep them so the state
+# dir does not grow one entry per completed task.
+find "$state_dir" -maxdepth 1 -type d -name '*.claim' -mmin +10 -exec rmdir {} + 2>/dev/null
 
 # Quota breaker: once codex is found out of quota, skip reviews for a cooldown
 # window so later tasks don't each stall on a failing codex call. Account-wide.
@@ -72,11 +84,38 @@ if [ "$cnt" -ge "$MAX_ROUNDS" ]; then
   exit 0   # already had its review pass; let it complete
 fi
 
+# Single-flight. This hook is commonly registered more than once for the same
+# event — plugin-level hooks.json plus a project settings.json entry, or two
+# projects sharing a worktree. Every registration then reviews the same
+# completion independently: duplicate codex calls, and (measured on 99 such
+# pairs) a 36% chance the two copies return opposite verdicts on the same work.
+# The first copy to claim (repo, task, round) handles the event; the others
+# exit silently. The claim is a directory so the check-and-set is atomic, and
+# it expires after DEDUP_TTL so a crashed copy cannot wedge later reviews.
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"
+repo_key="$(printf '%s' "${repo_root:-norepo}" | tr -c 'a-zA-Z0-9_-' '_')"
+simp_state=0; [ -f "$simp_file" ] && simp_state=1
+claim="$state_dir/$repo_key.$key.r$cnt.s$simp_state.claim"
+if ! mkdir "$claim" 2>/dev/null; then
+  claim_ts="$(stat -c %Y "$claim" 2>/dev/null || echo 0)"
+  now="$(date +%s 2>/dev/null || echo 0)"
+  if [ "$((now - claim_ts))" -lt "$DEDUP_TTL" ]; then
+    exit 0   # another registration of this hook is handling this completion
+  fi
+  # Stale claim: take it over.
+  touch "$claim" 2>/dev/null
+fi
+
 # Scope the review to files THIS session actually edited (Edit/Write/NotebookEdit
 # tool calls in the transcript, sidechains included). Files changed via Bash are
 # not captured — acceptable; the alternative is leaking other sessions' changes.
 transcript="$(get '.transcript_path')"
-repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"
+
+# What was this task asked to do? Without it the reviewer can only judge local
+# correctness, never whether the change did the job — so fall back to the
+# transcript's TaskCreate record when the payload carries no title.
+task_title="$(review_task_title "$payload" "$transcript" "$task_id")"
+
 scope="full"
 scoped_files=""
 if [ -n "$transcript" ] && [ -f "$transcript" ] && [ -n "$repo_root" ]; then
@@ -154,19 +193,17 @@ else
   scope_line="Session scoping was unavailable, so the diff below may span the FULL working tree, including changes from other tasks."
 fi
 
-prompt="You are reviewing the uncommitted changes from a just-finished work task during an autonomous coding run.
-Task: ${task_title:-（未命名）}
+# Route by what the diff actually contains. A prose-only change judged by the
+# code-review prompt returns Markdown/LaTeX formatting nitpicks; a diff of
+# rebuilt binaries has nothing a reviewer can read at all.
+kind="$(review_diff_kind "$diff")"
+if [ "$kind" = "assets" ]; then
+  rm -f "$cnt_file" "$simp_file"
+  echo '{"systemMessage":"codex review skipped: the change touches only binary/figure assets"}'
+  exit 0
+fi
 
-Review the diff below ONLY for issues worth fixing right now: correctness bugs, regressions, broken logic, obvious mistakes. Skip nitpicks and style. Be concise and concrete.
-$scope_line
-Do NOT edit any files — output your review as text only.
-End your reply with exactly one line, either:
-VERDICT: APPROVED
-or
-VERDICT: CHANGES_REQUESTED
-
---- DIFF ---
-$diff"
+prompt="$(review_prompt "$kind" "$task_title" "$scope_line" "$repo_root" "$diff")"
 
 err=""
 if [ -n "${TASK_REVIEW_DRYRUN+x}" ]; then
@@ -175,7 +212,11 @@ if [ -n "${TASK_REVIEW_DRYRUN+x}" ]; then
   rc="${TASK_REVIEW_DRYRUN_RC:-0}"
 else
   err_file="$(mktemp 2>/dev/null || echo "$state_dir/err.$$")"
-  review="$("$ASK_CODEX" --codex-model "${MODEL}:${EFFORT}" --codex-timeout "$TIMEOUT" "$prompt" 2>"$err_file")"
+  # read-only: the reviewer is asked to open files for context, and must not be
+  # able to edit the tree it is reviewing. The old prompt-only "do not edit"
+  # instruction ran under a workspace-write sandbox.
+  review="$("$ASK_CODEX" --codex-model "${MODEL}:${EFFORT}" --codex-timeout "$TIMEOUT" \
+    --codex-sandbox read-only "$prompt" 2>"$err_file")"
   rc=$?
   err="$(cat "$err_file" 2>/dev/null)"
   rm -f "$err_file"
