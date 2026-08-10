@@ -16,7 +16,8 @@
 # Reads the TaskCompleted JSON payload on stdin. Emits a hook JSON decision on stdout.
 #
 # Tunable via env:
-#   TASK_REVIEW_MODEL     (default gpt-5.5)
+#   TASK_REVIEW_MODEL     (default: DEFAULT_CODEX_MODEL from lib/loop-common.sh,
+#                          hardcoded fallback gpt-5.6-sol)
 #   TASK_REVIEW_EFFORT    (default medium)
 #   TASK_REVIEW_TIMEOUT   (default 600 seconds, codex)
 #   TASK_REVIEW_MAX_ROUNDS(default 1  — blocks at most this many times per task)
@@ -33,9 +34,24 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # shellcheck source=lib/task-review-prompt.sh
 . "$SCRIPT_DIR/lib/task-review-prompt.sh" 2>/dev/null || exit 0
+# DEFAULT_CODEX_MODEL lives in loop-common.sh (config-backed single source of
+# truth). Best-effort: fall back to the same hardcoded default if unsourceable.
+# shellcheck source=lib/loop-common.sh
+. "$SCRIPT_DIR/lib/loop-common.sh" 2>/dev/null || true
 
-ASK_CODEX="${ASK_CODEX_BIN:-$HOME/.claude/plugins/marketplaces/PolyArch/scripts/ask-codex.sh}"
-MODEL="${TASK_REVIEW_MODEL:-gpt-5.5}"
+# Resolve ask-codex.sh relative to this plugin checkout. The old default
+# pointed at a marketplace path ($HOME/.claude/plugins/marketplaces/...) that
+# does not exist for symlink/checkout installs, so the review silently never
+# ran (misreported as a codex error).
+ASK_CODEX="${ASK_CODEX_BIN:-}"
+if [ -z "$ASK_CODEX" ]; then
+  if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -x "${CLAUDE_PLUGIN_ROOT}/scripts/ask-codex.sh" ]; then
+    ASK_CODEX="${CLAUDE_PLUGIN_ROOT}/scripts/ask-codex.sh"
+  else
+    ASK_CODEX="$SCRIPT_DIR/../scripts/ask-codex.sh"
+  fi
+fi
+MODEL="${TASK_REVIEW_MODEL:-${DEFAULT_CODEX_MODEL:-gpt-5.6-sol}}"
 EFFORT="${TASK_REVIEW_EFFORT:-medium}"
 TIMEOUT="${TASK_REVIEW_TIMEOUT:-600}"
 MAX_ROUNDS="${TASK_REVIEW_MAX_ROUNDS:-1}"
@@ -211,6 +227,14 @@ if [ -n "${TASK_REVIEW_DRYRUN+x}" ]; then
   err="${TASK_REVIEW_DRYRUN_ERR:-}"
   rc="${TASK_REVIEW_DRYRUN_RC:-0}"
 else
+  # Misconfiguration (ask-codex.sh unresolvable) is NOT a codex failure -
+  # report it distinctly so it can't hide behind "codex error/timeout".
+  if [ ! -x "$ASK_CODEX" ]; then
+    rm -f "$cnt_file" "$simp_file"
+    jq -n --arg p "$ASK_CODEX" \
+      '{systemMessage: ("codex review skipped: ask-codex.sh not found or not executable at " + $p + " (plugin misconfiguration - review never ran); task allowed to complete")}'
+    exit 0
+  fi
   err_file="$(mktemp 2>/dev/null || echo "$state_dir/err.$$")"
   # read-only: the reviewer is asked to open files for context, and must not be
   # able to edit the tree it is reviewing. The old prompt-only "do not edit"
@@ -246,7 +270,15 @@ if [ "$verdict" = "CHANGES_REQUESTED" ]; then
   exit 0
 fi
 
-# APPROVED (or no clear verdict) -> allow
+if [ "$verdict" = "APPROVED" ]; then
+  rm -f "$cnt_file" "$simp_file"
+  echo '{"systemMessage":"codex review: APPROVED"}'
+  exit 0
+fi
+
+# No parseable VERDICT line: the review ran but its outcome is unknown.
+# Still allow the task (don't wedge a /goal run on a formatting slip), but
+# NEVER misreport this as APPROVED.
 rm -f "$cnt_file" "$simp_file"
-echo '{"systemMessage":"codex review: APPROVED"}'
+echo '{"systemMessage":"codex review: verdict unparsed - review not applied; task allowed to complete"}'
 exit 0

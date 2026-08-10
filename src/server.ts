@@ -16,7 +16,7 @@ const runInputSchema = {
   reasoningEffort: z.string().min(1).optional(),
   timeoutMs: z.number().int().positive().optional(),
   sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]).optional(),
-  permissionMode: z.enum(["acceptEdits", "auto", "bypassPermissions", "default", "dontAsk", "plan"]).optional(),
+  permissionMode: z.enum(["acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan"]).optional(),
   extraArgs: z.array(z.string()).optional(),
   env: z.record(z.string()).optional()
 };
@@ -29,7 +29,7 @@ const directRunInputSchema = {
   reasoningEffort: z.string().min(1).optional(),
   timeoutMs: z.number().int().positive().optional(),
   sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]).optional(),
-  permissionMode: z.enum(["acceptEdits", "auto", "bypassPermissions", "default", "dontAsk", "plan"]).optional(),
+  permissionMode: z.enum(["acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan"]).optional(),
   extraArgs: z.array(z.string()).optional(),
   env: z.record(z.string()).optional()
 };

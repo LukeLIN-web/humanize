@@ -720,20 +720,24 @@ upsert_state_fields() {
 # Returns:
 #   0 - issues found (caller should continue review loop)
 #   1 - no issues found (caller can proceed to finalize)
-#   2 - log file missing/empty (hard error - caller must block and require retry)
+#   2 - inconclusive (log missing/empty/unparseable - caller must block and retry)
 # Outputs: extracted review content to stdout if issues found
 # Arguments: $1=round_number
 # Required globals: LOOP_DIR, CACHE_DIR
 #
 # Algorithm:
-# 1. Scan the last 50 lines of the log file for [P?] markers in the first 10
-#    characters of each line. Real review issues only appear near the end of the
-#    log; scanning the full file risks false positives from earlier debug output
-#    and can hit argument-list-too-long limits on very large logs.
-# 2. Find the first such line where [P?] (? is a digit) appears in the first 10
-#    characters.
-# 3. If found: extract from that line to the end and output it.
-# 4. If not found: no issues, return 1.
+# 1. Strip ANSI escape sequences (codex may colorize output).
+# 2. Scan the WHOLE file for the first line whose visible text starts with a
+#    [P?] marker (optionally behind list bullets / numbering). Scanning only
+#    a tail window is fail-open: a few trailing notes after the findings push
+#    a real P0 out of the window and the review reads as PASS.
+# 3. If found: extract from that line to the end and output it (return 0).
+# 4. If no line-anchored marker but [P?] appears SOMEWHERE in the log, the
+#    output references priority findings in a shape we cannot parse - treat
+#    as inconclusive (return 2), never as a pass.
+# 5. If the log contains no [P?] marker at all, it is a clean review
+#    (codex review reports findings exclusively via [P0-9] markers): return 1.
+#    A log that strips down to pure whitespace is inconclusive (return 2).
 #
 # Note: codex review outputs to stderr, so we analyze the combined log file
 # which contains both stdout and stderr (redirected with 2>&1).
@@ -752,27 +756,31 @@ detect_review_issues() {
     total_lines=$(wc -l < "$log_file")
     echo "Analyzing log file: $log_file ($total_lines lines)" >&2
 
-    # Only scan the last 50 lines - real issues always appear near the end
-    local scan_lines=50
-    local start_line=$((total_lines > scan_lines ? total_lines - scan_lines + 1 : 1))
+    # Strip ANSI escape sequences so the anchors below match visible text.
+    local clean_log
+    clean_log=$(sed $'s/\033\\[[0-9;]*[a-zA-Z]//g' "$log_file")
 
-    # Use awk on the tail to find the first line where [P?] appears in first 10 chars
-    local relative_line
-    relative_line=$(tail -n "$scan_lines" "$log_file" | awk '
-        substr($0, 1, 10) ~ /\[P[0-9]\]/ {
+    if [[ -z "${clean_log//[[:space:]]/}" ]]; then
+        echo "Error: Codex review log contains no visible text after ANSI stripping: $log_file" >&2
+        return 2
+    fi
+
+    # First line whose visible text starts with a [P?] marker, allowing
+    # leading whitespace and list bullets/numbering ("- [P1]", "  2) [P0]").
+    local found_line
+    found_line=$(printf '%s\n' "$clean_log" | awk '
+        /^[[:space:]]*[-*0-9.)]*[[:space:]]*\[P[0-9]\]/ {
             print NR
             exit
         }
     ')
 
-    if [[ -n "$relative_line" && "$relative_line" -gt 0 ]]; then
-        # Convert relative line (within tail) to absolute line in the full file
-        local found_line=$((start_line + relative_line - 1))
+    if [[ -n "$found_line" && "$found_line" -gt 0 ]]; then
         echo "Found [P?] issue at line $found_line" >&2
 
         # Extract from found_line to end
         local extracted_content
-        extracted_content=$(sed -n "${found_line},\$p" "$log_file")
+        extracted_content=$(printf '%s\n' "$clean_log" | sed -n "${found_line},\$p")
 
         # Save to result file for audit purposes
         printf '%s\n' "$extracted_content" > "$result_file"
@@ -781,6 +789,14 @@ detect_review_issues() {
         # Output the content for the caller
         printf '## Codex Review Issues\n\n%s\n' "$extracted_content"
         return 0
+    fi
+
+    # Markers present somewhere but never at the start of a line: the log
+    # talks about priority findings in a shape this parser cannot anchor.
+    # Fail closed (inconclusive -> caller blocks and retries), never PASS.
+    if printf '%s\n' "$clean_log" | grep -q '\[P[0-9]\]'; then
+        echo "Error: [P?] markers present but not line-anchored - inconclusive review output: $log_file" >&2
+        return 2
     fi
 
     echo "No [P?] issues found in log file" >&2

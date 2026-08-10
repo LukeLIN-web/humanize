@@ -43,7 +43,7 @@ export const DEFAULT_AGENT_MODEL_DEFAULTS: AgentModelDefaultsByAgent = {
     reasoningEffort: "xhigh"
   },
   claude: {
-    model: "claude-opus-4-7",
+    model: "claude-opus-5",
     reasoningEffort: "xhigh"
   }
 };

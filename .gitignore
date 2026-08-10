@@ -9,6 +9,13 @@ temp
 # Local Codex CLI marker (empty file occasionally left behind in worktree)
 /.codex
 
+# Claude Code's own plugin-lock PID files (written by Claude Code, not
+# humanize; see hooks/sweep-inuse.sh). Without this, git status is
+# permanently dirty in the plugin's own repo and the RLCR clean-tree gate
+# can never pass here.
+/.in_use/
+/.last_inuse_sweep
+
 # Humanize state directories (runtime-generated, project-local)
 .humanize/
 .claude-flow/
