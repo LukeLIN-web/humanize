@@ -24,6 +24,11 @@
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/goal-monitor-spawn.sh",
             "timeout": 20
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/sweep-inuse.sh",
+            "timeout": 10
           }
         ]
       }

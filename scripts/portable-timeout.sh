@@ -42,11 +42,13 @@ run_with_timeout() {
 
     case "$TIMEOUT_IMPL" in
         gtimeout)
-            gtimeout "$timeout_secs" "${cmd[@]}"
+            # -k 30s: SIGKILL 30s after the initial TERM if the command
+            # ignores it, so a hung child cannot outlive its timeout.
+            gtimeout -k 30s "$timeout_secs" "${cmd[@]}"
             return $?
             ;;
         timeout)
-            timeout "$timeout_secs" "${cmd[@]}"
+            timeout -k 30s "$timeout_secs" "${cmd[@]}"
             return $?
             ;;
         python3|python)
@@ -67,10 +69,11 @@ except Exception as e:
             return $?
             ;;
         none)
-            # No timeout available - run without timeout
-            echo "Warning: No timeout implementation available. Running without timeout." >&2
-            "${cmd[@]}"
-            return $?
+            # No timeout implementation available. Running unbounded would
+            # silently remove the caller's hang protection (stop hooks, git
+            # ops), so fail hard instead of just warning.
+            echo "Error: no timeout implementation available (need gtimeout, timeout, or python3/python). Refusing to run '${cmd[0]:-}' unbounded." >&2
+            return 125
             ;;
     esac
 }

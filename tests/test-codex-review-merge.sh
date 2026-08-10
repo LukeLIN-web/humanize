@@ -81,15 +81,15 @@ else
 fi
 
 # ========================================
-# Test 2: [P?] NOT in first 10 chars - should NOT detect
+# Test 2: [P?] only mid-line - inconclusive, must NOT pass
 # ========================================
-echo "Test 2: detect_review_issues ignores [P?] not in first 10 characters"
+echo "Test 2: detect_review_issues treats mid-line-only [P?] as inconclusive (return 2)"
 setup_test_env
 
 cat > "$CACHE_DIR/round-2-codex-review.log" << 'EOF'
 Some debug output from codex
 More debug lines
-This line has [P1] but not in first 10 chars - should be ignored
+This line has [P1] but not at line start - unparseable shape
 Another line mentioning [P2] somewhere in the middle
 Final line of output
 EOF
@@ -99,11 +99,12 @@ OUTPUT=$(detect_review_issues 2 2>/dev/null)
 RESULT=$?
 set -e
 
-# [P?] is not in first 10 chars, so should return 1 (no issues found)
-if [[ $RESULT -eq 1 ]]; then
-    pass "[P?] not in first 10 chars returns 1 (no issues)"
+# [P?] markers exist but never line-anchored: the parser cannot extract
+# them, so this must be inconclusive (2) - never a PASS (1).
+if [[ $RESULT -eq 2 ]]; then
+    pass "mid-line-only [P?] returns 2 (inconclusive, fail-closed)"
 else
-    fail "[P?] position check" "return 1 (no issues)" "return $RESULT, output: $OUTPUT"
+    fail "[P?] mid-line inconclusive check" "return 2 (inconclusive)" "return $RESULT, output: $OUTPUT"
 fi
 
 # ========================================
@@ -197,13 +198,14 @@ else
 fi
 
 # ========================================
-# Test 7: Log file with >50 lines, [P?] early in file - should NOT detect
+# Test 7: Log file with >50 lines, [P?] early in file - whole file is scanned
 # ========================================
-echo "Test 7: detect_review_issues ignores [P?] early in a long log (outside last 50 lines)"
+echo "Test 7: detect_review_issues finds [P?] early in a long log (whole-file scan)"
 setup_test_env
 
-# Create a log file with 70 lines, [P1] at line 5 (early in the file)
-# Since we only scan the last 50 lines, line 5 of 70 is outside the window
+# Create a log file with 70 lines, [P1] at line 5 (early in the file).
+# The old tail-window scan missed this (fail-open: trailing notes pushed
+# findings out of the window); the whole-file scan must catch it.
 {
     for i in $(seq 1 4); do
         echo "Debug line $i"
@@ -219,11 +221,10 @@ OUTPUT=$(detect_review_issues 7 2>/dev/null)
 RESULT=$?
 set -e
 
-# [P1] is at line 5 of 70 - outside the last-50-line window, should return 1
-if [[ $RESULT -eq 1 ]]; then
-    pass "[P?] early in file ignored (outside last 50 lines)"
+if [[ $RESULT -eq 0 ]] && echo "$OUTPUT" | grep -q '\[P1\]'; then
+    pass "[P?] early in long file detected (no tail window)"
 else
-    fail "[P?] early in file" "return 1 (no issues)" "return $RESULT, output: $OUTPUT"
+    fail "[P?] early in file" "return 0, output contains [P1]" "return $RESULT, output: $OUTPUT"
 fi
 
 # ========================================
@@ -351,6 +352,28 @@ if [[ $RESULT -eq 0 ]] && echo "$OUTPUT" | grep -q '\[P1\]'; then
     pass "Exactly 50 lines handled correctly"
 else
     fail "Exactly 50 lines" "return 0, output contains [P1]" "return $RESULT, output: $OUTPUT"
+fi
+
+# ========================================
+# Test 13: ANSI-colored [P?] marker is still detected
+# ========================================
+echo "Test 13: detect_review_issues strips ANSI escapes before matching"
+setup_test_env
+
+# "- [P1]" wrapped in color codes: the escape sequence sits before the
+# bracket, so without stripping, the anchor would not match.
+printf 'Review output\n\033[1;31m- [P1] Colored finding\033[0m - /file.py:3\n  detail\n' \
+    > "$CACHE_DIR/round-13-codex-review.log"
+
+set +e
+OUTPUT=$(detect_review_issues 13 2>/dev/null)
+RESULT=$?
+set -e
+
+if [[ $RESULT -eq 0 ]] && echo "$OUTPUT" | grep -q '\[P1\]'; then
+    pass "ANSI-colored [P?] detected after stripping"
+else
+    fail "ANSI stripping" "return 0, output contains [P1]" "return $RESULT, output: $OUTPUT"
 fi
 
 # ========================================

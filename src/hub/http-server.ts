@@ -97,6 +97,19 @@ async function routeRequest(
   }
 
   if (request.method === "POST" && url.pathname === "/jsonrpc") {
+    // The RPC surface can spawn agent runs (run.spawn_child accepts
+    // bypassPermissions), so refuse browser-mediated cross-site calls and
+    // non-JSON bodies. Legitimate clients (hub-client.ts, SDKs) are plain
+    // HTTP clients: they send application/json and no Origin header.
+    if (isCrossSiteRequest(request)) {
+      writeJson(response, 403, { error: "cross-site requests are not allowed" });
+      return;
+    }
+    const contentType = request.headers["content-type"] ?? "";
+    if (!/^application\/json\b/i.test(contentType)) {
+      writeJson(response, 415, { error: "content-type must be application/json" });
+      return;
+    }
     const body = await readBody(request);
     const rpcRequest = JSON.parse(body) as JsonRpcRequest;
     const rpcResponse = await handleRpc(coordinator, options, rpcRequest);
@@ -105,6 +118,28 @@ async function routeRequest(
   }
 
   writeJson(response, 404, { error: "not found" });
+}
+
+// A browser-mediated cross-site request either carries a Sec-Fetch-Site
+// header that is not same-origin/none, or an Origin header whose host does
+// not match the request's Host. Non-browser clients send neither header.
+function isCrossSiteRequest(request: IncomingMessage): boolean {
+  const secFetchSite = request.headers["sec-fetch-site"];
+  if (typeof secFetchSite === "string" && secFetchSite !== "same-origin" && secFetchSite !== "none") {
+    return true;
+  }
+  const origin = request.headers.origin;
+  if (typeof origin === "string" && origin.length > 0 && origin !== "null") {
+    try {
+      return new URL(origin).host !== (request.headers.host ?? "");
+    } catch {
+      return true;
+    }
+  }
+  if (origin === "null") {
+    return true;
+  }
+  return false;
 }
 
 async function handleRpc(

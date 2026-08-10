@@ -20,6 +20,56 @@
 [[ -n "${_LOOP_BG_TASKS_LOADED:-}" ]] && return 0 2>/dev/null || true
 _LOOP_BG_TASKS_LOADED=1
 
+# Hard ceilings for the parked-loop machinery (seconds). Overridable via env
+# (tests set these to exercise both sides of each boundary).
+#
+#   BG_PARK_EXPIRY_SECONDS - a loop that has sat parked on pending background
+#       work longer than this stops short-circuiting: the stop hook logs a
+#       warning and falls through to the normal gates. This is the hard
+#       backstop against a permanently parked loop when liveness probing
+#       fails open (e.g. the task output file is on a path we cannot see).
+#   BG_TASK_GRACE_SECONDS - a launched background task whose output file
+#       cannot be probed is presumed dead once it has been pending this long
+#       without a completion notification, instead of alive forever.
+BG_PARK_EXPIRY_SECONDS="${BG_PARK_EXPIRY_SECONDS:-1800}"
+BG_TASK_GRACE_SECONDS="${BG_TASK_GRACE_SECONDS:-1800}"
+
+# Convert an ISO-8601 UTC timestamp ("2026-04-16T13:19:26.819Z") to epoch
+# seconds. Prints the epoch, or nothing when the input cannot be parsed.
+# GNU date first, BSD date second.
+iso_ts_to_epoch() {
+    local ts="$1"
+    [[ -z "$ts" ]] && return 0
+    local epoch
+    epoch=$(date -u -d "$ts" +%s 2>/dev/null) || epoch=""
+    if [[ -z "$epoch" ]]; then
+        local trimmed="${ts%%.*}"
+        trimmed="${trimmed%Z}"
+        epoch=$(date -ju -f "%Y-%m-%dT%H:%M:%S" "$trimmed" +%s 2>/dev/null) || epoch=""
+    fi
+    printf '%s' "$epoch"
+}
+
+# Returns 0 when the bg-pending.marker exists and its recorded park time is
+# more than BG_PARK_EXPIRY_SECONDS in the past. The marker's first line
+# carries the epoch written at first park; markers written by older plugin
+# versions are empty, so fall back to file mtime for those. Unreadable ages
+# fail closed (not expired).
+#
+# Usage: bg_park_marker_expired "$marker_path"
+bg_park_marker_expired() {
+    local marker="$1"
+    [[ -f "$marker" ]] || return 1
+    local now parked
+    now=$(date +%s 2>/dev/null) || return 1
+    parked=$(head -n 1 "$marker" 2>/dev/null | tr -d '[:space:]')
+    if [[ ! "$parked" =~ ^[0-9]+$ ]]; then
+        parked=$(stat -c %Y "$marker" 2>/dev/null || stat -f %m "$marker" 2>/dev/null) || return 1
+        [[ "$parked" =~ ^[0-9]+$ ]] || return 1
+    fi
+    (( now - parked > BG_PARK_EXPIRY_SECONDS ))
+}
+
 # Expand a leading "~" or "~/" in a path to "$HOME" without using eval.
 # Only the bare "~" and "~/..." forms are expanded; "~user/..." and every
 # other input (absolute path, relative path, empty string) is returned verbatim.
@@ -117,21 +167,21 @@ derive_tasks_dir_from_transcript() {
     printf '/tmp/claude-%s/%s/%s/tasks' "$uid" "$slug" "$sid"
 }
 
-# Returns 0 if the background task identified by task_id appears to be alive
-# (output file absent, or lsof reports >= 1 holder), 1 if confirmed dead
-# (output file exists and lsof reports 0 holders).
+# Returns 0 if the task owning output_file appears alive (file absent, or
+# lsof reports >= 1 holder), 1 if confirmed dead (file exists and lsof
+# reports 0 holders).
 #
 # Fail-open: returns 0 (alive) when the output file does not exist, when
 # the lsof binary is unavailable, or when lsof exits non-zero for any
-# reason other than "no holders".
+# reason other than "no holders". Callers that can distinguish "file
+# absent" should handle that case themselves (see prune_dead_bg_task_ids).
 #
 # Set LSOF_BIN to override the lsof binary path (used in tests).
 #
-# Usage: is_bg_task_alive "$task_id" "$tasks_dir"
-is_bg_task_alive() {
-    local task_id="$1" tasks_dir="$2"
+# Usage: is_bg_output_file_alive "$output_file"
+is_bg_output_file_alive() {
+    local output_file="$1"
     local lsof_bin="${LSOF_BIN:-lsof}"
-    local output_file="$tasks_dir/$task_id.output"
     # Output file absent -> fail open (treat as still running).
     [[ -f "$output_file" ]] || return 0
     # lsof unavailable -> fail open.
@@ -140,16 +190,64 @@ is_bg_task_alive() {
     "$lsof_bin" "$output_file" >/dev/null 2>&1
 }
 
-# Filter a newline-delimited list of task IDs, retaining only those that
-# pass is_bg_task_alive. Prints surviving IDs one per line.
+# Back-compat wrapper: probe by task id against the conventional tasks dir.
 #
-# Usage: prune_dead_bg_task_ids "$pending_ids" "$tasks_dir"
+# Usage: is_bg_task_alive "$task_id" "$tasks_dir"
+is_bg_task_alive() {
+    local task_id="$1" tasks_dir="$2"
+    is_bg_output_file_alive "$tasks_dir/$task_id.output"
+}
+
+# Filter a newline-delimited list of task IDs, retaining only those that
+# still appear alive. Prints surviving IDs one per line.
+#
+# launched_table (optional 3rd arg) is a TSV of
+#   "id<TAB>output_file<TAB>launch_ts"
+# rows extracted from the transcript's launch records. Async Agent launches
+# record their exact output-file path there (robust across session resume,
+# where the tasks dir derived from the transcript path points at the wrong
+# session); Bash launches do not, so those fall back to the conventional
+# "$tasks_dir/$id.output" path.
+#
+# Liveness decision per id:
+#   output file exists  -> lsof probe: holders => alive, none => dead,
+#                          lsof unavailable => alive (fail open).
+#   output file absent  -> the probe is inapplicable. Give the task
+#                          BG_TASK_GRACE_SECONDS from its launch timestamp,
+#                          then presume it dead rather than alive forever
+#                          (a vanished agent used to park the loop
+#                          permanently here).
+#   launch ts unknown   -> stay alive (fail open); the park-marker expiry
+#                          in handle_bg_task_short_circuit is the backstop.
+#
+# Usage: prune_dead_bg_task_ids "$pending_ids" "$tasks_dir" ["$launched_table"]
 prune_dead_bg_task_ids() {
-    local pending_ids="$1" tasks_dir="$2"
+    local pending_ids="$1" tasks_dir="$2" launched_table="${3:-}"
+    local now
+    now=$(date +%s 2>/dev/null) || now=""
     local task_id
     while IFS= read -r task_id; do
         [[ -z "$task_id" ]] && continue
-        is_bg_task_alive "$task_id" "$tasks_dir" && printf '%s\n' "$task_id"
+        local row output_file launch_ts
+        row=$(printf '%s\n' "$launched_table" \
+            | awk -F'\t' -v id="$task_id" '$1 == id { print; exit }')
+        output_file=$(printf '%s\n' "$row" | awk -F'\t' '{print $2}')
+        launch_ts=$(printf '%s\n' "$row" | awk -F'\t' '{print $3}')
+        if [[ -z "$output_file" && -n "$tasks_dir" ]]; then
+            output_file="$tasks_dir/$task_id.output"
+        fi
+        if [[ -n "$output_file" && -f "$output_file" ]]; then
+            is_bg_output_file_alive "$output_file" && printf '%s\n' "$task_id"
+            continue
+        fi
+        # No output file to probe: grace period from launch, then dead.
+        local launch_epoch=""
+        [[ -n "$launch_ts" ]] && launch_epoch=$(iso_ts_to_epoch "$launch_ts")
+        if [[ -n "$now" && -n "$launch_epoch" ]] \
+           && (( now - launch_epoch > BG_TASK_GRACE_SECONDS )); then
+            continue
+        fi
+        printf '%s\n' "$task_id"
     done <<< "$pending_ids"
 }
 
@@ -206,8 +304,11 @@ list_pending_background_task_ids() {
         return 1
     fi
 
-    local launched completed
-    launched=$(jq -r --arg since_ts "$since_ts" '
+    # Launch records as a TSV table: id, output-file path (async Agent
+    # launches record it; Bash launches leave it empty), launch timestamp.
+    # The extra columns feed the liveness pruning below.
+    local launched_table launched completed
+    launched_table=$(jq -r --arg since_ts "$since_ts" '
         select(.toolUseResult != null)
         | select(
             ($since_ts == ""
@@ -218,8 +319,12 @@ list_pending_background_task_ids() {
             (.toolUseResult.isAsync == true and (.toolUseResult.agentId // "") != "")
             or ((.toolUseResult.backgroundTaskId // "") != "")
           )
-        | (.toolUseResult.agentId // .toolUseResult.backgroundTaskId)
+        | [(.toolUseResult.agentId // .toolUseResult.backgroundTaskId),
+           (.toolUseResult.outputFile // ""),
+           (.timestamp // "")]
+        | @tsv
     ' "$transcript_path" 2>/dev/null | sort -u) || return 1
+    launched=$(printf '%s\n' "$launched_table" | awk -F'\t' 'NF {print $1}' | sort -u)
 
     # Union of both completion formats. Either source alone is enough to
     # mark a launched id terminal.
@@ -252,13 +357,13 @@ list_pending_background_task_ids() {
         <(printf '%s\n' "$completed" | sed '/^$/d'))
 
     # Apply liveness probe: drop orphaned task IDs whose output file exists
-    # but has zero open file descriptors (killed without a completion event).
+    # but has zero open file descriptors (killed without a completion event),
+    # and task IDs with nothing to probe that outlived the pending grace
+    # period (see prune_dead_bg_task_ids).
     if [[ -n "$pending" ]]; then
         local tasks_dir
         tasks_dir=$(derive_tasks_dir_from_transcript "$transcript_path")
-        if [[ -n "$tasks_dir" ]]; then
-            pending=$(prune_dead_bg_task_ids "$pending" "$tasks_dir")
-        fi
+        pending=$(prune_dead_bg_task_ids "$pending" "$tasks_dir" "$launched_table")
     fi
 
     printf '%s\n' "$pending" | sed '/^$/d'
@@ -392,16 +497,33 @@ handle_bg_task_short_circuit() {
     local pending_bg_ids
     pending_bg_ids=$(list_pending_background_task_ids "$transcript_path" "$loop_start_ts" 2>/dev/null) || true
     if [[ -n "$pending_bg_ids" ]]; then
-        local pending_bg_count
-        pending_bg_count=$(printf '%s\n' "$pending_bg_ids" | sed '/^$/d' | wc -l | tr -d ' ')
-        # Mark the loop as parked; allows the same session to resume
-        # later and makes the cross-session guard above reachable if
-        # the user opens a different Claude session in this repo
-        # before the bg task completes.
-        : > "$loop_dir/bg-pending.marker" 2>/dev/null || true
-        jq -n --arg count "$pending_bg_count" \
-            '{systemMessage: ("RLCR loop active. " + $count + " background task(s) still running - stop allowed naturally; loop has NOT terminated and will resume on completion.")}'
-        exit 0
+        local pending_bg_list
+        pending_bg_list=$(printf '%s\n' "$pending_bg_ids" \
+            | awk 'NF { ids = ids (ids ? ", " : "") $0 } END { print ids }')
+        # Hard expiry: a loop that has sat parked on pending background
+        # work longer than BG_PARK_EXPIRY_SECONDS stops short-circuiting.
+        # Liveness probing above can fail open (task output file on an
+        # unreachable path), and without this backstop such a loop parks
+        # forever. Fall through to the normal gates with a warning.
+        if bg_park_marker_expired "$loop_dir/bg-pending.marker"; then
+            echo "Warning: RLCR loop was parked on pending background task(s) [$pending_bg_list] for over ${BG_PARK_EXPIRY_SECONDS}s; ignoring them and running the normal stop gates." >&2
+            rm -f "$loop_dir/bg-pending.marker" 2>/dev/null || true
+        else
+            local pending_bg_count
+            pending_bg_count=$(printf '%s\n' "$pending_bg_ids" | sed '/^$/d' | wc -l | tr -d ' ')
+            # Mark the loop as parked; allows the same session to resume
+            # later and makes the cross-session guard above reachable if
+            # the user opens a different Claude session in this repo
+            # before the bg task completes. The marker records the FIRST
+            # park time (epoch seconds) and is preserved on re-parks so
+            # the hard expiry above measures total parked age.
+            if ! grep -qE '^[0-9]+$' "$loop_dir/bg-pending.marker" 2>/dev/null; then
+                date +%s > "$loop_dir/bg-pending.marker" 2>/dev/null || true
+            fi
+            jq -n --arg count "$pending_bg_count" --arg ids "$pending_bg_list" \
+                '{systemMessage: ("RLCR loop active. " + $count + " background task(s) still running (pending: " + $ids + ") - stop allowed naturally; loop has NOT terminated and will resume on completion.")}'
+            exit 0
+        fi
     fi
 
     # ----------------------------------------
