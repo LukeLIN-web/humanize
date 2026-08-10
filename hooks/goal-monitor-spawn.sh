@@ -161,7 +161,15 @@ EOF
 # On a clean exit (the human quit the overseer) the cron is dead anyway, so the pane
 # is closed too. On a crash (rc≠0) the pane is kept: the exit code and scrollback
 # stay inspectable instead of the tmux session vanishing.
-cmd="CLAUDE_GOAL_MONITOR=$sid $claude_bin $CLAUDE_ARGS \"\$(cat '$pfile')\"
+#
+# `set -m` is load-bearing, not cosmetic: without job control this wrapper leaves
+# claude in the wrapper's own process group, so tmux reports pane_current_command
+# as the shell and every tool that gates on it (claude-board's prompt and /model
+# send, any capture-then-type driver) refuses the pane as "at a shell prompt —
+# TUI not running". With job control the TUI owns the terminal's foreground
+# group and the overseer is a first-class pane the human can drive like any other.
+cmd="set -m
+CLAUDE_GOAL_MONITOR=$sid $claude_bin $CLAUDE_ARGS \"\$(cat '$pfile')\"
 rc=\$?
 rm -f '$pfile'
 [ \"\$rc\" = 0 ] && $TM_STR kill-session -t '=$mon'
