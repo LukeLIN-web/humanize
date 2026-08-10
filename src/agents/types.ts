@@ -2,7 +2,9 @@ export type AgentId = "codex" | "claude";
 
 export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 
-export type PermissionMode = "acceptEdits" | "auto" | "bypassPermissions" | "default" | "dontAsk" | "plan";
+// Mirrors `claude --help` --permission-mode choices; "default" is NOT a valid
+// CLI value (the CLI rejects it) — "manual" is the ask-by-default mode.
+export type PermissionMode = "acceptEdits" | "auto" | "bypassPermissions" | "manual" | "dontAsk" | "plan";
 
 export type OutputStream = "stdout" | "stderr";
 
