@@ -153,7 +153,11 @@ SELF-TEARDOWN (required): only when the target goal is genuinely complete or the
 That closes YOUR OWN watcher session. Never do it while the target is stalled, wedged, blocked, rate-limited, or idle-but-unfinished.
 EOF
 
-cmd="CODEX_GOAL_MONITOR='$sid' $claude_bin $CLAUDE_ARGS \"\$(cat '$pfile')\"
+# `set -m` is load-bearing: without job control the TUI stays in this wrapper's
+# process group, tmux reports the pane as the shell, and prompt/model senders
+# refuse it as "at a shell prompt". See goal-monitor-spawn.sh for the full note.
+cmd="set -m
+CODEX_GOAL_MONITOR='$sid' $claude_bin $CLAUDE_ARGS \"\$(cat '$pfile')\"
 rc=\$?
 rm -f '$pfile'
 [ \"\$rc\" = 0 ] && $TM_STR kill-session -t '=$mon'
