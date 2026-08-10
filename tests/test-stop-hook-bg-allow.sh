@@ -1219,9 +1219,14 @@ AC21_PRE_LAUNCH=$(jq -c -n '{
     timestamp:"2026-02-28T10:00:00.000Z",
     toolUseResult:{isAsync:true, agentId:"agent_pre_loop"}
 }')
-AC21_POST_LAUNCH=$(jq -c -n '{
+# The in-loop launch uses the CURRENT time (still >= the 2026-03-01
+# boundary) so it stays inside BG_TASK_GRACE_SECONDS: a launch with no
+# output file to probe is presumed dead after the grace period, and a
+# hardcoded past timestamp would be pruned as dead here.
+AC21_NOW_TS=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
+AC21_POST_LAUNCH=$(jq -c -n --arg ts "$AC21_NOW_TS" '{
     type:"user",
-    timestamp:"2026-03-01T10:00:00.000Z",
+    timestamp:$ts,
     toolUseResult:{isAsync:true, agentId:"agent_in_loop"}
 }')
 write_transcript "$AC21_TRANSCRIPT" "$AC21_PRE_LAUNCH" "$AC21_POST_LAUNCH"
@@ -1322,9 +1327,12 @@ create_full_fixture "$AC22_REPO" > /dev/null
 AC22_LOOP="$AC22_REPO/.humanize/rlcr/2026-03-01_00-00-00"
 AC22_MARKER="$AC22_LOOP/bg-pending.marker"
 AC22_TRANSCRIPT="$TRANSCRIPTS_DIR/ac22.jsonl"
-AC22_LAUNCH=$(jq -c -n '{
+# Current timestamp keeps the launch inside BG_TASK_GRACE_SECONDS (a
+# stale launch with no output file would be pruned as dead).
+AC22_NOW_TS=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
+AC22_LAUNCH=$(jq -c -n --arg ts "$AC22_NOW_TS" '{
     type:"user",
-    timestamp:"2026-03-01T10:00:00.000Z",
+    timestamp:$ts,
     toolUseResult:{isAsync:true, agentId:"agent_wrapper_pending"}
 }')
 write_transcript "$AC22_TRANSCRIPT" "$AC22_LAUNCH"

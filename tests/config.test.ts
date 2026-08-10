@@ -72,7 +72,7 @@ describe("humanize2 user config", () => {
       "    model: gpt-5.4",
       "    reasoningEffort: high",
       "  claude:",
-      "    model: claude-opus-4-7",
+      "    model: claude-opus-5",
       "    reasoningEffort: xhigh",
       ""
     ].join("\n");
@@ -86,7 +86,7 @@ describe("humanize2 user config", () => {
         reasoningEffort: "high"
       },
       claude: {
-        model: "claude-opus-4-7",
+        model: "claude-opus-5",
         reasoningEffort: "xhigh"
       }
     });
@@ -111,7 +111,7 @@ describe("humanize2 user config", () => {
       "      - --max-tokens",
       "      - 4096",
       "  claude:",
-      "    model: claude-opus-4-7",
+      "    model: claude-opus-5",
       "    reasoningEffort: xhigh",
       ""
     ].join("\n");
@@ -124,7 +124,7 @@ describe("humanize2 user config", () => {
       extraArgs: ["--temperature", "0.7", "--max-tokens", "4096"]
     });
     expect(config.agentDefaults.claude).toMatchObject({
-      model: "claude-opus-4-7",
+      model: "claude-opus-5",
       reasoningEffort: "xhigh"
     });
   });
@@ -177,7 +177,7 @@ describe("humanize2 user config", () => {
       "    model: gpt-5.6-sol",
       "    reasoningEffort: xhigh",
       "  claude:",
-      "    model: claude-opus-4-7",
+      "    model: claude-opus-5",
       "    reasoningEffort: xhigh",
       ""
     ].join("\n"), "utf8");
