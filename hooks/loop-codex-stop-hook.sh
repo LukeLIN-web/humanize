@@ -1196,11 +1196,13 @@ if [[ -n "$CODEX_EXEC_EFFORT" ]]; then
     CODEX_EXEC_ARGS+=("-c" "model_reasoning_effort=${CODEX_EXEC_EFFORT}")
 fi
 
-CODEX_AUTO_FLAG="--full-auto"
+# Current codex exec rejects --full-auto (exit 2); -s workspace-write is its
+# non-interactive equivalent since exec never prompts for approvals.
+CODEX_AUTO_ARGS=("-s" "workspace-write")
 if [[ "${HUMANIZE_CODEX_BYPASS_SANDBOX:-}" == "true" ]] || [[ "${HUMANIZE_CODEX_BYPASS_SANDBOX:-}" == "1" ]]; then
-    CODEX_AUTO_FLAG="--dangerously-bypass-approvals-and-sandbox"
+    CODEX_AUTO_ARGS=("--dangerously-bypass-approvals-and-sandbox")
 fi
-CODEX_EXEC_ARGS+=("$CODEX_AUTO_FLAG" "-C" "$PROJECT_ROOT")
+CODEX_EXEC_ARGS+=("${CODEX_AUTO_ARGS[@]}" "-C" "$PROJECT_ROOT")
 
 # Build Codex command arguments for codex review
 CODEX_REVIEW_ARGS=("-c" "model=${CODEX_REVIEW_MODEL}" "-c" "review_model=${CODEX_REVIEW_MODEL}")
