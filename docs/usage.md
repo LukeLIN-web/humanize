@@ -464,7 +464,7 @@ on subsequent fetches and SSE reconnects.
 **WARNING: This is a dangerous option that disables security protections. Use only if you understand the implications.**
 
 - **Purpose**: Controls whether Codex runs with sandbox protection
-- **Default**: Not set (uses `--full-auto` with sandbox protection)
+- **Default**: Not set (uses `--sandbox workspace-write` protection)
 - **Values**:
   - `true` or `1`: Bypasses Codex sandbox and approvals (uses `--dangerously-bypass-approvals-and-sandbox`)
   - Any other value or unset: Uses safe mode with sandbox

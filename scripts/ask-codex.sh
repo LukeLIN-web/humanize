@@ -41,7 +41,7 @@ DEFAULT_ASK_CODEX_TIMEOUT=3600
 CODEX_MODEL="$DEFAULT_CODEX_MODEL"
 CODEX_EFFORT="$DEFAULT_CODEX_EFFORT"
 CODEX_TIMEOUT="$DEFAULT_ASK_CODEX_TIMEOUT"
-CODEX_SANDBOX=""   # empty = keep the default --full-auto (workspace-write)
+CODEX_SANDBOX=""   # empty = default workspace-write (unless bypass env var is set)
 
 # ========================================
 # Help
@@ -61,7 +61,7 @@ OPTIONS:
                        Timeout for the Codex query in seconds (default: 3600)
   --codex-sandbox <MODE>
                        Codex sandbox policy: read-only, workspace-write, or
-                       danger-full-access. Default is workspace-write (--full-auto).
+                       danger-full-access. Default is workspace-write.
                        Use read-only for consultations that must not touch files.
   -h, --help           Show this help message
 
@@ -287,14 +287,14 @@ fi
 # Sandbox policy. An explicit --codex-sandbox wins over the bypass env var:
 # a caller that asked for read-only (reviews, audits) must not be silently
 # upgraded to write access by an environment setting.
+# Current codex exec rejects --full-auto (exit 2); -s workspace-write is its
+# non-interactive equivalent since exec never prompts for approvals.
 if [[ -n "$CODEX_SANDBOX" ]]; then
     CODEX_EXEC_ARGS+=("-s" "$CODEX_SANDBOX")
+elif [[ "${HUMANIZE_CODEX_BYPASS_SANDBOX:-}" == "true" ]] || [[ "${HUMANIZE_CODEX_BYPASS_SANDBOX:-}" == "1" ]]; then
+    CODEX_EXEC_ARGS+=("--dangerously-bypass-approvals-and-sandbox")
 else
-    CODEX_AUTO_FLAG="--full-auto"
-    if [[ "${HUMANIZE_CODEX_BYPASS_SANDBOX:-}" == "true" ]] || [[ "${HUMANIZE_CODEX_BYPASS_SANDBOX:-}" == "1" ]]; then
-        CODEX_AUTO_FLAG="--dangerously-bypass-approvals-and-sandbox"
-    fi
-    CODEX_EXEC_ARGS+=("$CODEX_AUTO_FLAG")
+    CODEX_EXEC_ARGS+=("-s" "workspace-write")
 fi
 
 CODEX_EXEC_ARGS+=("-C" "$PROJECT_ROOT")
