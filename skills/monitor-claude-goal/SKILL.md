@@ -1,13 +1,11 @@
 ---
 name: monitor-claude-goal
-description: Read-only third-party overseer for a SEPARATE Claude Code session that is running a long /goal task. Audits progress from the transcript + git + artifacts, and under a strict gate injects steering into that session via tmux. Use when the user wants to watch, supervise, audit, or steer another running Claude Code /goal session without taking it over. Never edits code, builds, merges, or drives the target autonomously — it is an auditor with an injection protocol.
-argument-hint: <claude-session-id> [<tmux-target>] [--discover] [--cadence 1h] [--decision-timeout 1h] [--approve-safe-destructive] [--notify-only] [--no-schedule] [--principles "<extra rules>"]
-allowed-tools: Bash, Read, Grep, Glob, Agent, ToolSearch
+description: Read-only third-party overseer for a SEPARATE Claude Code session running a long /goal task. Use from Claude Code or Codex when the user says monitor, watch, supervise, audit, steer, "omni session:ID", or asks for hourly checks of another Claude session. Audits transcript, git, processes, and artifacts; may steer only through the strict tmux injection gate. Never edits, builds, commits, merges, or drives the target autonomously.
 ---
 
 # monitor-claude-goal
 
-A dedicated Claude session acts as a **read-only third-party overseer** of a *separate* Claude Code session that is running a long-horizon `/goal` task. It audits progress and, under a strict gate, injects steering into that session via `tmux`.
+A dedicated Claude Code or Codex session acts as a **read-only third-party overseer** of a *separate* Claude Code session that is running a long-horizon `/goal` task. It audits progress and, under a strict gate, injects steering into that session via `tmux`.
 
 **It is an auditor with an injection protocol — not an automation agent.**
 
@@ -18,22 +16,37 @@ A dedicated Claude session acts as a **read-only third-party overseer** of a *se
 
 ## 2. Invocation
 
-```
-/monitor-claude-goal <claude-session-id> [<tmux-target>]
+```text
+$monitor-claude-goal <claude-session-id> [<tmux-target>]   # Codex
+/monitor-claude-goal <claude-session-id> [<tmux-target>]   # Claude Code
     [--discover] [--cadence 1h] [--decision-timeout 1h] [--approve-safe-destructive] [--notify-only] [--no-schedule] [--principles "<extra rules>"]
 ```
 
 - `<claude-session-id>` — resolves the transcript at `~/.claude/projects/<cwd-slug>/<session-id>.jsonl`, where `<cwd-slug>` is the target's working directory with `/` and `.` replaced by `-`. Handle **not-found / multiple matches / rotated** gracefully (glob across all project dirs for `<session-id>.jsonl`).
-- `<tmux-target>` — e.g. `loom:claude-dev`. **Optional**: when omitted, resolve it from the session id via §2.1. Must be **verified to exist** and to **look like a live Claude Code TUI** (via `tmux capture-pane`) before any injection. The monitor must share the same tmux server as the target.
+- `<tmux-target>` — e.g. `loom:claude-dev`. **Optional**: when omitted, resolve it from the session id via §2.2. Must be **verified to exist** and to **look like a live Claude Code TUI** (via `tmux capture-pane`) before any injection. The monitor must share the same tmux server as the target.
 - `--discover` — list candidate active `/goal` sessions (recently-modified transcripts whose tail shows an in-flight `/goal`) + live tmux windows; **the human confirms the exact (session, window) pair** before anything runs.
-- `--cadence 1h` — cron interval (default hourly).
+- `--cadence 1h` — monitoring interval (default hourly).
 - `--decision-timeout 1h` — grace period before the overseer auto-picks the **recommended** option of an unanswered interactive decision prompt (§5.2) **or** injects the poll-and-resume nudge for a resource-blocked target (§5.3). Default `1h`. Set `off` to keep both as permanent notify-only terminals (the pre-this-feature behavior). Disabled by `--notify-only`.
 - `--approve-safe-destructive` — **opt-in** (default **off**): let the overseer auto-approve a permission prompt that is a *dangerous-command-guard false positive* — but **only** after independently parsing the exact command and **proving it safe** (§5.5). With it off, every destructive confirm stays notify-only. Disabled by `--notify-only`.
-- `--notify-only` — **kill-switch**: forces always-approve, disables all auto-injection (including §5.2 auto-pick and §5.5 approve). Every steer goes through PushNotification only.
-- `--no-schedule` — escape hatch: run a single tick now and **do not** self-schedule a cron; the human re-runs (e.g. wraps in `/loop`) instead. Mutually exclusive with cron self-management in §6.
+- `--notify-only` — **kill-switch**: disables all auto-injection (including §5.2 auto-pick and §5.5 approve). Report every proposed steer through the host notification channel only.
+- `--no-schedule` — escape hatch: run a single tick now and **do not** create recurrence; the human re-runs it manually. Mutually exclusive with scheduler self-management in §6.
 - `--principles "<extra rules>"` — additional steering criteria merged with whatever the human has stated inside the target transcript.
 
-### 2.1 Resolving session id → tmux pane (in priority order)
+### 2.1 Overseer-host preflight
+
+Identify the **overseer host** before the first tick. The target is always Claude Code; only the scheduling and notification surfaces differ.
+
+| Overseer host | Recurrence | Notification | Parallel audit |
+|---|---|---|---|
+| Claude Code | `CronCreate` / `CronDelete` | `PushNotification` | read-only `Explore` agents |
+| Codex in the ChatGPT desktop app | an **in-chat Scheduled task** that re-invokes this skill | the scheduled run in this chat | optional read-only subagents when available |
+| Codex CLI / IDE | no native Scheduled management interface | current thread output | use Goal/wait continuation only when that capability is actually available; otherwise run one tick and disclose that recurrence was not created |
+
+Never claim that hourly monitoring exists until the recurring job/task has been created and its identifier or visible schedule has been reported. For Codex, prefer an **in-chat** scheduled task so each tick retains the session id, prior findings, checkpoint, and stop condition. Use local-project mode because the audit reads local transcripts, tmux, git, and artifacts. Keep the computer and desktop app running. If the scheduling capability is not exposed, do not emulate it with a detached shell `sleep` loop: a shell timer cannot invoke the model to perform a fresh audit.
+
+Use a **host notification** wherever this document says to notify: `PushNotification` on Claude Code when available; the scheduled/current chat output on Codex; or a user-requested notification connector when one is explicitly available. Never promise an out-of-band alert unless that channel was actually invoked.
+
+### 2.2 Resolving session id → tmux pane (in priority order)
 
 **Do not reverse-engineer pane contents.** Claude Code natively registers every live session in `~/.claude/sessions/<pid>.json` (`{pid, sessionId, cwd, ...}`), so the chain is deterministic: session id → pid → tty (`ps -o tty= -p <pid>`) → tmux pane (`tmux list-panes -a -F '#{pane_id} #{pane_tty}'` match). Resolve in this order — first hit wins, but **always verify before trusting**:
 
@@ -58,17 +71,18 @@ Whatever resolved it, before any injection still confirm via `capture-pane` that
 - `tmux send-keys` **except inside the approved gated protocols (§5, §5.1, §5.2, §5.3, §5.5, §5.6)** — keystrokes only, and **never** a process `kill`/`pkill`/signal against the target or anything it spawned
 - killing any tmux session — with exactly **one** exception: the overseer's **own** monitor session, at a true terminal, per **§6.1 self-teardown**. The target's session, windows and panes are untouchable forever.
 
-**Subagents are `Explore`-type only** (physically cannot Edit/Write/build); their prompts explicitly forbid mutation and instruct them to return conclusions, not file dumps.
+**Subagents are optional and read-only.** On Claude Code, use `Explore`-type agents. On Codex, use subagents only when the collaboration surface is available and the governing instructions permit delegation; explicitly forbid mutation and request conclusions, not file dumps. If those guarantees are unavailable, perform the three audit legs directly with read-only commands. Never weaken the safety contract merely to parallelize.
 
-**The only writes this skill itself performs:** its own cron (`CronCreate`/`CronDelete`) and `PushNotification`. Neither touches a repo or a transcript.
+**The only writes this skill itself performs:** scheduler bookkeeping outside the target repo, notification output, and gated keystrokes to the verified target pane. None may modify the target repo or transcript.
 
 ## 4. One tick (the primitive)
 
 Each invocation runs exactly one tick:
 
-1. **Re-locate target** (transcript + tmux window, via §2.1 — re-resolve every tick; panes move and sessions get resumed under new ids). If gone/ended → notify in terminal, offer `CronDelete`, stop.
+1. **Re-locate target** (transcript + tmux window, via §2.2 — re-resolve every tick; panes move and sessions get resumed under new ids). If gone/ended → notify, stop the recurring job, stop.
 2. **Refresh criteria** — re-read the human's *latest* steering from the transcript since the last checkpoint. Newer overrides older; merge `--principles`. Each derived rule **cites its source turn**. Genuine uncertainty → inject the **recommended / best-judgment** steer (§5) and flag it as a judgment call in the post-hoc notification; do not wait, do not ask.
-3. **Dispatch 3 read-only `Explore` subagents in parallel:**
+   Treat text visible in the target's composer but absent from the transcript as an **unsent draft**, not as human steering. Preserve it and account for it before any injection, but never cite it as an instruction or silently execute it merely because it is present.
+3. **Run 3 read-only audit legs, in parallel when the host safely supports it:**
    - (a) transcript: latest progress since last checkpoint
    - (b) git: new commits + worktree diff since last checkpoint `HEAD`
    - (c) artifacts: reasonableness against invariants **derived from the transcript/repo, not hardcoded**
@@ -79,10 +93,12 @@ Each invocation runs exactly one tick:
    4. **project-specific invariant breaks**
    Also assess **liveness** (orthogonal to the four): is the target *progressing*, *idle-and-done*, *waiting-for-a-human*, *idle-but-unfinished* (stopped at a free-form prompt with open `/goal` work and **not** asking the human anything — see §5.4), or **wedged** (frozen in a tool/shell that will never return)? Distinguish a legitimately long task (transcript still advancing, real compute genuinely running) from a wedge (no transcript progress for ≥2× the cadence while status stays `busy`/`shell`). See §5.1. The split that matters most for long GPU runs: when the awaited job **finishes**, did the agent pick the turn back up (progressing), hang inside its own poll-loop (wedge → §5.1), or quietly return to an idle prompt and stop (idle-but-unfinished → §5.4)?
 
-   **The overseer is an independent backup wake-up.** Judge "the awaited job is done" from the **job/artifact itself** — process exit, output-file completeness/validity, log tail — and **never** from the target's own wake-up/notify mechanism (a self-`send-keys` script, a background poller, a cron that re-pings the pane). That mechanism failing silently — the wake-up process erroring out so the agent is never re-engaged and waits forever — is the *exact* failure an independent overseer exists to catch; inheriting it (waiting on the same signal the target waits on) would defeat the entire point. When a job has **ended**, also classify *how*: **succeeded** (expected artifact complete and well-formed) vs **crashed/failed** (process gone but output missing/truncated, nonzero exit, traceback in the log). "Process gone" alone means *both* — the distinction changes the steer (§5.1 / §5.4): a clean finish → nudge onward; a crash → tell the agent it **failed** and to diagnose/rerun, **never** "continue" as if it had succeeded.
-5. **Decide:** clean **and progressing** → one-line conclusion in this session, **no notification**. Any of the four findings → intervention gate (§5). Wedged → interrupt-recovery (§5.1). **Idle-but-unfinished** (returned to an idle prompt with open `/goal` work, nothing running, not asking the human) → plain resume nudge (§5.4). Blocked **awaiting a human decision** → notify on first sight, then **auto-pick the recommended option** once it has gone unanswered past `--decision-timeout` (§5.2). Blocked **purely on resource availability** (no free GPU/VRAM/compute — the target stopped to ask *which* shared resource to use, or is sitting idle for capacity) → notify on first sight, then **inject the poll-and-resume nudge** once unanswered past `--decision-timeout` (§5.3). Other true terminal (gone / `/goal` done) → notify (§5, §7).
+   Claude's native session registry may report `shell` while a persistent monitor/background command exists even though the TUI is idle and artifacts are advancing. Treat registry status as one signal, not the verdict: correlate transcript mtime, pane affordances, process state, and artifact progress. Never classify a wedge from `status=shell` alone.
 
-Record a lightweight checkpoint (latest transcript byte-offset + mtime + git `HEAD`) for the next tick — held in the tick's own reasoning/output, never written to the target's files. The byte-offset/mtime is what lets the *next* tick recognize a wedge (no advance) vs. progress.
+   **The overseer is an independent backup wake-up.** Judge "the awaited job is done" from the **job/artifact itself** — process exit, output-file completeness/validity, log tail — and **never** from the target's own wake-up/notify mechanism (a self-`send-keys` script, a background poller, a cron that re-pings the pane). That mechanism failing silently — the wake-up process erroring out so the agent is never re-engaged and waits forever — is the *exact* failure an independent overseer exists to catch; inheriting it (waiting on the same signal the target waits on) would defeat the entire point. When a job has **ended**, also classify *how*: **succeeded** (expected artifact complete and well-formed) vs **crashed/failed** (process gone but output missing/truncated, nonzero exit, traceback in the log). "Process gone" alone means *both* — the distinction changes the steer (§5.1 / §5.4): a clean finish → nudge onward; a crash → tell the agent it **failed** and to diagnose/rerun, **never** "continue" as if it had succeeded.
+5. **Decide:** clean **and progressing** → one-line conclusion in this session, **no out-of-band notification**. Any of the four findings → intervention gate (§5). Wedged → interrupt-recovery (§5.1). **Idle-but-unfinished** (returned to an idle prompt with open `/goal` work, nothing running, not asking the human) → plain resume nudge (§5.4). Blocked **awaiting a human decision** → notify on first sight, then **auto-pick the recommended option** once it has gone unanswered past `--decision-timeout` (§5.2). Blocked **purely on resource availability** (no free GPU/VRAM/compute — the target stopped to ask *which* shared resource to use, or is sitting idle for capacity) → notify on first sight, then **inject the poll-and-resume nudge** once unanswered past `--decision-timeout` (§5.3). Other true terminal (gone / `/goal` done) → notify and stop recurrence (§5, §7).
+
+Record a lightweight checkpoint (latest transcript byte-offset + mtime + git `HEAD`) for the next tick — held in the recurring chat/task context or tick output, never written to the target's files. The byte-offset/mtime is what lets the *next* tick recognize a wedge (no advance) vs. progress.
 
 ## 5. Intervention gate (auto-inject by default)
 
@@ -94,7 +110,7 @@ Record a lightweight checkpoint (latest transcript byte-offset + mtime + git `HE
 3. `tmux capture-pane` to **verify the text landed**
 4. send `Enter`
 5. capture again to **confirm submitted**
-6. **post-hoc `PushNotification`** stating exactly what was injected (flag ambiguous/judgment-call steers as such)
+6. send a **post-hoc host notification** stating exactly what was injected (flag ambiguous/judgment-call steers as such)
 - Enforce a cap on `tmux send-keys` per window + a cooldown between injections.
 
 **Notify-without-inject is reserved for true terminals** — cases no overseer action can fix: target gone, the pane is no longer a live Claude Code TUI, or `/goal` genuinely complete (idle-and-done). These never auto-inject. A target merely **wedged** on a mechanical hang is NOT a terminal — recover it via §5.1, do not just notify and wait. A target **idle-but-unfinished** (stopped at an idle prompt with open `/goal` work, not asking the human) is NOT the idle-and-done terminal — nudge it on via §5.4. A target **blocked awaiting a human decision** is only a *temporary* terminal: notify on first sight, but if it stays unanswered past `--decision-timeout`, auto-pick its **recommended** option (§5.2) rather than waiting forever — or, when it's blocked **purely on resource availability** (no free GPU/compute), inject the **poll-and-resume nudge** (§5.3) instead.
@@ -116,9 +132,9 @@ When all are confirmed, recover (this is the **only** sanctioned key-send outsid
 3. `tmux capture-pane` — **confirm the agent returned to an idle prompt**. If it did not, do **not** hammer Escape; notify and stop.
 4. account for any stale text already queued in the input box (the human's own queued instruction may now be exactly the right steer to submit; otherwise clear/replace it with a fresh steer)
 5. inject the steer via the normal §5 path (type → verify landed → Enter → confirm submitted) — **outcome-aware** (§4 step 4): if the awaited job *finished cleanly* → steer onward to the next planned step; if it *crashed/failed* (output missing/truncated, nonzero exit, traceback) → steer the agent to **diagnose the failure and decide on a rerun**, naming the symptom, **never** "continue" as if it had succeeded.
-6. **post-hoc `PushNotification`** stating you **interrupted a wedged tool call** and what you steered — always flag interrupt-recovery as higher-impact than a plain steer.
+6. send a **post-hoc host notification** stating you **interrupted a wedged tool call** and what you steered — always flag interrupt-recovery as higher-impact than a plain steer.
 
-Under `--notify-only`, never auto-interrupt: `PushNotification` the diagnosis + the recommended manual fix (press Esc to interrupt / kill the stuck process, then resume) and let the human act.
+Under `--notify-only`, never auto-interrupt: send the diagnosis + recommended manual fix through the host notification channel and let the human act.
 
 ### 5.2 Stale human-decision prompt → notify-then-pick-recommended
 
@@ -137,7 +153,7 @@ When all hold, pick it (bounded by the same per-window cap + cooldown as §5):
 2. Navigate **deterministically**: if the recommended option is already the highlighted default → send nothing. Otherwise send the exact number of `Down`/`Up` keys to land on it, **`capture-pane` after each key** to confirm the highlight moved (never blind-press; if the highlight doesn't track, stop and notify).
 3. send `Enter` to select.
 4. `tmux capture-pane` — **confirm the menu closed and the agent accepted the choice** (it began acting on that option). If the menu is still open, do **not** hammer keys — notify and stop.
-5. **post-hoc `PushNotification`** stating you **auto-picked the recommended option `<N: label>` after `<timeout>` of no human response**, and that the human can still redirect.
+5. send a **post-hoc host notification** stating you **auto-picked the recommended option `<N: label>` after `<timeout>` of no human response**, and that the human can still redirect.
 
 Under `--notify-only` or `--decision-timeout off`: never auto-pick — keep notifying that the session is blocked awaiting a human decision.
 
@@ -160,9 +176,9 @@ When all hold, act (bounded by the same per-window cap + cooldown as §5):
 3. **Otherwise inject a free-text steer** via the normal §5 path (type → verify landed → Enter → confirm submitted), e.g.: *"别停着等人要卡 — 先查一下现在的空闲显存;够就直接在空卡上跑,不够就挂一个可续跑的后台 watcher 轮询显存,等有卡自己空出来再自动开整跑。绝不抢占/停别人的 job,也不要挤会 OOM 的卡。"* ("Don't sit idle waiting for a human to assign a GPU — check current free VRAM now; run on free cards if enough, else set up a resumable background watcher that polls and auto-starts when a card frees on its own. Never preempt/kill another job, never crowd a card into OOM.")
 4. **Stale unsent human draft in the box:** if the human left a draft that is *itself* a safe wait/free-card instruction → submit theirs. If it is a risky shared-resource grab (e.g. "用 GPU2 挤一下") → **do not submit it**; clear and replace with the safe wait-nudge above (and say so in the notification — you overrode a risky draft with the non-destructive path).
 5. `tmux capture-pane` — confirm the target accepted it (menu closed / steer consumed and it began checking capacity). If not consumed, do **not** hammer keys — notify and stop.
-6. **post-hoc `PushNotification`** stating you **nudged a GPU/resource-blocked target to poll-and-auto-resume** (and flag if you overrode a risky unsent draft); the human can still redirect to a specific card.
+6. send a **post-hoc host notification** stating you **nudged a GPU/resource-blocked target to poll-and-auto-resume** (and flag if you overrode a risky unsent draft); the human can still redirect to a specific card.
 
-Under `--notify-only` or `--decision-timeout off`: never nudge — `PushNotification` the diagnosis ("blocked on free GPU; suggest a wait-watcher") and let the human act.
+Under `--notify-only` or `--decision-timeout off`: never nudge — send the diagnosis ("blocked on free GPU; suggest a wait-watcher") through the host notification channel and let the human act.
 
 ### 5.4 Idle-but-unfinished target → plain resume nudge
 
@@ -182,9 +198,9 @@ When all hold, nudge via the **normal §5 path** (bounded by the same per-window
 2. account for any **unsent human draft** in the box (§5.1 step 4 rules): if it is itself the right next step → submit theirs; otherwise leave a genuine human draft untouched and **notify instead** rather than overwrite it.
 3. inject a **concrete**, **outcome-aware** steer built from the transcript's own plan (§4 step 4 classification): if the awaited job (GPU run / eval / **download**) *finished cleanly* → name the finished step and the next one (e.g. *"labeling 跑完了,按计划接着走:build label set → train chooser → re-score → attribution → review → ledger,别停在这。"*), never a bare "continue"; if it *crashed/failed* (output missing/truncated, nonzero exit, traceback in the log) → name the symptom and steer the agent to **diagnose and decide on a rerun**, **not** to proceed as if it had succeeded.
 4. `tmux capture-pane` — confirm the steer landed and the agent picked the turn back up. If not consumed → do not hammer keys, notify and stop.
-5. **post-hoc `PushNotification`** stating you **nudged an idle-but-unfinished target to resume** the next planned step.
+5. send a **post-hoc host notification** stating you **nudged an idle-but-unfinished target to resume** the next planned step.
 
-This nudge is gated only by its own ≥1×-cadence grace (not `--decision-timeout`, which governs §5.2/§5.3). Under `--notify-only`: never auto-nudge — `PushNotification` the diagnosis ("idle at prompt with open `/goal` work; suggest 'continue'") and let the human act.
+This nudge is gated only by its own ≥1×-cadence grace (not `--decision-timeout`, which governs §5.2/§5.3). Under `--notify-only`: never auto-nudge — send the diagnosis ("idle at prompt with open `/goal` work; suggest 'continue'") through the host notification channel and let the human act.
 
 ### 5.5 Dangerous-command guard false-positive → opt-in verified-safe auto-approve
 
@@ -205,9 +221,9 @@ When all hold, approve (bounded by the same per-window cap + cooldown):
 2. Navigate **deterministically** to the proceed option (§5.2 steps: arrow + `capture-pane` after each key; never blind-press), or send nothing if already highlighted.
 3. send `Enter` to confirm.
 4. `tmux capture-pane` — **confirm the command ran and the run resumed** (prompt cleared, job relaunched). If still blocked → do not hammer keys; notify and stop.
-5. **post-hoc `PushNotification`** stating you **approved a verified-safe destructive command** `<the command>`, with the one-line safety proof (which var was set in-block, which dir it scoped to) — always flag this as higher-impact than a plain steer; the human can still object.
+5. send a **post-hoc host notification** stating you **approved a verified-safe destructive command** `<the command>`, with the one-line safety proof (which var was set in-block, which dir it scoped to) — always flag this as higher-impact than a plain steer; the human can still object.
 
-Under `--notify-only` or without `--approve-safe-destructive`: never approve — `PushNotification` the diagnosis ("blocked on a dangerous-rm guard false positive; the command is safe because <proof>; press 1 to proceed") and let the human act.
+Under `--notify-only` or without `--approve-safe-destructive`: never approve — send the diagnosis through the host notification channel and let the human act.
 
 ### 5.6 Usage-limit (额度) reset → reset-aware auto-wake
 
@@ -226,47 +242,51 @@ When all hold, wake it (bounded by the per-window cap + cooldown):
 2. **If a feedback/rating popup overlays and blocks input** (`How is Claude doing 1/2/3/0`): it is **modal** — its dismiss key (`0`, or the shown affordance) targets the **popup**, not the composer. Send that **one** dismiss key, then `tmux capture-pane` and **verify both**: the popup is gone **and** the composer draft is **byte-identical** to step 1. If the draft **changed** (the key leaked into the text) → **do not submit; notify and stop** (a human must clear it). This dismiss-then-verify is exactly what makes sending the digit safe — the earlier rule "never send a digit" was over-conservative; the failure mode it feared (corrupting the draft) is caught by the after-capture, so **never send it blind, always verify after**.
 3. Submit (§5.4 step 2/3 rules): if a **queued human draft is the right next step** → send `Enter` to submit it **unchanged**; otherwise inject an **outcome-aware** resume nudge naming the next planned step.
 4. `tmux capture-pane` — confirm the agent went **busy** / consumed the input. If still not consumed after the popup is gone → do **not** hammer keys; the TUI may be independently wedged → notify (human dismiss/restart) and stop.
-5. **post-hoc `PushNotification`** stating you **auto-woke the target after its usage limit reset at `<T>`** (and whether you submitted a queued draft or injected a nudge).
+5. send a **post-hoc host notification** stating you **auto-woke the target after its usage limit reset at `<T>`** (and whether you submitted a queued draft or injected a nudge).
 
-Under `--notify-only`: never auto-wake — `PushNotification` once when `<T>` passes ("usage limit reset; idle with a queued draft / blocked by a feedback popup — press `0` to dismiss the rating then `Enter` to resume") and let the human act.
+Under `--notify-only`: never auto-wake — send one host notification when `<T>` passes and let the human act.
 
 **Kill-switch `--notify-only`** overrides the default and routes *every* steer through approval instead of auto-injecting:
-1. `PushNotification` with the **drafted prompt + a draft-timestamp**
+1. send a host notification with the **drafted prompt + a draft-timestamp**
 2. wait for the human
 3. if approval arrives **≤10 min** from the draft-timestamp → inject (type → confirm landed → Enter)
 4. if **>10 min** → **re-inspect, redraft, re-notify, re-time**. Never inject a stale draft.
 
-## 6. Loop (self-managed cron)
+## 6. Loop (host-managed recurrence)
 
-Unless `--no-schedule` is set: the first invocation runs **one tick immediately**, then `CronCreate` a recurring job (default hourly, on an **off-the-hour minute** to dodge congestion). Report the cron id.
+Unless `--no-schedule` is set, run **one tick immediately**, then create recurrence using the host selected in §2.1:
 
-Each tick **re-enters fresh** — the Explore subagents do the heavy transcript/git reading and return only conclusions, so the overseer's own context stays lean over long runs. The cron **auto-expires**, and the skill calls `CronDelete` on termination or when `/goal` completes.
+- **Claude Code:** create a recurring cron with `CronCreate` (default hourly, on an off-the-hour minute), and report the cron id. Delete it with `CronDelete` at a true terminal.
+- **Codex desktop app:** create an **in-chat Scheduled task** in the current chat with the requested cadence. Its durable prompt must re-invoke `$monitor-claude-goal <session-id> <verified-target> --no-schedule` with the active flags/principles, run exactly one tick, preserve/read the prior checkpoint, report only findings or terminal state, and stop/pause itself when the target is gone or the `/goal` is genuinely complete. Use the current local project, not an isolated worktree, because the target transcript and tmux server are machine-local. Report the scheduled task id or visible schedule.
+- **Codex CLI / IDE without Scheduled management:** if a persistent Goal plus a real wait/continuation mechanism is exposed, use it and report that mechanism. Otherwise run one tick and state plainly that **no hourly recurrence was created**; instruct the human to create an in-chat Scheduled task from the desktop app. Never leave a detached `sleep` loop and call it a monitor.
 
-> **Caveat (document to the user):** the monitor session and its tmux window must stay alive — closing the monitor kills the cron.
+Each tick re-enters the audit fresh and reads only the delta since the prior checkpoint. The recurrence must auto-expire or be stopped at a true terminal.
+
+> **Caveat:** Claude cron requires the monitor's Claude tmux session to stay alive. Codex local scheduled tasks require the computer and ChatGPT desktop app to stay running and the local project to remain available.
 
 ### 6.1 Self-teardown at a true terminal
 
 The overseer outlives the run it watches unless it ends itself, so a finished `/goal` otherwise leaves a dead monitor session (and an idle tmux pane) behind for every run. At a **true terminal only** — the `/goal` is **genuinely complete** (idle-and-done, §5/§7) or the target session is **gone** — wind down in this order:
 
-1. `PushNotification` with the terminal verdict (so the human learns *why* the watcher stopped);
-2. `CronDelete` the cron;
-3. as the **final** action, kill the overseer's own tmux session: `tmux -S <socket> kill-session -t '=<monitor-session>'`. When spawned by the `goal-monitor-spawn.sh` hook, the exact command is given verbatim in the invoking prompt — use it as-is rather than deriving one; otherwise resolve it from this session's own `$TMUX` (`tmux display-message -p '#{session_name}'`).
+1. send the terminal verdict through the host notification channel (so the human learns *why* the watcher stopped);
+2. stop the host recurrence: `CronDelete` on Claude Code, or stop/pause the in-chat Scheduled task on Codex;
+3. **Claude-host only:** as the final action, kill the overseer's own tmux session: `tmux -S <socket> kill-session -t '=<monitor-session>'`. When spawned by `goal-monitor-spawn.sh`, use the exact command from the invoking prompt. **Codex-host:** never kill the Codex chat/app process; ending the scheduled task is sufficient.
 
 This is the one carve-out in §3's kill ban: it closes **the watcher's own** session, never the target's. **Never self-tear-down for a resumable state** — wedged (§5.1), awaiting a decision (§5.2), resource-blocked (§5.3), idle-but-unfinished (§5.4), guard-blocked (§5.5), rate-limited (§5.6) all keep the run alive and need the overseer alive with it. When in doubt about "complete vs. merely quiet", stay up: a redundant watcher costs a tick, a premature teardown loses the watchdog silently.
 
-With `--no-schedule`: run the single tick, report findings, and tell the user to re-run (e.g. via `/loop <cadence> /monitor-claude-goal …`).
+With `--no-schedule`: run the single tick and report findings without creating recurrence.
 
 ## 7. Failure modes (explicit)
 
 - transcript missing / ambiguous / rotated → resolve via discovery+confirm, never guess
-- session ended or `/goal` genuinely complete → notify, `CronDelete`, then **self-teardown (§6.1)** — the only two states in which the overseer closes its own tmux session
-- blocked **awaiting a human decision** (interactive menu / permission prompt) → notify on first sight; if still unanswered past `--decision-timeout` → **auto-pick the recommended option (§5.2)**, do **not** `CronDelete` (the `/goal` resumes once the choice lands). Stays notify-only under `--notify-only` / `--decision-timeout off`
-- blocked **purely on resource availability** (no free GPU/VRAM/compute — stopped to ask which shared card to use, or idling for capacity) → notify on first sight; if still unanswered past `--decision-timeout` → **inject the poll-and-resume nudge (§5.3)** (re-check now; else set a resumable watcher that auto-starts when a card frees), do **not** `CronDelete`. Never auto-select an option that evicts/kills another job or crowds a card into OOM — those stay human-only. Stays notify-only under `--notify-only` / `--decision-timeout off`
+- session ended or `/goal` genuinely complete → notify, stop recurrence, then perform the host-appropriate **self-teardown (§6.1)**
+- blocked **awaiting a human decision** (interactive menu / permission prompt) → notify on first sight; if still unanswered past `--decision-timeout` → **auto-pick the recommended option (§5.2)**, keep recurrence active (the `/goal` resumes once the choice lands). Stays notify-only under `--notify-only` / `--decision-timeout off`
+- blocked **purely on resource availability** (no free GPU/VRAM/compute — stopped to ask which shared card to use, or idling for capacity) → notify on first sight; if still unanswered past `--decision-timeout` → **inject the poll-and-resume nudge (§5.3)** (re-check now; else set a resumable watcher that auto-starts when a card frees), keep recurrence active. Never auto-select an option that evicts/kills another job or crowds a card into OOM — those stay human-only. Stays notify-only under `--notify-only` / `--decision-timeout off`
 - target **wedged** — frozen in a non-returning tool/shell while the awaited condition is already satisfied/dead, no transcript progress for ≥2× the cadence → **interrupt-then-steer recovery (§5.1)**, not silent waiting (a self-matching `pgrep` watcher is the canonical case)
-- target **idle-but-unfinished** — a long job (GPU run / eval / download) returned, the agent summarized and **stopped at an idle prompt** with open `/goal` work, nothing running and no question to the human, idle ≥1× cadence → **plain resume nudge (§5.4)** naming the next planned step, not silent waiting (the canonical "gpu run done but it didn't continue" stall). Do **not** `CronDelete` — the run resumes once the nudge lands
-- blocked on a **dangerous-command-guard false positive** — a safe, in-tree `rm` of stale/regenerable artifacts flagged "possibly-empty variable path" while the var is actually set in-block → **notify-only by default**; **only** if `--approve-safe-destructive` is set **and** the overseer independently proves the exact command safe (var set in-block, targets scoped inside the working tree, only regenerable artifacts) → **auto-approve (§5.5)**. Any uncertainty, or a command that could touch irreplaceable data, → stay notify, never approve. Do **not** `CronDelete` — the run resumes once approved
-- target **hit a Claude usage limit (额度)** — `You've hit your session limit · resets <T>`, idle mid-`/goal`, often with a **queued human draft** and/or a `How is Claude doing 1/2/3/0` feedback popup → **before `<T>`: silent / notify-once** (quota genuinely out); **after `<T>` passes and it has not self-resumed → reset-aware auto-wake (§5.6)** — judge the reset from the displayed `<T>` vs. the wall clock (never the target's own retry), clear a blocking feedback popup safely (send its dismiss key, then capture to **prove the queued draft survived** before pressing `Enter`), and submit the queued draft / an outcome-aware resume nudge. A feedback popup that **eats the `Enter`** is the canonical reason a post-reset wake silently fails (it stalled an 11h overnight run). Do **not** `CronDelete` — the run resumes once woken
-- target's **own wake-up died** — the agent launched a job/download and delegated re-engagement to its own wake-up (a self-`send-keys` script, background poller, or cron), that wake-up **errored**, so when the job ends nothing re-engages the agent and it waits forever → the overseer is the **independent backup**: it judges completion from the job/artifact directly (never from that broken wake-up) and resolves it as a wedge (still mid-poll → §5.1) or an idle stall (already at the prompt → §5.4), steering **outcome-aware** (clean finish → continue; crash → diagnose/rerun). Never `CronDelete` while the work is unfinished
+- target **idle-but-unfinished** — a long job (GPU run / eval / download) returned, the agent summarized and **stopped at an idle prompt** with open `/goal` work, nothing running and no question to the human, idle ≥1× cadence → **plain resume nudge (§5.4)** naming the next planned step, not silent waiting; keep recurrence active
+- blocked on a **dangerous-command-guard false positive** — a safe, in-tree `rm` of stale/regenerable artifacts flagged "possibly-empty variable path" while the var is actually set in-block → **notify-only by default**; **only** if `--approve-safe-destructive` is set **and** the overseer independently proves the exact command safe (var set in-block, targets scoped inside the working tree, only regenerable artifacts) → **auto-approve (§5.5)**. Any uncertainty, or a command that could touch irreplaceable data, → stay notify, never approve; keep recurrence active
+- target **hit a Claude usage limit (额度)** — `You've hit your session limit · resets <T>`, idle mid-`/goal`, often with a **queued human draft** and/or a `How is Claude doing 1/2/3/0` feedback popup → **before `<T>`: silent / notify-once** (quota genuinely out); **after `<T>` passes and it has not self-resumed → reset-aware auto-wake (§5.6)** — judge the reset from the displayed `<T>` vs. the wall clock (never the target's own retry), clear a blocking feedback popup safely, and submit the queued draft / an outcome-aware resume nudge; keep recurrence active
+- target's **own wake-up died** — the agent launched a job/download and delegated re-engagement to its own wake-up, that wake-up **errored**, so when the job ends nothing re-engages the agent → judge completion from the job/artifact directly and resolve it as a wedge (§5.1) or idle stall (§5.4), steering outcome-aware. Never stop recurrence while work is unfinished
 - tmux window missing / renamed / reused, or pane doesn't look like Claude Code → **never inject**, notify
 - multiple `/goal` candidates → `--discover` + human confirms the pair
 - criteria conflict → **human wins** (newer human steering overrides); ambiguous → **inject the recommended steer**, flag it in the post-hoc notification
@@ -274,7 +294,7 @@ With `--no-schedule`: run the single tick, report findings, and tell the user to
 
 ## Design insight (why this is safe)
 
-- The safety rests on a **capability split**: heavy *reading* is delegated to `Explore` subagents that *cannot mutate*, while the *mutating* powers — tmux prompt-injection (§5, the plain path that §5.4 also rides), tmux Esc-interrupt (§5.1), tmux recommended-option-pick (§5.2), and the tmux resource-wait nudge (§5.3) — are funneled through narrow gated protocols that send **keystrokes only**, never a process kill or repo write. That separation is what lets "read-only overseer" be a real guarantee rather than a hope.
+- The safety rests on a **capability split**: all audit work is constrained to read-only tools, while the mutating powers — tmux prompt-injection (§5), Esc-interrupt (§5.1), recommended-option-pick (§5.2), and resource-wait nudge (§5.3) — are funneled through narrow gated protocols that send **keystrokes only**, never a process kill or repo write. On Codex, do not delegate unless read-only behavior can be enforced by governing instructions; direct read-only inspection is preferable to unsafe parallelism.
 - Wedge-recovery (§5.1) is deliberately the *narrowest possible* expansion of that power: one extra keystroke (Escape), fired only after positively confirming the awaited work is already done so nothing real is destroyed. It exists because the original "blocked → notify only" rule had a silent failure mode — a target hung on its own buggy watcher would stall for hours while the overseer dutifully sent no-op notifications. Detecting the wedge and clearing it is strictly more useful and barely less safe.
 - Stale-decision auto-pick (§5.2) is the same kind of bounded expansion for the *other* silent stall — a real `AskUserQuestion` left unanswered while the human is away. It is constrained to only ever **confirm the agent's own recommended default** (never a different branch, never a meta-option, never against a stated principle) and only after a grace period with the prompt provably unchanged and unanswered — so the worst case is "the obvious next step got taken an hour early," which the post-hoc notification lets the human reverse. Picking the default is strictly more useful than waiting forever and barely less safe.
 - Resource-wait nudge (§5.3) covers the stall §5.2 deliberately won't touch — blocked on a *shared* resource (no free GPU) where every menu option is unsafe to choose blind (grab a contended card, evict/kill someone else's job). Its safety comes from separating the **safe invariant** ("wait for capacity to free on its own, then auto-resume" — non-destructive and reversible no matter what) from the **unsafe choice** (which specific shared card / whose job to kill — left to the human forever). The overseer only ever injects the former, so the worst case is "a resumable wait-watcher got set up an hour early," while preemption and eviction remain strictly human-only. This is what turns a multi-hour overnight GPU stall into a self-clearing wait.

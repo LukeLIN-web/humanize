@@ -4,6 +4,7 @@
 #
 # What this does:
 # 1) Sync skills/{humanize,humanize-gen-plan,humanize-rlcr} to target skills dir(s)
+#    and install monitor-claude-goal for Codex targets
 # 2) Copy runtime dependencies into <skills-dir>/humanize/{scripts,hooks,prompt-template}
 # 3) Hydrate SKILL.md command paths with concrete runtime root paths
 #
@@ -433,6 +434,10 @@ install_kimi_target() {
 
 install_codex_target() {
     sync_target "codex" "$CODEX_SKILLS_DIR"
+    [[ -f "$SKILLS_SOURCE_ROOT/monitor-claude-goal/SKILL.md" ]] \
+        || die "missing $SKILLS_SOURCE_ROOT/monitor-claude-goal/SKILL.md"
+    log "syncing [codex] skill: monitor-claude-goal"
+    sync_one_skill "monitor-claude-goal" "$CODEX_SKILLS_DIR"
     install_codex_user_config "$CODEX_SKILLS_DIR/humanize" "codex"
     install_codex_native_hooks "$CODEX_SKILLS_DIR"
 }

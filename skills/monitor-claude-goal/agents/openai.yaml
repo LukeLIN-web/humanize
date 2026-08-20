@@ -1,0 +1,7 @@
+interface:
+  display_name: "Monitor Claude Goal"
+  short_description: "Audit and safely steer a separate Claude goal"
+  default_prompt: "Use $monitor-claude-goal to audit this Claude session hourly without taking over its work."
+
+policy:
+  allow_implicit_invocation: true

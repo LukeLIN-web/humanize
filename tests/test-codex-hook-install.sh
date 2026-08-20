@@ -138,6 +138,15 @@ else
     fail "Codex install keeps humanize-rlcr entrypoint skill" "skills/humanize-rlcr/SKILL.md exists" "missing"
 fi
 
+if [[ -f "$CODEX_HOME_DIR/skills/monitor-claude-goal/SKILL.md" ]] \
+    && grep -q 'Codex in the ChatGPT desktop app' "$CODEX_HOME_DIR/skills/monitor-claude-goal/SKILL.md" \
+    && [[ -f "$CODEX_HOME_DIR/skills/monitor-claude-goal/agents/openai.yaml" ]]; then
+    pass "Codex install syncs the cross-host Claude goal monitor"
+else
+    fail "Codex install syncs the cross-host Claude goal monitor" \
+        "Codex scheduling guidance and agents/openai.yaml are installed" "missing or incomplete"
+fi
+
 if [[ -f "$HOOKS_FILE" ]]; then
     pass "Codex install writes hooks.json"
 else
