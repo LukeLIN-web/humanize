@@ -23,7 +23,7 @@ Or use the unified installer directly:
 ```
 
 This will:
-- Sync `humanize`, `humanize-gen-plan`, `humanize-refine-plan`, and `humanize-rlcr` into `${CODEX_HOME:-~/.codex}/skills`
+- Sync `humanize`, `humanize-gen-plan`, `humanize-refine-plan`, `humanize-rlcr`, and `monitor-claude-goal` into `${CODEX_HOME:-~/.codex}/skills`
 - Copy runtime dependencies into `${CODEX_HOME:-~/.codex}/skills/humanize`
 - Install/update native Humanize Stop hooks in `${CODEX_HOME:-~/.codex}/hooks.json`
 - Enable the native `hooks` feature in `${CODEX_HOME:-~/.codex}/config.toml` when `codex` is available
@@ -44,6 +44,7 @@ Expected directories:
 - `humanize-gen-plan`
 - `humanize-refine-plan`
 - `humanize-rlcr`
+- `monitor-claude-goal`
 
 Runtime dependencies in `humanize/`:
 - `scripts/`
@@ -58,6 +59,7 @@ Installed files/directories:
 - `${CODEX_HOME:-~/.codex}/skills/humanize-gen-plan/SKILL.md`
 - `${CODEX_HOME:-~/.codex}/skills/humanize-refine-plan/SKILL.md`
 - `${CODEX_HOME:-~/.codex}/skills/humanize-rlcr/SKILL.md`
+- `${CODEX_HOME:-~/.codex}/skills/monitor-claude-goal/SKILL.md`
 - `${CODEX_HOME:-~/.codex}/skills/humanize/scripts/`
 - `${CODEX_HOME:-~/.codex}/skills/humanize/hooks/`
 - `${CODEX_HOME:-~/.codex}/skills/humanize/prompt-template/`
@@ -79,6 +81,16 @@ Expected:
 - `hooks.json` contains `loop-codex-stop-hook.sh`
 - `${XDG_CONFIG_HOME:-~/.config}/humanize/config.json` contains `bitlesson_model` set to a Codex/OpenAI model such as `gpt-5.6-sol`
 - for `--target codex`, `${XDG_CONFIG_HOME:-~/.config}/humanize/config.json` also contains `provider_mode: "codex-only"`
+
+## Monitor a Claude Goal from Codex
+
+Invoke the installed skill explicitly:
+
+```text
+$monitor-claude-goal 01fe880f --cadence 1h
+```
+
+The shorthand `omni session:01fe880f` also matches this skill. In the ChatGPT desktop app, the skill runs one audit immediately and creates an in-chat Scheduled task for the requested cadence. Codex CLI and the IDE extension do not expose Scheduled management; there the skill must report a single tick unless a real Goal/wait continuation mechanism is available. It never treats a detached shell timer as successful monitoring.
 
 ## Optional: Install for Both Codex and Kimi
 
