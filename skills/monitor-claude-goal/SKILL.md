@@ -81,7 +81,7 @@ Each invocation runs exactly one tick:
 
 1. **Re-locate target** (transcript + tmux window, via §2.2 — re-resolve every tick; panes move and sessions get resumed under new ids). If gone/ended → notify, stop the recurring job, stop.
 2. **Refresh criteria** — re-read the human's *latest* steering from the transcript since the last checkpoint. Newer overrides older; merge `--principles`. Each derived rule **cites its source turn**. Genuine uncertainty → inject the **recommended / best-judgment** steer (§5) and flag it as a judgment call in the post-hoc notification; do not wait, do not ask.
-   Treat text visible in the target's composer but absent from the transcript as an **unsent draft**, not as human steering. Preserve it and account for it before any injection, but never cite it as an instruction or silently execute it merely because it is present.
+   Treat text visible in the target's composer but absent from the transcript as an **unsent draft**, not as human steering. Preserve it through the mandatory composer transaction in §5.0 before any free-text injection, but never cite it as an instruction or silently execute it merely because it is present.
 3. **Run 3 read-only audit legs, in parallel when the host safely supports it:**
    - (a) transcript: latest progress since last checkpoint
    - (b) git: new commits + worktree diff since last checkpoint `HEAD`
@@ -106,12 +106,32 @@ Record a lightweight checkpoint (latest transcript byte-offset + mtime + git `HE
 
 **Auto-inject path** (rails always on):
 1. build the steer text from the *fresh* inspection (ambiguous → the single most reasonable steer)
-2. `tmux send-keys -l "<text>"` (literal, **no Enter**)
-3. `tmux capture-pane` to **verify the text landed**
-4. send `Enter`
-5. capture again to **confirm submitted**
-6. send a **post-hoc host notification** stating exactly what was injected (flag ambiguous/judgment-call steers as such)
+2. if the free-form composer contains an unsent draft, run the complete **save → clear → inject → restore** transaction in §5.0; an unsent draft is **not** a reason to skip an otherwise-approved injection
+3. `tmux send-keys -l "<text>"` (literal, **no Enter**)
+4. `tmux capture-pane` to **verify the text landed exactly**
+5. send `Enter`
+6. capture again to **confirm submitted**, then restore any saved draft via §5.0 **without Enter**
+7. send a **post-hoc host notification** stating exactly what was injected and whether a human draft was restored (flag ambiguous/judgment-call steers as such)
 - Enforce a cap on `tmux send-keys` per window + a cooldown between injections.
+
+### 5.0 Unsent composer draft → transactional save-clear-inject-restore
+
+An unsent human draft in the free-form composer must never block an otherwise-approved steer and must never be submitted as if it were an instruction. Treat it as temporarily displaced user state: **save it exactly, clear it, submit the overseer's steer, then put the draft back exactly without pressing Enter.** This protocol applies to every free-text injection in §5, §5.1, §5.3, §5.4, and §5.6. It does not alter deterministic menu navigation in §5.2/§5.5.
+
+Before clearing, confirm **all** of:
+- the pane is the already-verified target and shows a free-form Claude Code composer, not a modal menu, permission prompt, feedback popup, or running-tool screen that intercepts input;
+- the complete draft is visible and can be captured exactly. Use `tmux capture-pane -p -J` so display wrapping does not invent newlines. If the draft is truncated, scrolled, hidden, or otherwise ambiguous, do **not** clear it — notify instead;
+- two captures immediately before mutation show the same draft and no new transcript user turn arrived. Any change means the human may be typing: abort this tick and retry later.
+
+Run the transaction as one bounded injection:
+1. hold the exact draft text in the overseer's in-memory/checkpoint context; never write it into the target repo or transcript and never quote its content in the notification;
+2. send the composer's clear-line action once (`tmux send-keys C-u`), then capture and verify that the free-form composer is empty. If it is not empty, do not inject; restore the saved text if safe, notify, and stop;
+3. inject the freshly audited steer literally, verify it landed exactly, send `Enter`, and capture until the steer is visibly consumed;
+4. as soon as a free-form composer that accepts text is visible again, restore the saved draft with literal tmux buffer paste (`set-buffer` + `paste-buffer`), **never** keystroke interpretation and **never Enter**;
+5. capture with `-J` and verify the restored draft is byte-identical after display-wrap normalization. If verification fails, never press Enter: retain the saved draft in the monitor checkpoint, send a high-priority host notification, and retry restoration only after a fresh capture proves the composer is safe;
+6. count the entire clear/inject/restore sequence as one injection for cap and cooldown purposes.
+
+The restored draft remains **unsent human state**. Do not reinterpret it as steering on the next tick unless it later appears as a real user turn in the transcript.
 
 **Notify-without-inject is reserved for true terminals** — cases no overseer action can fix: target gone, the pane is no longer a live Claude Code TUI, or `/goal` genuinely complete (idle-and-done). These never auto-inject. A target merely **wedged** on a mechanical hang is NOT a terminal — recover it via §5.1, do not just notify and wait. A target **idle-but-unfinished** (stopped at an idle prompt with open `/goal` work, not asking the human) is NOT the idle-and-done terminal — nudge it on via §5.4. A target **blocked awaiting a human decision** is only a *temporary* terminal: notify on first sight, but if it stays unanswered past `--decision-timeout`, auto-pick its **recommended** option (§5.2) rather than waiting forever — or, when it's blocked **purely on resource availability** (no free GPU/compute), inject the **poll-and-resume nudge** (§5.3) instead.
 
@@ -130,8 +150,8 @@ When all are confirmed, recover (this is the **only** sanctioned key-send outsid
 1. `tmux capture-pane` — re-confirm the wedged tool is *still* running (not just-returned this instant)
 2. `tmux send-keys Escape` to interrupt the hung tool call
 3. `tmux capture-pane` — **confirm the agent returned to an idle prompt**. If it did not, do **not** hammer Escape; notify and stop.
-4. account for any stale text already queued in the input box (the human's own queued instruction may now be exactly the right steer to submit; otherwise clear/replace it with a fresh steer)
-5. inject the steer via the normal §5 path (type → verify landed → Enter → confirm submitted) — **outcome-aware** (§4 step 4): if the awaited job *finished cleanly* → steer onward to the next planned step; if it *crashed/failed* (output missing/truncated, nonzero exit, traceback) → steer the agent to **diagnose the failure and decide on a rerun**, naming the symptom, **never** "continue" as if it had succeeded.
+4. if stale text is present in the input box, preserve it with §5.0; never submit or discard it merely because it resembles a useful instruction
+5. inject the steer via the normal §5 path and restore the saved draft (type → verify landed → Enter → confirm submitted → restore without Enter) — **outcome-aware** (§4 step 4): if the awaited job *finished cleanly* → steer onward to the next planned step; if it *crashed/failed* (output missing/truncated, nonzero exit, traceback) → steer the agent to **diagnose the failure and decide on a rerun**, naming the symptom, **never** "continue" as if it had succeeded.
 6. send a **post-hoc host notification** stating you **interrupted a wedged tool call** and what you steered — always flag interrupt-recovery as higher-impact than a plain steer.
 
 Under `--notify-only`, never auto-interrupt: send the diagnosis + recommended manual fix through the host notification channel and let the human act.
@@ -174,9 +194,9 @@ When all hold, act (bounded by the same per-window cap + cooldown as §5):
 1. `tmux capture-pane` — re-confirm the same resource block is on screen.
 2. **If the menu already offers a safe "wait for capacity / auto-start when free" option** (the non-destructive one, distinct from grab-shared-card / kill-others) → select it via the §5.2 deterministic-navigation steps (capture after each arrow; confirm highlight).
 3. **Otherwise inject a free-text steer** via the normal §5 path (type → verify landed → Enter → confirm submitted), e.g.: *"别停着等人要卡 — 先查一下现在的空闲显存;够就直接在空卡上跑,不够就挂一个可续跑的后台 watcher 轮询显存,等有卡自己空出来再自动开整跑。绝不抢占/停别人的 job,也不要挤会 OOM 的卡。"* ("Don't sit idle waiting for a human to assign a GPU — check current free VRAM now; run on free cards if enough, else set up a resumable background watcher that polls and auto-starts when a card frees on its own. Never preempt/kill another job, never crowd a card into OOM.")
-4. **Stale unsent human draft in the box:** if the human left a draft that is *itself* a safe wait/free-card instruction → submit theirs. If it is a risky shared-resource grab (e.g. "用 GPU2 挤一下") → **do not submit it**; clear and replace with the safe wait-nudge above (and say so in the notification — you overrode a risky draft with the non-destructive path).
+4. **Unsent human draft in the box:** run §5.0 around the safe wait-nudge — save the draft exactly, clear it, submit the nudge, and restore the draft without Enter. Never submit, discard, or reinterpret the draft, even when it resembles a safe or risky resource instruction.
 5. `tmux capture-pane` — confirm the target accepted it (menu closed / steer consumed and it began checking capacity). If not consumed, do **not** hammer keys — notify and stop.
-6. send a **post-hoc host notification** stating you **nudged a GPU/resource-blocked target to poll-and-auto-resume** (and flag if you overrode a risky unsent draft); the human can still redirect to a specific card.
+6. send a **post-hoc host notification** stating you **nudged a GPU/resource-blocked target to poll-and-auto-resume** and whether an unsent draft was restored; the human can still redirect to a specific card.
 
 Under `--notify-only` or `--decision-timeout off`: never nudge — send the diagnosis ("blocked on free GPU; suggest a wait-watcher") through the host notification channel and let the human act.
 
@@ -195,7 +215,7 @@ Before nudging, confirm **all** of:
 
 When all hold, nudge via the **normal §5 path** (bounded by the same per-window cap + cooldown):
 1. `tmux capture-pane` — re-confirm the idle prompt and that no tool/menu appeared in the meantime.
-2. account for any **unsent human draft** in the box (§5.1 step 4 rules): if it is itself the right next step → submit theirs; otherwise leave a genuine human draft untouched and **notify instead** rather than overwrite it.
+2. if an **unsent human draft** is in the box, run §5.0 around the nudge: save it, clear it, submit the nudge, and restore it exactly without Enter. The draft no longer converts this case into notify-only.
 3. inject a **concrete**, **outcome-aware** steer built from the transcript's own plan (§4 step 4 classification): if the awaited job (GPU run / eval / **download**) *finished cleanly* → name the finished step and the next one (e.g. *"labeling 跑完了,按计划接着走:build label set → train chooser → re-score → attribution → review → ledger,别停在这。"*), never a bare "continue"; if it *crashed/failed* (output missing/truncated, nonzero exit, traceback in the log) → name the symptom and steer the agent to **diagnose and decide on a rerun**, **not** to proceed as if it had succeeded.
 4. `tmux capture-pane` — confirm the steer landed and the agent picked the turn back up. If not consumed → do not hammer keys, notify and stop.
 5. send a **post-hoc host notification** stating you **nudged an idle-but-unfinished target to resume** the next planned step.
@@ -238,11 +258,11 @@ Before waking, confirm **all** of:
 - as in §5.4, the agent's **last message is not a genuine question to the human** (else waiting-for-a-human → notify, do not wake).
 
 When all hold, wake it (bounded by the per-window cap + cooldown):
-1. `tmux capture-pane` — re-confirm idle + usage-limit marker + `<T>` passed; record the **exact composer draft text byte-for-byte** (if any).
-2. **If a feedback/rating popup overlays and blocks input** (`How is Claude doing 1/2/3/0`): it is **modal** — its dismiss key (`0`, or the shown affordance) targets the **popup**, not the composer. Send that **one** dismiss key, then `tmux capture-pane` and **verify both**: the popup is gone **and** the composer draft is **byte-identical** to step 1. If the draft **changed** (the key leaked into the text) → **do not submit; notify and stop** (a human must clear it). This dismiss-then-verify is exactly what makes sending the digit safe — the earlier rule "never send a digit" was over-conservative; the failure mode it feared (corrupting the draft) is caught by the after-capture, so **never send it blind, always verify after**.
-3. Submit (§5.4 step 2/3 rules): if a **queued human draft is the right next step** → send `Enter` to submit it **unchanged**; otherwise inject an **outcome-aware** resume nudge naming the next planned step.
-4. `tmux capture-pane` — confirm the agent went **busy** / consumed the input. If still not consumed after the popup is gone → do **not** hammer keys; the TUI may be independently wedged → notify (human dismiss/restart) and stop.
-5. send a **post-hoc host notification** stating you **auto-woke the target after its usage limit reset at `<T>`** (and whether you submitted a queued draft or injected a nudge).
+1. `tmux capture-pane` — re-confirm idle + usage-limit marker + `<T>` passed; record the **exact composer draft text byte-for-byte** (if any) for the §5.0 transaction.
+2. **If a feedback/rating popup overlays and blocks input** (`How is Claude doing 1/2/3/0`): it is **modal** — its dismiss key (`0`, or the shown affordance) targets the **popup**, not the composer. Send that **one** dismiss key, then `tmux capture-pane` and **verify both**: the popup is gone **and** the composer draft is **byte-identical** to step 1. If the draft **changed** (the key leaked into the text), do **not** submit: clear the corrupted composer, restore the saved snapshot literally without Enter, verify it, notify, and stop this tick. This dismiss-then-verify is exactly what makes sending the digit safe — the earlier rule "never send a digit" was over-conservative; the failure mode it feared (corrupting the draft) is caught by the after-capture, so **never send it blind, always verify after**.
+3. Inject an **outcome-aware** resume nudge naming the next planned step. If a human draft exists, use §5.0: clear it only after the stable exact snapshot, submit the nudge, then restore the draft **without Enter**. Never wake the target by submitting the human draft itself.
+4. `tmux capture-pane` — confirm the agent went **busy** / consumed the nudge and any saved draft was restored exactly. If the nudge was not consumed after the popup is gone, or restoration cannot be verified, do **not** hammer keys or press Enter — notify and stop.
+5. send a **post-hoc host notification** stating you **auto-woke the target after its usage limit reset at `<T>`** and whether an unsent human draft was transactionally restored.
 
 Under `--notify-only`: never auto-wake — send one host notification when `<T>` passes and let the human act.
 
@@ -283,9 +303,9 @@ With `--no-schedule`: run the single tick and report findings without creating r
 - blocked **awaiting a human decision** (interactive menu / permission prompt) → notify on first sight; if still unanswered past `--decision-timeout` → **auto-pick the recommended option (§5.2)**, keep recurrence active (the `/goal` resumes once the choice lands). Stays notify-only under `--notify-only` / `--decision-timeout off`
 - blocked **purely on resource availability** (no free GPU/VRAM/compute — stopped to ask which shared card to use, or idling for capacity) → notify on first sight; if still unanswered past `--decision-timeout` → **inject the poll-and-resume nudge (§5.3)** (re-check now; else set a resumable watcher that auto-starts when a card frees), keep recurrence active. Never auto-select an option that evicts/kills another job or crowds a card into OOM — those stay human-only. Stays notify-only under `--notify-only` / `--decision-timeout off`
 - target **wedged** — frozen in a non-returning tool/shell while the awaited condition is already satisfied/dead, no transcript progress for ≥2× the cadence → **interrupt-then-steer recovery (§5.1)**, not silent waiting (a self-matching `pgrep` watcher is the canonical case)
-- target **idle-but-unfinished** — a long job (GPU run / eval / download) returned, the agent summarized and **stopped at an idle prompt** with open `/goal` work, nothing running and no question to the human, idle ≥1× cadence → **plain resume nudge (§5.4)** naming the next planned step, not silent waiting; keep recurrence active
+- target **idle-but-unfinished** — a long job (GPU run / eval / download) returned, the agent summarized and **stopped at an idle prompt** with open `/goal` work, nothing running and no question to the human, idle ≥1× cadence → **plain resume nudge (§5.4)** naming the next planned step, not silent waiting; preserve any composer draft with §5.0 and keep recurrence active
 - blocked on a **dangerous-command-guard false positive** — a safe, in-tree `rm` of stale/regenerable artifacts flagged "possibly-empty variable path" while the var is actually set in-block → **notify-only by default**; **only** if `--approve-safe-destructive` is set **and** the overseer independently proves the exact command safe (var set in-block, targets scoped inside the working tree, only regenerable artifacts) → **auto-approve (§5.5)**. Any uncertainty, or a command that could touch irreplaceable data, → stay notify, never approve; keep recurrence active
-- target **hit a Claude usage limit (额度)** — `You've hit your session limit · resets <T>`, idle mid-`/goal`, often with a **queued human draft** and/or a `How is Claude doing 1/2/3/0` feedback popup → **before `<T>`: silent / notify-once** (quota genuinely out); **after `<T>` passes and it has not self-resumed → reset-aware auto-wake (§5.6)** — judge the reset from the displayed `<T>` vs. the wall clock (never the target's own retry), clear a blocking feedback popup safely, and submit the queued draft / an outcome-aware resume nudge; keep recurrence active
+- target **hit a Claude usage limit (额度)** — `You've hit your session limit · resets <T>`, idle mid-`/goal`, often with a **queued human draft** and/or a `How is Claude doing 1/2/3/0` feedback popup → **before `<T>`: silent / notify-once** (quota genuinely out); **after `<T>` passes and it has not self-resumed → reset-aware auto-wake (§5.6)** — judge the reset from the displayed `<T>` vs. the wall clock (never the target's own retry), clear a blocking feedback popup safely, inject an outcome-aware resume nudge, and restore the queued draft via §5.0 without submitting it; keep recurrence active
 - target's **own wake-up died** — the agent launched a job/download and delegated re-engagement to its own wake-up, that wake-up **errored**, so when the job ends nothing re-engages the agent → judge completion from the job/artifact directly and resolve it as a wedge (§5.1) or idle stall (§5.4), steering outcome-aware. Never stop recurrence while work is unfinished
 - tmux window missing / renamed / reused, or pane doesn't look like Claude Code → **never inject**, notify
 - multiple `/goal` candidates → `--discover` + human confirms the pair
@@ -295,6 +315,7 @@ With `--no-schedule`: run the single tick and report findings without creating r
 ## Design insight (why this is safe)
 
 - The safety rests on a **capability split**: all audit work is constrained to read-only tools, while the mutating powers — tmux prompt-injection (§5), Esc-interrupt (§5.1), recommended-option-pick (§5.2), and resource-wait nudge (§5.3) — are funneled through narrow gated protocols that send **keystrokes only**, never a process kill or repo write. On Codex, do not delegate unless read-only behavior can be enforced by governing instructions; direct read-only inspection is preferable to unsafe parallelism.
+- Composer draft preservation (§5.0) makes a human's half-written text compatible with timely intervention: the overseer snapshots a stable, fully visible draft, temporarily clears it, sends only its own audited steer, then restores the draft literally without Enter. The double-capture race guard prevents clobbering a human who is actively typing; exact post-restore verification prevents silent corruption; ambiguous or unrecoverable drafts remain notify-only.
 - Wedge-recovery (§5.1) is deliberately the *narrowest possible* expansion of that power: one extra keystroke (Escape), fired only after positively confirming the awaited work is already done so nothing real is destroyed. It exists because the original "blocked → notify only" rule had a silent failure mode — a target hung on its own buggy watcher would stall for hours while the overseer dutifully sent no-op notifications. Detecting the wedge and clearing it is strictly more useful and barely less safe.
 - Stale-decision auto-pick (§5.2) is the same kind of bounded expansion for the *other* silent stall — a real `AskUserQuestion` left unanswered while the human is away. It is constrained to only ever **confirm the agent's own recommended default** (never a different branch, never a meta-option, never against a stated principle) and only after a grace period with the prompt provably unchanged and unanswered — so the worst case is "the obvious next step got taken an hour early," which the post-hoc notification lets the human reverse. Picking the default is strictly more useful than waiting forever and barely less safe.
 - Resource-wait nudge (§5.3) covers the stall §5.2 deliberately won't touch — blocked on a *shared* resource (no free GPU) where every menu option is unsafe to choose blind (grab a contended card, evict/kill someone else's job). Its safety comes from separating the **safe invariant** ("wait for capacity to free on its own, then auto-resume" — non-destructive and reversible no matter what) from the **unsafe choice** (which specific shared card / whose job to kill — left to the human forever). The overseer only ever injects the former, so the worst case is "a resumable wait-watcher got set up an hour early," while preemption and eviction remain strictly human-only. This is what turns a multi-hour overnight GPU stall into a self-clearing wait.

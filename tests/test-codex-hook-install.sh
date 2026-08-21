@@ -140,11 +140,15 @@ fi
 
 if [[ -f "$CODEX_HOME_DIR/skills/monitor-claude-goal/SKILL.md" ]] \
     && grep -q 'Codex in the ChatGPT desktop app' "$CODEX_HOME_DIR/skills/monitor-claude-goal/SKILL.md" \
+    && grep -q 'transactional save-clear-inject-restore' "$CODEX_HOME_DIR/skills/monitor-claude-goal/SKILL.md" \
+    && grep -q 'tmux send-keys C-u' "$CODEX_HOME_DIR/skills/monitor-claude-goal/SKILL.md" \
+    && grep -q 'set-buffer.*paste-buffer' "$CODEX_HOME_DIR/skills/monitor-claude-goal/SKILL.md" \
+    && grep -q 'restore the draft.*without Enter' "$CODEX_HOME_DIR/skills/monitor-claude-goal/SKILL.md" \
     && [[ -f "$CODEX_HOME_DIR/skills/monitor-claude-goal/agents/openai.yaml" ]]; then
-    pass "Codex install syncs the cross-host Claude goal monitor"
+    pass "Codex install syncs the cross-host Claude goal monitor with draft preservation"
 else
     fail "Codex install syncs the cross-host Claude goal monitor" \
-        "Codex scheduling guidance and agents/openai.yaml are installed" "missing or incomplete"
+        "Codex scheduling, transactional draft preservation, and agents/openai.yaml are installed" "missing or incomplete"
 fi
 
 if [[ -f "$HOOKS_FILE" ]]; then
