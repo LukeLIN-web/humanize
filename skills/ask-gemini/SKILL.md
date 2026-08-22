@@ -1,7 +1,7 @@
 ---
 name: ask-gemini
 description: Consult Gemini as an independent expert with deep web research. Sends a question or task to Gemini CLI and returns a research-backed response.
-argument-hint: "[--gemini-model MODEL] [--gemini-timeout SECONDS] [question or task]"
+argument-hint: "[--gemini-model MODEL] [--gemini-timeout SECONDS] [--no-web-research] [question or task]"
 allowed-tools: "Bash(${CLAUDE_PLUGIN_ROOT}/scripts/ask-gemini.sh:*)"
 ---
 
@@ -22,7 +22,7 @@ If the user only supplied a question or task, execute:
 "${CLAUDE_PLUGIN_ROOT}/scripts/ask-gemini.sh" "$ARGUMENTS"
 ```
 
-If the user supplied flags such as `--gemini-model` or `--gemini-timeout`, reconstruct the command so those flags remain separate shell arguments and the remaining free-form question is passed as one quoted final argument.
+If the user supplied flags such as `--gemini-model`, `--gemini-timeout`, or `--no-web-research`, reconstruct the command so those flags remain separate shell arguments and the remaining free-form question is passed as one quoted final argument.
 
 Example:
 
@@ -52,10 +52,12 @@ because the shell will re-parse the question text and can fail before `ask-gemin
 | 0 | Success - Gemini response is in stdout |
 | 1 | Validation error (missing gemini, empty question, invalid flags) |
 | 124 | Timeout - suggest using `--gemini-timeout` with a larger value |
+| 126 | Quota exhausted - the key has no generation quota left for that model; suggest a different `--gemini-model` |
 | Other | Gemini process error - report the exit code and any stderr output |
 
 ## Notes
 
 - The response is saved to `.humanize/skill/<timestamp>/output.md` for reference
-- Default model is `gemini-3.1-pro-preview` with a 3600-second timeout
-- Gemini is always instructed to perform Google Search for up-to-date information
+- Default model is `gemini-3.7-flash` with a 3600-second timeout
+- Tool calls run with `--yolo` (no container sandbox); set `HUMANIZE_GEMINI_SANDBOX=true` to require docker/podman isolation instead
+- Gemini is instructed to perform Google Search for up-to-date information. Search grounding is a separate quota from generation, so when it is exhausted the script aborts the run and retries the question without the search instruction; the answer then comes from model knowledge alone. `metadata.md` records which mode produced the answer, and `--no-web-research` skips straight to it
