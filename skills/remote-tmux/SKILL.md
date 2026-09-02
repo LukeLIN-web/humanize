@@ -21,13 +21,25 @@ A local tmux session sshes into the remote host → open another tmux layer on t
    tmux send-keys -t "$S" 'ssh <host>' Enter
    ```
 
-3. **Wait for login** (end-marker with bounded polling, never a fixed sleep):
+3. **Wait for login** (end-marker with bounded polling, never a fixed sleep). The
+   marker MUST contain a shell expansion so that only a real remote shell can
+   produce the matched string: the send-keys text is also echoed back by the
+   terminal (and would be echoed verbatim by a host-key/password prompt), so
+   grepping for a literal marker can false-positive on the command echo before —
+   or without — any shell executing it.
    ```bash
-   tmux send-keys -t "$S" 'echo MARK_login_END' Enter
+   tmux send-keys -t "$S" 'echo MARK_login_"$(echo OK)"_END' Enter
    for i in $(seq 1 30); do
-     tmux capture-pane -p -t "$S" | grep -q MARK_login_END && break; sleep 2
+     tmux capture-pane -p -t "$S" | grep -q 'MARK_login_OK_END' && { login=ok; break; }
+     tmux capture-pane -p -t "$S" | grep -qiE 'permission denied|authenticity of host|password:|connection (refused|closed|timed out)' && break
+     sleep 2
    done
+   [ "${login:-}" = ok ] || { tmux capture-pane -p -t "$S" | tail -5; echo "LOGIN FAILED"; }
    ```
+   `MARK_login_OK_END` never appears literally in what was typed — a prompt
+   echoing the command back shows `"$(echo OK)"` unexpanded — so a match proves an
+   authenticated shell ran the command. On a password/host-key prompt or a refused
+   connection the loop surfaces the failure instead of treating it as logged in.
 
 4. **Open the remote tmux + claude session**:
    ```bash
