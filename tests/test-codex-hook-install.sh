@@ -138,17 +138,42 @@ else
     fail "Codex install keeps humanize-rlcr entrypoint skill" "skills/humanize-rlcr/SKILL.md exists" "missing"
 fi
 
-if [[ -f "$CODEX_HOME_DIR/skills/monitor-claude-goal/SKILL.md" ]] \
-    && grep -q 'Codex in the ChatGPT desktop app' "$CODEX_HOME_DIR/skills/monitor-claude-goal/SKILL.md" \
-    && grep -q 'transactional save-clear-inject-restore' "$CODEX_HOME_DIR/skills/monitor-claude-goal/SKILL.md" \
-    && grep -q 'tmux send-keys C-u' "$CODEX_HOME_DIR/skills/monitor-claude-goal/SKILL.md" \
-    && grep -q 'set-buffer.*paste-buffer' "$CODEX_HOME_DIR/skills/monitor-claude-goal/SKILL.md" \
-    && grep -q 'restore the draft.*without Enter' "$CODEX_HOME_DIR/skills/monitor-claude-goal/SKILL.md" \
-    && [[ -f "$CODEX_HOME_DIR/skills/monitor-claude-goal/agents/openai.yaml" ]]; then
+MONITOR_SKILL="$CODEX_HOME_DIR/skills/monitor-claude-goal/SKILL.md"
+monitor_gaps=""
+
+note_monitor_gap() {
+    monitor_gaps="${monitor_gaps:+$monitor_gaps, }$1"
+}
+
+if [[ -f "$MONITOR_SKILL" ]]; then
+    grep -q 'Codex in the ChatGPT desktop app' "$MONITOR_SKILL" \
+        || note_monitor_gap "Codex scheduling host"
+    grep -q 'transactional save-clear-inject-restore' "$MONITOR_SKILL" \
+        || note_monitor_gap "draft-preservation transaction"
+    # Claude Code binds ctrl+u to scrolling, not kill-line, so C-u is a silent
+    # no-op that leaves the draft in place and blocks every later steer. The
+    # composer must be cleared with the TUI's own double-tap Escape.
+    grep -q 'tmux send-keys Escape' "$MONITOR_SKILL" \
+        || note_monitor_gap "double-tap Escape composer clear"
+    ! grep -q 'tmux send-keys C-u' "$MONITOR_SKILL" \
+        || note_monitor_gap "C-u composer clear regressed"
+    grep -q 'set-buffer.*paste-buffer' "$MONITOR_SKILL" \
+        || note_monitor_gap "literal buffer-paste restore"
+    grep -q 'restore the draft.*without Enter' "$MONITOR_SKILL" \
+        || note_monitor_gap "restore without Enter"
+else
+    note_monitor_gap "SKILL.md"
+fi
+
+[[ -f "$CODEX_HOME_DIR/skills/monitor-claude-goal/agents/openai.yaml" ]] \
+    || note_monitor_gap "agents/openai.yaml"
+
+if [[ -z "$monitor_gaps" ]]; then
     pass "Codex install syncs the cross-host Claude goal monitor with draft preservation"
 else
     fail "Codex install syncs the cross-host Claude goal monitor" \
-        "Codex scheduling, transactional draft preservation, and agents/openai.yaml are installed" "missing or incomplete"
+        "Codex scheduling, transactional draft preservation, and agents/openai.yaml are installed" \
+        "missing or incomplete: $monitor_gaps"
 fi
 
 if [[ -f "$HOOKS_FILE" ]]; then
