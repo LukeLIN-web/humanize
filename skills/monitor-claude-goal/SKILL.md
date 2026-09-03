@@ -38,13 +38,27 @@ Identify the **overseer host** before the first tick. The target is always Claud
 
 | Overseer host | Recurrence | Notification | Parallel audit |
 |---|---|---|---|
-| Claude Code | `CronCreate` / `CronDelete` | `PushNotification` | read-only `Explore` agents |
+| Claude Code | `CronCreate` / `CronDelete` | tick output + the findings log (§2.1.1) — **never `PushNotification`** | read-only `Explore` agents |
 | Codex in the ChatGPT desktop app | an **in-chat Scheduled task** that re-invokes this skill | the scheduled run in this chat | optional read-only subagents when available |
 | Codex CLI / IDE | no native Scheduled management interface | current thread output | use Goal/wait continuation only when that capability is actually available; otherwise run one tick and disclose that recurrence was not created |
 
 Never claim that hourly monitoring exists until the recurring job/task has been created and its identifier or visible schedule has been reported. For Codex, prefer an **in-chat** scheduled task so each tick retains the session id, prior findings, checkpoint, and stop condition. Use local-project mode because the audit reads local transcripts, tmux, git, and artifacts. Keep the computer and desktop app running. If the scheduling capability is not exposed, do not emulate it with a detached shell `sleep` loop: a shell timer cannot invoke the model to perform a fresh audit.
 
-Use a **host notification** wherever this document says to notify: `PushNotification` on Claude Code when available; the scheduled/current chat output on Codex; or a user-requested notification connector when one is explicitly available. Never promise an out-of-band alert unless that channel was actually invoked.
+Use a **host notification** wherever this document says to notify: on Claude Code, the tick output plus the findings log in §2.1.1; the scheduled/current chat output on Codex; or a user-requested notification connector when one is explicitly available. Never promise an out-of-band alert unless that channel was actually invoked.
+
+**Never call `PushNotification`** (user ruling 2026-09-03). That tool raises a desktop notification *and*, whenever Remote Control is connected, pushes to the user's phone — and it exposes no per-call way to suppress the phone leg, so the only way to guarantee no mobile push is not to call it. An hourly overseer is exactly the wrong thing on a lock screen: it fires on a schedule the user did not choose, mostly to say something they will read fine an hour later. This holds for every notify in this document, terminals included.
+
+### 2.1.1 The findings log (Claude Code host)
+
+The monitor session is normally unattended, so a finding that lives only in tick output reaches nobody. Append every notify-worthy event to
+
+```
+/tmp/claude-goal-monitor/<target-session-id>.findings.log
+```
+
+one timestamped block per event: what was observed, the evidence, and — for the gated actions in §5 — exactly what was injected. This is the same out-of-repo bookkeeping area the spawner already uses for its prompt files, so it adds no new location and stays inside the §3 write contract (never the target repo, never the transcript).
+
+It is a log, not an alert: it does not interrupt the user and will be read only when they look. So when a tick reaches a **true terminal** (§7) or takes a **higher-impact gated action** (§5.1 interrupt, §5.5 approve, §5.6 wake), also say so in the tick output in plain language, and state in that output that the user has not been paged. Do not describe a log append as though the user was notified.
 
 ### 2.2 Resolving session id → tmux pane (in priority order)
 
@@ -125,7 +139,7 @@ Before clearing, confirm **all** of:
 
 Run the transaction as one bounded injection:
 1. hold the exact draft text in the overseer's in-memory/checkpoint context; never write it into the target repo or transcript and never quote its content in the notification;
-2. clear the composer with Claude Code's **own** clear-input affordance: **double-tap Escape** (`tmux send-keys Escape` twice) — the TUI's own hint string reads `double tap esc to clear input`. Do **NOT** use `C-u`: Claude Code binds ctrl+u to *scrolling*, not kill-line, so it is a silent no-op that leaves the draft in place — and because §5.0 then refuses to inject, a single unsent draft blocks every steer in §5/§5.1/§5.3/§5.4/§5.6 for the rest of the run. Only ever double-tap Escape when the preconditions above hold (idle free-form composer, no running tool); with a tool running, a single Escape is §5.1's interrupt instead. Then capture and verify that the free-form composer is empty. If it is still not empty after one double-tap, do not inject; restore the saved text if safe, notify, and stop;
+2. clear the composer with Claude Code's **own** clear-input affordance, then capture and verify the composer is empty. **The affordance is version-dependent and you must verify, never assume.** Known behavior: `C-u` is bound to *scrolling*, not kill-line — a silent no-op (never use it). **Double-tapping Escape opens the Rewind dialog on 2.1.259**, not a clear: it is a live menu of restore points with `(current)` highlighted, so **never press Enter while it is open** — a blind Enter there can roll back the target's conversation and code. Cancel it with a single Escape and re-capture. On builds whose composer hint literally reads `double tap esc to clear input`, double-Esc is the clear; with a tool running, a single Escape is §5.1's interrupt instead. If the composer is not empty after one attempt — including the case where the attempt opened a dialog you had to cancel — **do not escalate to a second technique**: leave the draft, verify it is byte-identical to the snapshot, notify, and stop. A blocked steer costs one tick; a corrupted draft or an accidental rewind is unrecoverable;
 3. inject the freshly audited steer literally, verify it landed exactly, send `Enter`, and capture until the steer is visibly consumed;
 4. as soon as a free-form composer that accepts text is visible again, restore the saved draft with literal tmux buffer paste (`set-buffer` + `paste-buffer`), **never** keystroke interpretation and **never Enter**;
 5. capture with `-J` and verify the restored draft is byte-identical after display-wrap normalization. If verification fails, never press Enter: retain the saved draft in the monitor checkpoint, send a high-priority host notification, and retry restoration only after a fresh capture proves the composer is safe;
