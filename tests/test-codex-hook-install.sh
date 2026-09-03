@@ -150,11 +150,12 @@ if [[ -f "$MONITOR_SKILL" ]]; then
         || note_monitor_gap "Codex scheduling host"
     grep -q 'transactional save-clear-inject-restore' "$MONITOR_SKILL" \
         || note_monitor_gap "draft-preservation transaction"
-    # Claude Code binds ctrl+u to scrolling, not kill-line, so C-u is a silent
-    # no-op that leaves the draft in place and blocks every later steer. The
-    # composer must be cleared with the TUI's own double-tap Escape.
-    grep -q 'tmux send-keys Escape' "$MONITOR_SKILL" \
-        || note_monitor_gap "double-tap Escape composer clear"
+    # No clear key may be hardcoded here. C-u is bound to scrolling (a silent
+    # no-op), and double-tap Escape opens the Rewind dialog on 2.1.259 -- a live
+    # menu that restores conversation AND code, so a blind Enter there is
+    # unrecoverable. The skill must warn about Rewind and must not pin a key.
+    grep -q 'Rewind' "$MONITOR_SKILL" \
+        || note_monitor_gap "Rewind hazard warning"
     ! grep -q 'tmux send-keys C-u' "$MONITOR_SKILL" \
         || note_monitor_gap "C-u composer clear regressed"
     grep -q 'set-buffer.*paste-buffer' "$MONITOR_SKILL" \
