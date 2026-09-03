@@ -27,7 +27,7 @@
 # The overseer is created on the SAME tmux server as the target (socket taken from
 # the target's own $TMUX), which is what lets it inject steering into the target's
 # pane per SKILL.md §5. If the target is not inside tmux, the overseer is started
-# with --notify-only (it can still audit + PushNotification, but never inject).
+# with --notify-only (it can still audit + report findings, but never inject).
 #
 # Reads the hook JSON payload on stdin. It NEVER blocks the prompt: every failure
 # path exits 0, so a broken watcher can never stall a goal run.
@@ -151,7 +151,7 @@ $goal_head
 
 Run one tick now, then self-schedule the recurring cron per §6. You are an auditor: never edit files, never build, never commit, never kill a process — gated keystroke injection into the target's pane is your only outward action.
 
-SELF-TEARDOWN (§7 true terminal, required): when — and only when — you reach a true terminal, i.e. the target's \`goal\` work is **genuinely complete** (idle-and-done) or the target session is **gone**, wind yourself down in this order: (1) send the terminal PushNotification, (2) CronDelete your cron, (3) as your final action run
+SELF-TEARDOWN (§7 true terminal, required): when — and only when — you reach a true terminal, i.e. the target's \`goal\` work is **genuinely complete** (idle-and-done) or the target session is **gone**, wind yourself down in this order: (1) write the terminal verdict to the findings log and state it in your tick output — never call PushNotification, it pushes to the user's phone (SKILL.md 2.1), (2) CronDelete your cron, (3) as your final action run
 
     $TM_STR kill-session -t '=$mon'
 
