@@ -35,7 +35,7 @@ describe("humanize2 user config", () => {
     expect(contents).toContain("defaultTheme: dark");
     expect(contents).toContain("agents:");
     expect(config.agentDefaults.codex).toMatchObject({
-      model: "gpt-5.6-sol",
+      model: "gpt-6-astra",
       reasoningEffort: "xhigh"
     });
   });

@@ -17,7 +17,7 @@
 #
 # Tunable via env:
 #   TASK_REVIEW_MODEL     (default: DEFAULT_CODEX_MODEL from lib/loop-common.sh,
-#                          hardcoded fallback gpt-5.6-sol)
+#                          hardcoded fallback gpt-6-astra)
 #   TASK_REVIEW_EFFORT    (default medium)
 #   TASK_REVIEW_TIMEOUT   (default 600 seconds, codex)
 #   TASK_REVIEW_MAX_ROUNDS(default 1  — blocks at most this many times per task)
@@ -51,7 +51,7 @@ if [ -z "$ASK_CODEX" ]; then
     ASK_CODEX="$SCRIPT_DIR/../scripts/ask-codex.sh"
   fi
 fi
-MODEL="${TASK_REVIEW_MODEL:-${DEFAULT_CODEX_MODEL:-gpt-5.6-sol}}"
+MODEL="${TASK_REVIEW_MODEL:-${DEFAULT_CODEX_MODEL:-gpt-6-astra}}"
 EFFORT="${TASK_REVIEW_EFFORT:-medium}"
 TIMEOUT="${TASK_REVIEW_TIMEOUT:-600}"
 MAX_ROUNDS="${TASK_REVIEW_MAX_ROUNDS:-1}"
