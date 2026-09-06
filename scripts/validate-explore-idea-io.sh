@@ -43,9 +43,9 @@
 #   MAX_WORKER_ITERATIONS: <N>
 #   WORKER_TIMEOUT_MIN: <N>
 #   CODEX_TIMEOUT_MIN: <N>
-#   CODEX_REVIEW_MODEL: gpt-5.6-sol
+#   CODEX_REVIEW_MODEL: gpt-6-astra
 #   CODEX_REVIEW_EFFORT: xhigh
-#   CODEX_REVIEW_MODEL_SPEC: gpt-5.6-sol:xhigh
+#   CODEX_REVIEW_MODEL_SPEC: gpt-6-astra:xhigh
 #   WORKER_PROMPT_TEMPLATE: <abs-path>
 #   REPORT_TEMPLATE: <abs-path>
 #   FINAL_IDEA_TEMPLATE: <abs-path>
@@ -446,7 +446,7 @@ if [[ -e "$RUN_DIR" ]]; then
     exit 8
 fi
 
-CODEX_REVIEW_MODEL="gpt-5.6-sol"
+CODEX_REVIEW_MODEL="gpt-6-astra"
 CODEX_REVIEW_EFFORT="xhigh"
 CODEX_REVIEW_MODEL_SPEC="$CODEX_REVIEW_MODEL:$CODEX_REVIEW_EFFORT"
 

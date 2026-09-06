@@ -14,7 +14,7 @@
 #
 # Tunable via env:
 #   CODEX_TASK_REVIEW_DISABLE (1 = hook off)
-#   TASK_REVIEW_MODEL         (default gpt-5.6-sol)
+#   TASK_REVIEW_MODEL         (default gpt-6-astra)
 #   TASK_REVIEW_EFFORT        (default medium)
 #   TASK_REVIEW_TIMEOUT       (default 600 seconds)
 #   TASK_REVIEW_MAX_ROUNDS    (default 1)
@@ -31,7 +31,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # shellcheck source=lib/task-review-prompt.sh
 . "$SCRIPT_DIR/lib/task-review-prompt.sh" 2>/dev/null || exit 0
 ASK_CODEX="${ASK_CODEX_BIN:-$SCRIPT_DIR/../scripts/ask-codex.sh}"
-MODEL="${TASK_REVIEW_MODEL:-gpt-5.6-sol}"
+MODEL="${TASK_REVIEW_MODEL:-gpt-6-astra}"
 EFFORT="${TASK_REVIEW_EFFORT:-medium}"
 TIMEOUT="${TASK_REVIEW_TIMEOUT:-600}"
 MAX_ROUNDS="${TASK_REVIEW_MAX_ROUNDS:-1}"
