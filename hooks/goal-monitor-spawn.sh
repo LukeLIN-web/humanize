@@ -29,8 +29,9 @@
 # pane per SKILL.md §5. If the target is not inside tmux, the overseer is started
 # with --notify-only (it can still audit + report findings, but never inject).
 #
-# Reads the hook JSON payload on stdin. It NEVER blocks the prompt: every failure
-# path exits 0, so a broken watcher can never stall a goal run.
+# Reads the hook JSON payload on stdin. It never blocks the prompt: a missing
+# prerequisite (jq, tmux, claude) or a failed spawn exits 1, which is a non-blocking
+# hook error — the prompt goes through, the failure is shown instead of swallowed.
 #
 # Tunable via env:
 #   GOAL_MONITOR_DISABLE      (1 = hook off)
@@ -48,8 +49,14 @@ set -uo pipefail
 [ "${GOAL_MONITOR_DISABLE:-0}" = "1" ] && exit 0
 # An overseer must never spawn an overseer of its own.
 [ -n "${CLAUDE_GOAL_MONITOR:-}" ] && exit 0
-command -v jq >/dev/null 2>&1 || exit 0
-command -v tmux >/dev/null 2>&1 || exit 0
+# A missing prerequisite is reported, never swallowed. Exit 1 is a non-blocking
+# hook error: stderr reaches the user and the prompt still goes through, so the
+# goal run proceeds but never silently unwatched. (A bare-PATH launcher — a board
+# started without ~/.local/bin or the conda bin dir — used to turn this hook into
+# a no-op with no trace anywhere.)
+die() { echo "[goal-monitor] $*" >&2; exit 1; }
+command -v jq >/dev/null 2>&1 || die "jq not on PATH ($PATH)"
+command -v tmux >/dev/null 2>&1 || die "tmux not on PATH ($PATH)"
 
 CADENCE="${GOAL_MONITOR_CADENCE:-1h}"
 SKILL_ARGS="${GOAL_MONITOR_SKILL_ARGS:---approve-safe-destructive}"
@@ -132,13 +139,13 @@ target=""
 [ -n "$target" ] || SKILL_ARGS="$SKILL_ARGS --notify-only"
 
 claude_bin="${GOAL_MONITOR_CLAUDE_BIN:-$(command -v claude 2>/dev/null)}"
-[ -n "$claude_bin" ] || exit 0
+[ -n "$claude_bin" ] || die "claude not on PATH ($PATH); set GOAL_MONITOR_CLAUDE_BIN"
 
-mkdir -p "$state_dir" 2>/dev/null || exit 0
+mkdir -p "$state_dir" 2>/dev/null || die "cannot create $state_dir"
 chmod 700 "$state_dir" 2>/dev/null   # the prompt file below holds the goal text
 
 goal_head="$(printf '%s' "$prompt" | head -c 600)"
-cat > "$pfile" <<EOF || exit 0
+cat > "$pfile" <<EOF || die "cannot write $pfile"
 Invoke the monitor-claude-goal skill (Skill tool, skill: "monitor-claude-goal") and follow it exactly, as if the human had run:
 
 /monitor-claude-goal $sid $target --cadence $CADENCE $SKILL_ARGS
@@ -183,7 +190,7 @@ if [ "${GOAL_MONITOR_DRYRUN:-0}" = "1" ]; then
   exit 0
 fi
 
-"${TM[@]}" new-session -d -s "$mon" -c "$cwd" "$cmd" 2>/dev/null || exit 0
+"${TM[@]}" new-session -d -s "$mon" -c "$cwd" "$cmd" || die "tmux new-session failed for '$mon'"
 printf '%s\t%s\t%s\t%s\n' "$(date -Is 2>/dev/null)" "$mon" "$sid" "${target:-no-tmux}" \
   >> "$state_dir/spawn.log" 2>/dev/null
 
