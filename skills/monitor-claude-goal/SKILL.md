@@ -19,7 +19,7 @@ A dedicated Claude Code or Codex session acts as a **read-only third-party overs
 ```text
 $monitor-claude-goal <claude-session-id> [<tmux-target>]   # Codex
 /monitor-claude-goal <claude-session-id> [<tmux-target>]   # Claude Code
-    [--discover] [--cadence 1h] [--decision-timeout 1h] [--approve-safe-destructive] [--notify-only] [--no-schedule] [--principles "<extra rules>"]
+    [--discover] [--cadence 1h] [--decision-timeout 1h] [--approve-safe-destructive] [--codex-review <MODEL:EFFORT>] [--notify-only] [--no-schedule] [--principles "<extra rules>"]
 ```
 
 - `<claude-session-id>` — resolves the transcript at `~/.claude/projects/<cwd-slug>/<session-id>.jsonl`, where `<cwd-slug>` is the target's working directory with `/` and `.` replaced by `-`. Handle **not-found / multiple matches / rotated** gracefully (glob across all project dirs for `<session-id>.jsonl`).
@@ -28,6 +28,7 @@ $monitor-claude-goal <claude-session-id> [<tmux-target>]   # Codex
 - `--cadence 1h` — monitoring interval (default hourly).
 - `--decision-timeout 1h` — grace period before the overseer auto-picks the **recommended** option of an unanswered interactive decision prompt (§5.2) **or** injects the poll-and-resume nudge for a resource-blocked target (§5.3). Default `1h`. Set `off` to keep both as permanent notify-only terminals (the pre-this-feature behavior). Disabled by `--notify-only`.
 - `--approve-safe-destructive` — **opt-in** (default **off**): let the overseer auto-approve a permission prompt that is a *dangerous-command-guard false positive* — but **only** after independently parsing the exact command and **proving it safe** (§5.5). With it off, every destructive confirm stays notify-only. Disabled by `--notify-only`.
+- `--codex-review <MODEL:EFFORT>` — add a fourth audit leg: an independent, read-only **Codex review** of each tick's progress (§4.1), e.g. `--codex-review gpt-6.1-sol:high`. Default **off**. The spawner (`hooks/goal-monitor-spawn.sh`) passes it only on the hosts listed in `GOAL_MONITOR_CODEX_REVIEW_HOSTS` (default `nnmc61`); never turn it on yourself when it was not passed.
 - `--notify-only` — **kill-switch**: disables all auto-injection (including §5.2 auto-pick and §5.5 approve). Report every proposed steer through the host notification channel only.
 - `--no-schedule` — escape hatch: run a single tick now and **do not** create recurrence; the human re-runs it manually. Mutually exclusive with scheduler self-management in §6.
 - `--principles "<extra rules>"` — additional steering criteria merged with whatever the human has stated inside the target transcript.
@@ -73,7 +74,7 @@ Whatever resolved it, before any injection still confirm via `capture-pane` that
 
 ## 3. Read-only safety contract (load-bearing)
 
-**Allowed (read-only):** `git status/diff/log/show`, `rg`/`grep`, `jq`, `tail`/`head`/`sed`(read), `ls`/`find`/`stat`/`wc`, `python` for *parsing only*, `tmux capture-pane`/`list-windows`/`list-panes`.
+**Allowed (read-only):** `git status/diff/log/show`, `rg`/`grep`, `jq`, `tail`/`head`/`sed`(read), `ls`/`find`/`stat`/`wc`, `python` for *parsing only*, `tmux capture-pane`/`list-windows`/`list-panes`, and — only under `--codex-review` — `codex exec --sandbox read-only` exactly as §4.1 spells it.
 
 **Banned:**
 - any repo write or output redirect (`>`, `>>`, `tee`)
@@ -87,7 +88,7 @@ Whatever resolved it, before any injection still confirm via `capture-pane` that
 
 **Subagents are optional and read-only.** On Claude Code, use `Explore`-type agents. On Codex, use subagents only when the collaboration surface is available and the governing instructions permit delegation; explicitly forbid mutation and request conclusions, not file dumps. If those guarantees are unavailable, perform the three audit legs directly with read-only commands. Never weaken the safety contract merely to parallelize.
 
-**The only writes this skill itself performs:** scheduler bookkeeping outside the target repo, notification output, and gated keystrokes to the verified target pane. None may modify the target repo or transcript.
+**The only writes this skill itself performs:** scheduler bookkeeping outside the target repo, notification output, the §4.1 Codex review prompt/output under `/tmp/claude-goal-monitor/`, and gated keystrokes to the verified target pane. None may modify the target repo or transcript.
 
 ## 4. One tick (the primitive)
 
@@ -100,7 +101,8 @@ Each invocation runs exactly one tick:
    - (a) transcript: latest progress since last checkpoint
    - (b) git: new commits + worktree diff since last checkpoint `HEAD`
    - (c) artifacts: reasonableness against invariants **derived from the transcript/repo, not hardcoded**
-4. **Synthesize against four judgments:**
+   - (d) **only under `--codex-review`:** the Codex review of the same delta (§4.1), launched first so it runs alongside (a)–(c)
+4. **Synthesize against four judgments** (a Codex finding counts only once you have verified it yourself, §4.1):
    1. **drift** — violates the human's stated principles. (Deep-diving or optimizing the fundamental design is **NOT** drift.)
    2. **fabricated data**
    3. **fake/stub** passed off as real work
@@ -113,6 +115,30 @@ Each invocation runs exactly one tick:
 5. **Decide:** clean **and progressing** → one-line conclusion in this session, **no out-of-band notification**. Any of the four findings → intervention gate (§5). Wedged → interrupt-recovery (§5.1). **Idle-but-unfinished** (returned to an idle prompt with open `/goal` work, nothing running, not asking the human) → plain resume nudge (§5.4). Blocked **awaiting a human decision** → notify on first sight, then **auto-pick the recommended option** once it has gone unanswered past `--decision-timeout` (§5.2). Blocked **purely on resource availability** (no free GPU/VRAM/compute — the target stopped to ask *which* shared resource to use, or is sitting idle for capacity) → notify on first sight, then **inject the poll-and-resume nudge** once unanswered past `--decision-timeout` (§5.3). Other true terminal (gone / `/goal` done) → notify and stop recurrence (§5, §7).
 
 Record a lightweight checkpoint (latest transcript byte-offset + mtime + git `HEAD`) for the next tick — held in the recurring chat/task context or tick output, never written to the target's files. The byte-offset/mtime is what lets the *next* tick recognize a wedge (no advance) vs. progress.
+
+### 4.1 Codex review leg (`--codex-review`)
+
+A second model reading the same delta catches what one reviewer's blind spots miss — a fabricated number, a stub dressed as a result, a metric computed on the wrong split. Codex is a **reviewer here, not a judge**: it never decides an injection.
+
+**When.** The first tick (baseline: the goal prompt, the plan, the current worktree) and every later tick whose checkpoint shows progress — new commits, a changed worktree diff, or an advanced transcript. Skip a tick with no delta (the same diff reviewed twice burns quota for nothing) and skip true terminals.
+
+**Binary.** `command -v codex`, else `~/.local/bin/codex`. Launchers often start sessions on a bare `PATH`, and an npm-installed `codex` is a `#!/usr/bin/env node` script, so prepend the directory of its resolved target (`dirname "$(readlink -f <codex>)"`, where nvm also keeps `node`) to `PATH` for the call. If Codex cannot run — missing, logged out, out of quota, model rejected — log that once to the findings log and finish the tick with legs (a)–(c). Never block or skip the audit on Codex.
+
+**Call.** Write the prompt to `/tmp/claude-goal-monitor/<target-session-id>.codex/<UTC-ts>.prompt`, then run it with Bash `run_in_background: true` (high effort can outlast a foreground call) and read the result before step 4:
+
+```bash
+CODEX_GOAL_MONITOR=1 timeout 1500 <codex> exec \
+  -m <MODEL> -c model_reasoning_effort=<EFFORT> \
+  --sandbox read-only -C <target-cwd> --skip-git-repo-check --ephemeral \
+  -o /tmp/claude-goal-monitor/<target-session-id>.codex/<UTC-ts>.md \
+  - < /tmp/claude-goal-monitor/<target-session-id>.codex/<UTC-ts>.prompt
+```
+
+`--sandbox read-only` is what keeps the leg inside §3: Codex may read anything, change nothing. `CODEX_GOAL_MONITOR=1` stops a Codex-side goal hook from spawning a monitor of the reviewer.
+
+**Prompt.** Give Codex what it needs to review independently, not your conclusions: the goal prompt and the human's current criteria (§4 step 2, with their source turns), the range to review (`git log <prev-HEAD>..HEAD` plus the worktree diff — it reads them itself), the transcript path and the byte offset the delta starts at, and the key artifacts. Ask for findings under the same four judgments plus liveness, each with concrete evidence (file:line, commit, transcript turn, artifact value), a severity, and the steer it would recommend — and an explicit "no findings" when the delta is clean. Say it is a read-only reviewer that must not modify anything.
+
+**Use.** Re-check every Codex finding against the repo, transcript, or artifact yourself. A finding you can reproduce enters step 4 like any other and goes through the normal §5 gate, with the steer built from the evidence, not from "Codex said". One you cannot reproduce is logged as `codex-only, unverified` and never injected. Append one block per review to the findings log: model and effort, the range reviewed, the output path, and which findings were confirmed or rejected.
 
 ## 5. Intervention gate (auto-inject by default)
 

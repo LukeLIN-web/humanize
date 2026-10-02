@@ -39,6 +39,10 @@
 #   GOAL_MONITOR_SKILL_ARGS   (default --approve-safe-destructive)
 #   GOAL_MONITOR_CLAUDE_ARGS  (default --permission-mode bypassPermissions)
 #   GOAL_MONITOR_CLAUDE_BIN   (default: `claude` on PATH)
+#   GOAL_MONITOR_CODEX_REVIEW_HOSTS (default nnmc61 — space-separated short hostnames
+#                             whose overseer also runs a Codex review each tick,
+#                             SKILL.md §4.1; set empty to turn it off everywhere)
+#   GOAL_MONITOR_CODEX_REVIEW_MODEL (default gpt-6.1-sol:high — MODEL:EFFORT)
 #   GOAL_MONITOR_DRYRUN       (1 = print what would be spawned/killed, act on nothing)
 #
 # SSOT: this file lives in the humanize repo (hooks/). A consuming repo that wires
@@ -138,6 +142,15 @@ target=""
   '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null)"
 [ -n "$target" ] || SKILL_ARGS="$SKILL_ARGS --notify-only"
 
+# The Codex review leg spends Codex quota every tick, so it runs only on the hosts
+# chosen for it. `-` rather than `:-`: an explicitly empty list means off everywhere.
+host="$(hostname -s 2>/dev/null)"
+if [ -n "$host" ]; then
+  case " ${GOAL_MONITOR_CODEX_REVIEW_HOSTS-nnmc61} " in
+    *" $host "*) SKILL_ARGS="$SKILL_ARGS --codex-review ${GOAL_MONITOR_CODEX_REVIEW_MODEL:-gpt-6.1-sol:high}" ;;
+  esac
+fi
+
 claude_bin="${GOAL_MONITOR_CLAUDE_BIN:-$(command -v claude 2>/dev/null)}"
 [ -n "$claude_bin" ] || die "claude not on PATH ($PATH); set GOAL_MONITOR_CLAUDE_BIN"
 
@@ -145,6 +158,9 @@ mkdir -p "$state_dir" 2>/dev/null || die "cannot create $state_dir"
 chmod 700 "$state_dir" 2>/dev/null   # the prompt file below holds the goal text
 
 goal_head="$(printf '%s' "$prompt" | head -c 600)"
+# head -c counts bytes, so it can split a CJK character; drop the broken tail.
+clean="$(printf '%s' "$goal_head" | iconv -c -f UTF-8 -t UTF-8 2>/dev/null)"
+[ -n "$clean" ] && goal_head="$clean"
 cat > "$pfile" <<EOF || die "cannot write $pfile"
 Invoke the monitor-claude-goal skill (Skill tool, skill: "monitor-claude-goal") and follow it exactly, as if the human had run:
 
