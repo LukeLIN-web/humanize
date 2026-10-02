@@ -13,6 +13,11 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/goal-monitor-spawn.sh",
             "timeout": 20,
             "statusMessage": "Starting goal overseer..."
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/goal-orchestrate.py",
+            "timeout": 10
           }
         ]
       }
