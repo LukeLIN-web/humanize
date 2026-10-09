@@ -96,6 +96,15 @@
             "timeout": 7200
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/goal-monitor-spawn.sh",
+            "timeout": 20
+          }
+        ]
       }
     ],
     "TaskCompleted": [
@@ -106,6 +115,29 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/task-codex-review.sh",
             "timeout": 1860,
             "statusMessage": "Codex reviewing finished task..."
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "idle_prompt",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/goal-monitor-spawn.sh",
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/goal-monitor-spawn.sh",
+            "timeout": 20
           }
         ]
       }
