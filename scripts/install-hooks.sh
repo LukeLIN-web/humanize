@@ -31,10 +31,15 @@ HOOKS_SRC="$REPO_ROOT/hooks"
 MANIFEST_REL=".humanize/installed-hooks.txt"
 MANIFEST_VERSION=1
 
-# hook file : settings.json event : timeout seconds
+# hook file : settings.json event : timeout seconds. A hook on several events
+# has a line per event; it is linked once.
 HOOK_SPECS=(
   "task-codex-review.sh:TaskCompleted:900"
   "goal-monitor-spawn.sh:UserPromptSubmit:20"
+  "goal-monitor-spawn.sh:SessionEnd:20"
+  "goal-monitor-spawn.sh:Stop:20"
+  "goal-monitor-spawn.sh:Notification:20"
+  "goal-monitor-spawn.sh:SessionStart:20"
 )
 
 PROJECT=""
@@ -135,6 +140,7 @@ $DRY_RUN || mkdir -p "$HOOKS_DIR" "$(dirname "$MANIFEST")"
 manifest_tmp="$(mktemp)"
 printf 'version\t%s\n' "$MANIFEST_VERSION" > "$manifest_tmp"
 installed=0
+seen=" "
 
 for spec in "${HOOK_SPECS[@]}"; do
   name="${spec%%:*}"
@@ -147,19 +153,27 @@ for spec in "${HOOK_SPECS[@]}"; do
   selected_wanted "$name" || continue
   [ -r "$src" ] || { log "  skip $name (not in $HOOKS_SRC)"; continue; }
 
-  if [ -e "$link" ] && [ ! -L "$link" ]; then
-    log "  REFUSING $name: $link exists and is a real file, not a link this installer made."
-    log "            Move it aside first if you want the checkout's version."
-    continue
-  fi
-  if [ -L "$link" ] && [ "$(readlink "$link")" != "$src" ]; then
-    log "  relinking $name (was -> $(readlink "$link"))"
-  fi
+  case "$seen" in
+    # An earlier line for this hook linked it (register this event too) or
+    # refused to (skip it again, quietly).
+    *" $name "*) [ -L "$link" ] || continue ;;
+    *)
+      seen="$seen$name "
+      if [ -e "$link" ] && [ ! -L "$link" ]; then
+        log "  REFUSING $name: $link exists and is a real file, not a link this installer made."
+        log "            Move it aside first if you want the checkout's version."
+        continue
+      fi
+      if [ -L "$link" ] && [ "$(readlink "$link")" != "$src" ]; then
+        log "  relinking $name (was -> $(readlink "$link"))"
+      fi
 
-  $DRY_RUN || ln -sfn "$src" "$link"
-  printf 'hook\t%s\t%s\n' "$name" "$src" >> "$manifest_tmp"
-  installed=$((installed + 1))
-  log "  linked   $link -> $src"
+      $DRY_RUN || ln -sfn "$src" "$link"
+      printf 'hook\t%s\t%s\n' "$name" "$src" >> "$manifest_tmp"
+      installed=$((installed + 1))
+      log "  linked   $link -> $src"
+      ;;
+  esac
 
   # Register in settings.json only if this exact command is not already there.
   if ! $DRY_RUN; then

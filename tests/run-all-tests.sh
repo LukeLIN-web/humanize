@@ -69,6 +69,7 @@ TEST_SUITES=(
     "test-plan-file-hooks.sh"
     "test-stop-hook-legacy-compat.sh"
     "test-stop-hook-bg-allow.sh"
+    "test-goal-monitor-spawn.sh"
     "test-error-scenarios.sh"
     "test-ansi-parsing.sh"
     "test-allowlist-validators.sh"
