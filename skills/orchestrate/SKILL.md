@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: Run a multi-step engineering/research task as an orchestrator that decomposes, dispatches parallel subagents (Agent tool), verifies each phase, and loops until everything is closed. Use when the user says orchestrate, 指挥, 多开几个 session 并行, 派活, 你当指挥者, or hands over a plan/audit/checklist with several independent items. Adapted from humanfia/oh-my-humanize `orchestrate-notice.md` for Claude Code.
+description: Run a multi-step engineering/research task as an orchestrator that decomposes, dispatches parallel subagents (Agent tool), verifies each phase, and loops until everything is closed. Use when the user says orchestrate, 指挥, 多开几个 session 并行, 派活, 你当指挥者, or hands over a plan/audit/checklist with several independent items. Also the collaborative-PR mode: several work items ("做 idea 1、2、3") pushed through a standard multi-contributor PR flow by parallel agents — CI/CD check, issue, branch per agent, cross review, merge queue, SemVer — while the orchestrator watches for collaboration friction and fixes it in the process (triggers: 多人协作, 走 PR, merge queue, SemVer, 摩擦). Adapted from humanfia/oh-my-humanize `orchestrate-notice.md` for Claude Code.
 ---
 
 # Orchestrate（指挥者模式）
@@ -15,6 +15,16 @@ description: Run a multi-step engineering/research task as an orchestrator that 
 你**拆任务、派活、验收、循环**。量大的、能并行的活一律交给 Agent 子 agent；只有「描述它比做它还贵」的
 一两行机械改动才自己动手。你的工具预算：读文件做规划、Agent 派活、Edit/Write 只做琐碎的内联修补、
 Bash 跑门禁与 git、todo 文件记进度。
+
+## 协作 PR 模式
+
+user 要你**并行派 agent 走标准多人协作流程（PR）推进仓库**、并**观察协作摩擦、在流程上解决**时（「来，做 idea 1、2、3」，
+常带 merge queue、SemVer、CI/CD），**先读同目录的 `collab-pr.md` 全文再动手**。要点：
+
+- 两份交付：PR 都合进去；**摩擦台账**（现象 → 流程修补 → 复发没有）——后者是主要的。修流程，不修个案。
+- 顺序：CI/CD 体检（第 0 波只修挡住所有 PR 的）→ 开 issue、定文件归属 → 并行派作者（各自 worktree）→ 零上下文交叉 review
+  → `scripts/merge-queue.sh` 合并（门禁跑在合并结果上，有版本号时由它按 PR 标题做 SemVer）→ 每次合并后广播给在飞的作者。
+- 覆盖下面两条规则：规则 6（user 要的就是 PR 流程，推分支、合并授权内）、规则 9（作者在自己的 worktree 里跑快门禁）。
 
 ## 十条规则
 
