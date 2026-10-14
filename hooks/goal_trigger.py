@@ -35,7 +35,7 @@ import sys
 GOAL_END = {"cancel", "done", "finish", "stop", "end", "完成", "结束", "做完了"}
 SLASH_END = {"clear", "stop", "off", "reset", "none", "cancel"}
 PASTE_TAG = re.compile(r"</?pasted_content( [^>]*)?>")
-SLASH_RECORD = re.compile(r"<command-name>/goal</command-name>.*?<command-args>(.*?)</command-args>", re.S)
+SLASH_RECORD = re.compile(r"<command-name>/goal</command-name>.*?<command-args>(.*?)</command-args>", re.DOTALL)
 GOAL_WORD = re.compile(r"goal(?![a-z0-9_])")
 TRAILING = string.whitespace + string.punctuation + "。！？，、；：…"
 

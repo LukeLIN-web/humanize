@@ -8,17 +8,27 @@ telling Claude to invoke the `orchestrate` skill before doing anything else.
 Which prompts start a run is goal_trigger.py's call (beside this file), shared with
 goal-monitor-spawn.sh and every other goal hook.
 
-Wiring: the plugin's hooks.json registers it wherever the plugin is linked to this
-checkout; a machine without that link registers it in ~/.claude/settings.json and
-links skills/orchestrate into ~/.claude/skills/. Never both on one machine — the
-directive would be injected twice.
+Wiring: a project registers a byte-identical copy in its own .claude/settings.json
+(beside its copies of goal_trigger.py and goal-monitor-spawn.sh) and links
+skills/orchestrate into its .claude/skills/, so every machine gets it. Machine-wide
+registrations (the plugin's hooks.json, or ~/.claude/settings.json on a machine
+without the plugin) cover the other projects; they stay quiet in a project that
+registers its own copy, so the directive is injected once.
 """
 import json
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from goal_trigger import classify  # noqa: E402
+# goal_trigger.py sits beside this script, and Python puts the script's directory first on sys.path
+from goal_trigger import classify
+
+project = os.environ.get("CLAUDE_PROJECT_DIR", "")
+own = os.path.join(project, ".claude", "hooks", "goal-orchestrate.py")
+settings = os.path.join(project, ".claude", "settings.json")
+if project and os.path.exists(own) and os.path.realpath(own) != os.path.realpath(__file__):
+    with open(settings, encoding="utf-8") as f:
+        if "goal-orchestrate.py" in f.read():
+            sys.exit(0)
 
 if classify(json.load(sys.stdin).get("prompt") or "")[0] in ("goal", "/goal"):
     print(
