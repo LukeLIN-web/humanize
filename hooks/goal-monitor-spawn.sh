@@ -19,9 +19,8 @@
 #   the /goal met, judged impossible or cleared  -> tear down the overseer it spawned
 #   <target session ends>                        -> tear the overseer down (SessionEnd)
 #
-# A `goal …` prompt is read off the prompt text. A pasted one arrives as
-# "\n\n<pasted_content id=…>\ngoal …", so the tags and blank lines are skipped
-# before the first line is read — read raw, a pasted goal went unwatched.
+# A `goal …` prompt is read off the prompt text by goal_trigger.py (beside this
+# script), which every goal hook shares; it skips a paste's tags and blank lines.
 #
 # A `/goal` is read off the session's transcript, where the CLI records it as
 # `goal_status` entries: met:false + sentinel when set, met:false after each
@@ -81,7 +80,8 @@
 #   GOAL_MONITOR_DRYRUN       (1 = print what would be spawned/killed, act on nothing)
 #
 # SSOT: this file lives in the humanize repo (hooks/). A consuming repo that wires
-# it into .claude/hooks/ keeps a byte-identical copy, registered on all five events.
+# it into .claude/hooks/ keeps a byte-identical copy, registered on all five events,
+# and a byte-identical copy of goal_trigger.py beside it.
 
 set -uo pipefail
 
@@ -94,7 +94,9 @@ set -uo pipefail
 # started without ~/.local/bin or the conda bin dir — used to turn this hook into
 # a no-op with no trace anywhere.)
 die() { echo "[goal-monitor] $*" >&2; exit 1; }
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 command -v jq >/dev/null 2>&1 || die "jq not on PATH ($PATH)"
+command -v python3 >/dev/null 2>&1 || die "python3 not on PATH ($PATH)"
 command -v tmux >/dev/null 2>&1 || die "tmux not on PATH ($PATH)"
 
 CADENCE="${GOAL_MONITOR_CADENCE:-1h}"
@@ -269,49 +271,34 @@ case "$event" in
 esac
 
 if [ "$event" = "UserPromptSubmit" ]; then
-  # A paste arrives wrapped in <pasted_content id=…> tags behind blank lines; the
-  # prompt is what's left without them, from its first non-blank line.
-  text="$(get '.prompt' | sed -E 's#</?pasted_content( [^>]*)?>##g' | sed '/[^[:space:]]/,$!d')"
-  text="${text#"${text%%[![:space:]]*}"}"                 # ltrim
-  head_line="$(printf '%s' "$text" | sed -n '1p' | tr '[:upper:]' '[:lower:]')"
+  # Whether the prompt starts or ends a run is goal_trigger.py's call, shared with
+  # every other goal hook: it prints the kind, then the text (the prompt without
+  # paste tags, the /goal condition, or the teardown word).
+  trig="$(get '.prompt' | python3 "$HERE/goal_trigger.py")"
+  kind="${trig%%$'\n'*}"
+  text="${trig#*$'\n'}"
   # A `/goal` typed while Claude was busy comes back as the CLI's own note,
   # "Goal set: <condition>", once the goal is set. It is no `goal …` prompt: the
   # state below handles it.
   case "$text" in
     "Goal set: "*)
-      [ "$text" = "Goal set: $(goal_status | jq -r '.condition // empty')" ] && head_line="" ;;
+      [ "$text" = "Goal set: $(goal_status | jq -r '.condition // empty')" ] && kind="" ;;
   esac
 
-  case "$head_line" in
-    goal|goal[!a-z0-9_]*)
-      # An explicit teardown word — and nothing else — ends the run, so the overseer
-      # must go too: otherwise it would see an idle session with open work and nudge
-      # it to carry on (SKILL.md §5.4). The whole remainder must be the word, so a real
-      # goal that merely opens with one of them ("goal stop the nightly trainer")
-      # still spawns.
-      rest="${head_line#goal}"
-      rest="${rest#"${rest%%[![:space:]]*}"}"                 # ltrim
-      rest="${rest%"${rest##*[![:space:][:punct:]]}"}"        # rtrim spaces + trailing punctuation
-      case "$rest" in
-        cancel|done|finish|stop|end|完成|结束|做完了)
-          teardown "asked via 'goal $rest'"
-          exit 0 ;;
-      esac
+  case "$kind" in
+    # An explicit teardown word ends the run, so the overseer must go too: otherwise
+    # it would see an idle session with open work and nudge it to carry on (SKILL.md §5.4).
+    goal-end)
+      teardown "asked via 'goal $text'"
+      exit 0 ;;
+    goal)
       spawn goal "$text"
       exit 0 ;;
-    /goal|/goal[[:space:]]*)
-      cond="${text:5}"
-      cond="${cond#"${cond%%[![:space:]]*}"}"                 # ltrim
-      cond="${cond%"${cond##*[![:space:]]}"}"                 # rtrim
-      # A bare `/goal` only opens the CLI's status panel.
-      [ -n "$cond" ] || exit 0
-      # The words the CLI itself clears a goal on, alone after `/goal`.
-      case "$(printf '%s' "$cond" | tr '[:upper:]' '[:lower:]')" in
-        clear|stop|off|reset|none|cancel)
-          [ -e "$native" ] && teardown "asked via '/goal $cond'"
-          exit 0 ;;
-      esac
-      spawn /goal "$cond"
+    /goal-end)
+      [ -e "$native" ] && teardown "asked via '/goal $text'"
+      exit 0 ;;
+    /goal)
+      spawn /goal "$text"
       exit 0 ;;
   esac
 fi
