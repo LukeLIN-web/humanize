@@ -76,7 +76,11 @@ def main() -> int:
     key = new[0]
     time.sleep(8)
     r = call("POST", f"/api/windows/{key}/prompt", {"text": text})
-    print(json.dumps({"key": key, "name": cards().get(key, now[key]).get("name"), "prompt": r}, ensure_ascii=False))
+    try:
+        name = cards().get(key, now[key]).get("name")
+    except OSError:
+        name = now[key].get("name")
+    print(json.dumps({"key": key, "name": name, "prompt": r}, ensure_ascii=False))
     return 0 if r.get("ok") else 3
 
 
