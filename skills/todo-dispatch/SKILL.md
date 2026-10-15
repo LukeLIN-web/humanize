@@ -92,6 +92,9 @@ bash <本 skill>/scripts/push-shared-main.sh            # 在目标仓库里跑�
 ### 6. 汇报
 
 一段短的：这一轮派了谁（卡、会话名、条目）、哪些条目在等 user（每条一句为什么）、新记的摩擦和修补进度、推送结果。
+**派出去的会话问 user 的话只落在它自己的 pane 里**，user 多半看不到：每轮读每张派出去的卡最近一条输出
+（board 的 timeline，或 `~/.claude/sessions/<pid>.json` 取 sessionId 再读 transcript 末尾），在等 user 定的问题连同它给的选项和建议原样转给 user，
+并说明它停着占了什么（卡、服务）。
 user 已经裁定过的事不再问。不用 AskUserQuestion。
 
 ## 不做
