@@ -120,3 +120,4 @@ user 已经裁定过的事不再问。不用 AskUserQuestion。
 
 - board 跑在 nnmc71，派单员也在 nnmc71 上跑（别处跑要设 `CLAUDE_BOARD_URL`、`CLAUDE_BOARD_TOKEN`）；它同时汇总 `61`、`63` 的卡。
 - RoboLab / Isaac 的活开在 `63`，RoboCasa（MuJoCo，H100）和零 GPU 的开在 `71`。
+- `todo.html`、`idea.html`、`contribution.html` 改完要发回固定的 Artifact URL（`docs/html/CLAUDE.md`），nnmc63 上的会话发不了：第 5 步推完，这三页 HEAD 里有上次发布之后的提交，派单员通读全文后发回原 URL（2026-10-16：nnmc63 改的 `idea.html` 等了约 10 小时没人发）。
