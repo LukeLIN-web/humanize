@@ -10,6 +10,8 @@
 #                        the idle notification and SessionStart: set -> spawn,
 #                        met / impossible / cleared / never set -> tear down the
 #                        overseer spawned for it, and only that one
+#   the overseer         Codex CLI by default, with its tick driver; Claude Code on
+#                        request, with the Codex review leg only it takes
 #
 
 set -euo pipefail
@@ -31,6 +33,7 @@ mkdir -p "$STATE_DIR" "$TEST_DIR/tmux"
 
 # hook EVENT [JQ-ARGS…] — run the hook on a payload for EVENT; extra fields come
 # from jq --arg pairs named prompt / notification_type. Prints what it would do.
+# REVIEW_HOSTS stands in for GOAL_MONITOR_CODEX_REVIEW_HOSTS (default: none).
 hook() {
   local event="$1"; shift
   jq -n --arg ev "$event" --arg sid "$SID" --arg tp "$TRANSCRIPT" --arg cwd "$TEST_DIR" "$@" \
@@ -38,7 +41,8 @@ hook() {
      + ($ARGS.named | del(.ev, .sid, .tp, .cwd))' \
   | env -u TMUX -u TMUX_PANE -u CLAUDE_GOAL_MONITOR \
       TMPDIR="$TEST_DIR" TMUX_TMPDIR="$TEST_DIR/tmux" \
-      GOAL_MONITOR_DRYRUN=1 GOAL_MONITOR_CODEX_REVIEW_HOSTS="" GOAL_MONITOR_CLAUDE_BIN=/bin/true \
+      GOAL_MONITOR_DRYRUN=1 GOAL_MONITOR_CODEX_REVIEW_HOSTS="${REVIEW_HOSTS:-}" \
+      GOAL_MONITOR_CLAUDE_BIN=/bin/true GOAL_MONITOR_CODEX_BIN=/bin/true \
       "$HOOK" 2>&1
 }
 
@@ -130,6 +134,42 @@ transcript -
 expect "spawned on /goal text the CLI never set: torn down" "$(hook Stop)" "\(/goal never took\)"
 rm -f "$MARKER"
 expect "no /goal and no /goal overseer: nothing" "$(hook Stop)" ""
+
+echo "== the overseer"
+reset
+out="$(hook UserPromptSubmit --arg prompt 'goal 跑一下 plan')"
+expect "Codex is the default overseer" "$out" "kind=goal overseer=codex "
+expect "it runs gpt-6-astra at high effort" "$out" "'/bin/true' -m 'gpt-6-astra' -c model_reasoning_effort=high "
+expect "no trust or update prompt holds it at the first frame" "$out" \
+  "-c check_for_update_on_startup=false -c 'projects=\{\"$TEST_DIR\"=\{trust_level=\"trusted\"\}\}'"
+expect "it is pointed at the skill's SKILL.md" "$out" "^Read /.*/skills/monitor-claude-goal/SKILL.md "
+expect "its recurrence is the tick driver in window 1" "$out" "goal-monitor-spawn.sh' --drive '$MON' 3600 "
+expect "it is told to create none of its own" "$out" "create no recurrence yourself"
+expect "each tick it is typed runs unscheduled" "$out" "^Tick from the driver .* --no-schedule, "
+expect "its teardown takes the driver with it" "$out" "and the tick driver in window 1 with it"
+out="$(GOAL_MONITOR_CODEX_MODEL=gpt-6.1-sol:xhigh GOAL_MONITOR_CADENCE=30m hook UserPromptSubmit --arg prompt 'goal x')"
+expect "model, effort and cadence are tunable" "$out" "-m 'gpt-6.1-sol' -c model_reasoning_effort=xhigh .*"
+expect "the driver ticks at the cadence" "$out" "--drive '$MON' 1800 "
+expect "a cadence the driver can't keep is refused" \
+  "$(GOAL_MONITOR_CADENCE=1h30m hook UserPromptSubmit --arg prompt 'goal x')" "wants Ns, Nm or Nh"
+expect "an unknown overseer is refused" \
+  "$(GOAL_MONITOR_OVERSEER=gemini hook UserPromptSubmit --arg prompt 'goal x')" "want codex or claude"
+
+out="$(GOAL_MONITOR_OVERSEER=claude hook UserPromptSubmit --arg prompt 'goal 跑一下 plan')"
+expect "GOAL_MONITOR_OVERSEER=claude brings Claude Code back" "$out" "^CLAUDE_GOAL_MONITOR=$SID /bin/true --permission-mode"
+expect "a Claude overseer invokes the skill" "$out" "^Invoke the monitor-claude-goal skill \(Skill tool"
+expect "a Claude overseer schedules its own cron" "$out" "self-schedule the recurring cron per §6"
+if printf '%s' "$out" | grep -q -- '--drive'; then fail "a Claude overseer gets no tick driver"; else pass "a Claude overseer gets no tick driver"; fi
+
+HOST="$(hostname -s)"
+expect "on a review host a Claude overseer takes the Codex review leg" \
+  "$(REVIEW_HOSTS="$HOST" GOAL_MONITOR_OVERSEER=claude hook UserPromptSubmit --arg prompt 'goal x')" \
+  "--codex-review gpt-6.1-sol:high"
+if REVIEW_HOSTS="$HOST" hook UserPromptSubmit --arg prompt 'goal x' | grep -q -- '--codex-review'; then
+  fail "a Codex overseer never takes the review leg"
+else
+  pass "a Codex overseer never takes the review leg"
+fi
 
 echo "== lifecycle edges"
 expect "SessionEnd tears down" "$(hook SessionEnd --arg reason clear)" "would kill .*target session ended: clear"

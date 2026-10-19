@@ -41,15 +41,16 @@ Identify the **overseer host** before the first tick. The target is always Claud
 |---|---|---|---|
 | Claude Code | `CronCreate` / `CronDelete` | tick output + the findings log (§2.1.1) — **never `PushNotification`** | read-only `Explore` agents |
 | Codex in the ChatGPT desktop app | an **in-chat Scheduled task** that re-invokes this skill | the scheduled run in this chat | optional read-only subagents when available |
+| Codex CLI spawned by `goal-monitor-spawn.sh` (the hook's default overseer) | the hook's tick driver, in window 1 of the overseer's tmux session, types a `--no-schedule` tick into its pane every cadence | tick output + the findings log (§2.1.1) — **never `PushNotification`** | direct read-only inspection |
 | Codex CLI / IDE | no native Scheduled management interface | current thread output | use Goal/wait continuation only when that capability is actually available; otherwise run one tick and disclose that recurrence was not created |
 
-Never claim that hourly monitoring exists until the recurring job/task has been created and its identifier or visible schedule has been reported. For Codex, prefer an **in-chat** scheduled task so each tick retains the session id, prior findings, checkpoint, and stop condition. Use local-project mode because the audit reads local transcripts, tmux, git, and artifacts. Keep the computer and desktop app running. If the scheduling capability is not exposed, do not emulate it with a detached shell `sleep` loop: a shell timer cannot invoke the model to perform a fresh audit.
+Never claim that hourly monitoring exists until the recurring job/task has been created and its identifier or visible schedule has been reported. For Codex, prefer an **in-chat** scheduled task so each tick retains the session id, prior findings, checkpoint, and stop condition. Use local-project mode because the audit reads local transcripts, tmux, git, and artifacts. Keep the computer and desktop app running. If the scheduling capability is not exposed, do not emulate it with a detached shell `sleep` loop: a shell timer cannot invoke the model to perform a fresh audit. The spawner's tick driver is not such a loop: it types each tick into the live Codex TUI, so every tick is a fresh model turn, and it checks that the turn started.
 
-Use a **host notification** wherever this document says to notify: on Claude Code, the tick output plus the findings log in §2.1.1; the scheduled/current chat output on Codex; or a user-requested notification connector when one is explicitly available. Never promise an out-of-band alert unless that channel was actually invoked.
+Use a **host notification** wherever this document says to notify: on Claude Code and on a spawned Codex CLI, the tick output plus the findings log in §2.1.1; the scheduled/current chat output on Codex; or a user-requested notification connector when one is explicitly available. Never promise an out-of-band alert unless that channel was actually invoked.
 
 **Never call `PushNotification`** (user ruling 2026-09-03). That tool raises a desktop notification *and*, whenever Remote Control is connected, pushes to the user's phone — and it exposes no per-call way to suppress the phone leg, so the only way to guarantee no mobile push is not to call it. An hourly overseer is exactly the wrong thing on a lock screen: it fires on a schedule the user did not choose, mostly to say something they will read fine an hour later. This holds for every notify in this document, terminals included.
 
-### 2.1.1 The findings log (Claude Code host)
+### 2.1.1 The findings log (Claude Code, and Codex CLI spawned by the hook)
 
 The monitor session is normally unattended, so a finding that lives only in tick output reaches nobody. Append every notify-worthy event to
 
@@ -318,19 +319,20 @@ Unless `--no-schedule` is set, run **one tick immediately**, then create recurre
 
 - **Claude Code:** create a recurring cron with `CronCreate` (default hourly, on an off-the-hour minute), and report the cron id. Delete it with `CronDelete` at a true terminal.
 - **Codex desktop app:** create an **in-chat Scheduled task** in the current chat with the requested cadence. Its durable prompt must re-invoke `$monitor-claude-goal <session-id> <verified-target> --no-schedule` with the active flags/principles, run exactly one tick, preserve/read the prior checkpoint, report only findings or terminal state, and stop/pause itself when the target is gone or the `/goal` is genuinely complete. Use the current local project, not an isolated worktree, because the target transcript and tmux server are machine-local. Report the scheduled task id or visible schedule.
+- **Codex CLI spawned by `goal-monitor-spawn.sh`:** the recurrence already exists. The hook's tick driver (window 1 of your tmux session, logging to `<state-dir>/<monitor-session>.drive.log`) types a `--no-schedule` tick into your pane every cadence and waits out a turn still running. Run the first tick and create nothing else: no loop, no timer, no second driver. Report the driver as the schedule.
 - **Codex CLI / IDE without Scheduled management:** if a persistent Goal plus a real wait/continuation mechanism is exposed, use it and report that mechanism. Otherwise run one tick and state plainly that **no hourly recurrence was created**; instruct the human to create an in-chat Scheduled task from the desktop app. Never leave a detached `sleep` loop and call it a monitor.
 
 Each tick re-enters the audit fresh and reads only the delta since the prior checkpoint. The recurrence must auto-expire or be stopped at a true terminal.
 
-> **Caveat:** Claude cron requires the monitor's Claude tmux session to stay alive. Codex local scheduled tasks require the computer and ChatGPT desktop app to stay running and the local project to remain available.
+> **Caveat:** Claude cron requires the monitor's Claude tmux session to stay alive. Codex local scheduled tasks require the computer and ChatGPT desktop app to stay running and the local project to remain available. A spawned Codex CLI's tick driver lives in the overseer's tmux session and goes with it.
 
 ### 6.1 Self-teardown at a true terminal
 
 The overseer outlives the run it watches unless it ends itself, so a finished `/goal` otherwise leaves a dead monitor session (and an idle tmux pane) behind for every run. At a **true terminal only** — the `/goal` is **genuinely complete** (idle-and-done, §5/§7) or the target session is **gone** — wind down in this order:
 
 1. send the terminal verdict through the host notification channel (so the human learns *why* the watcher stopped);
-2. stop the host recurrence: `CronDelete` on Claude Code, or stop/pause the in-chat Scheduled task on Codex;
-3. **Claude-host only:** as the final action, kill the overseer's own tmux session: `tmux -S <socket> kill-session -t '=<monitor-session>'`. When spawned by `goal-monitor-spawn.sh`, use the exact command from the invoking prompt. **Codex-host:** never kill the Codex chat/app process; ending the scheduled task is sufficient.
+2. stop the host recurrence: `CronDelete` on Claude Code, or stop/pause the in-chat Scheduled task on the Codex desktop app; a spawned Codex CLI has nothing to stop here, step 3 ends its tick driver;
+3. **Claude Code and spawned Codex CLI:** as the final action, kill the overseer's own tmux session: `tmux -S <socket> kill-session -t '=<monitor-session>'`. When spawned by `goal-monitor-spawn.sh`, use the exact command from the invoking prompt. **Codex desktop app:** never kill the Codex chat/app process; ending the scheduled task is sufficient.
 
 This is the one carve-out in §3's kill ban: it closes **the watcher's own** session, never the target's. **Never self-tear-down for a resumable state** — wedged (§5.1), awaiting a decision (§5.2), resource-blocked (§5.3), idle-but-unfinished (§5.4), guard-blocked (§5.5), rate-limited (§5.6) all keep the run alive and need the overseer alive with it. When in doubt about "complete vs. merely quiet", stay up: a redundant watcher costs a tick, a premature teardown loses the watchdog silently.
 
