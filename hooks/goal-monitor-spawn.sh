@@ -127,8 +127,7 @@ drive() {
   }
   # Polled each second: a turn can show its status line only briefly.
   started() {
-    local i
-    for i in $(seq 15); do busy && return 0; sleep 1; done
+    for _ in $(seq 15); do busy && return 0; sleep 1; done
     return 1
   }
   up() {
