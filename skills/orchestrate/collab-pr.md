@@ -83,7 +83,10 @@ Agent 调用带 `isolation: "worktree"`。worktree 里没有被 gitignore 的东
 背景（你看不到别的上下文，以下是全部）：<接口签名逐字、要复用的函数、数据格式、解释器/数据的绝对路径>
 流程：
   1. 小步提交，提交信息末尾带 (#N)。
-  2. 推之前跑门禁：<和 CI 同一条命令>。红灯不推。
+  2. 推之前跑门禁：<和 CI 同一条命令>，不 fail-fast，逐条打印结果（pytest 加 -v -rfE；-q 要到跑完才列失败），在快照里后台跑：
+       bash <本 skill 目录>/scripts/snapshot-run.sh <你自己的日志路径，不放 worktree 里> -- <命令>
+     日志里一出现第一条失败（grep -n -m1 -E ' (FAILED|ERROR)( |$)'）就开始修；跑完照脚本开头的命令只重跑失败的，最后全量再跑一遍。
+     退出 125 是快照没建起来，看日志最后一行。只改了非逻辑文件（bash <本 skill 目录>/scripts/touches-logic.sh origin/<默认分支> 退出 1）就不跑。红灯不推。
   3. git push -u origin <分支>；gh pr create -R <owner/repo> --title "<type>: …" --body-file <文件>，正文写：Closes #N；改了什么；怎么验的；
      对共享接口的影响（有破坏性改动就在标题用 `type!:` 并写出谁受影响；级别只看标题）。所有 gh 命令都带 -R <owner/repo>。
   4. 不改版本号文件和 CHANGELOG（队列写）。不推 <默认分支>、不合并、不 approve。
@@ -185,6 +188,8 @@ bash <本 skill 目录>/scripts/merge-queue.sh --gate ci [--semver [--version-cm
 | 门禁在 worktree 里永远绿 | 主 venv 是 editable install，测的是主工作树的源码 | 门禁设 `PYTHONPATH=$PWD`，或断言 `pkg.__file__` 在 `$PWD` 下 | 预置（Python 仓库） |
 | PR 开到了 upstream、体检查错仓库 | 多 remote 时 gh 自己挑默认仓库 | 所有 gh 命令带 `-R <origin 的 owner/repo>`，派单里写死 | 预置（有 upstream 时） |
 | 队列等 CI 很久 | 单 runner、一个 PR 一次 CI | 成批进队、红了二分；或 `--gate local` | 观察到再修 |
+| 只改文档的 PR 也排队跑全量 CI | CI 不分改没改代码逻辑 | `touches-logic.sh` 分类 job（milestone.md 第 6 步） | 观察到再修 |
+| 修一处、从头再跑、再红一处，来回好几趟 | 门禁 fail-fast，问题一次只露一个 | 不 fail-fast、快照里跑、第一处失败就开始修（SKILL.md「门禁怎么选」） | 预置 |
 | 同一个 helper 写了两份；同一文件反复冲突 | 规划时没定归属 | 文件归属表；接口 PR 先合 | 规划时 |
 | B 等 A 的接口，或 A 改接口弄坏 B | 依赖没登记、破坏性改动没声明 | issue blocked-by；`type!:`；expand → migrate → contract | 观察到再修 |
 | 注册表、导出列表、文档索引次次冲突 | 一处集中手写的列表 | 改成一项一个文件或由生成器出（删掉冲突点，不加锁） | 观察到再修 |
