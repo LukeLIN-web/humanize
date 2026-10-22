@@ -121,6 +121,8 @@ TEST_SUITES=(
     "test-frontend-migration.sh"
     "test-rlcr-sources.sh"
     "test-style-compliance.sh"
+    # orchestrate skill scripts
+    "../skills/orchestrate/scripts/test-milestone-scripts.sh"
     # Robustness tests
     "robustness/test-state-file-robustness.sh"
     "robustness/test-session-robustness.sh"

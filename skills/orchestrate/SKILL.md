@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: Run a multi-step engineering/research task as an orchestrator that decomposes, dispatches parallel subagents (Agent tool), verifies each phase, and loops until everything is closed. Use when the user says orchestrate, 指挥, 多开几个 session 并行, 派活, 你当指挥者, or hands over a plan/audit/checklist with several independent items, including goals whose bulk is hours of GPU training / eval / collection (launch → watch → read, with a zero-context review before launch and before merge). Also the collaborative-PR mode: several work items ("做 idea 1、2、3") pushed through a standard multi-contributor PR flow by parallel agents — CI/CD check, issue, branch per agent, cross review, merge queue, SemVer — while the orchestrator watches for collaboration friction and fixes it in the process (triggers: 多人协作, 走 PR, merge queue, SemVer, 摩擦). Adapted from humanfia/oh-my-humanize `orchestrate-notice.md` for Claude Code.
+description: Run a multi-step engineering/research task as an orchestrator that decomposes, dispatches parallel subagents (Agent tool), verifies each phase, and loops until everything is closed. Use when the user says orchestrate, 指挥, 多开几个 session 并行, 派活, 你当指挥者, or hands over a plan/audit/checklist with several independent items, including hours-long GPU training / eval goals (launch → watch → read, zero-context review before launch and before merge). Collaborative-PR mode (多人协作, 走 PR, merge queue, SemVer, 摩擦): parallel agents push items through issue → branch → PR → cross review → merge queue → SemVer while you fix collaboration friction in the process. Milestone mode (milestone, 里程碑, dev branch, decision issue): plan a milestone as GitHub issues (milestone → decision → feature issues with Blocked-by deps); subagents claim ready issues in own worktrees with a cheap other-vendor advisor model and PR into a milestone dev branch tested async; dev → main runs the full suite, heavy tests nightly.
 ---
 
 # Orchestrate（指挥者模式）
@@ -25,6 +25,22 @@ user 要你**并行派 agent 走标准多人协作流程（PR）推进仓库**�
 - 顺序：CI/CD 体检（第 0 波只修挡住所有 PR 的）→ 开 issue、定文件归属 → 并行派作者（各自 worktree）→ 零上下文交叉 review
   → `scripts/merge-queue.sh` 合并（门禁跑在合并结果上，有版本号时由它按 PR 标题做 SemVer）→ 每次合并后广播给在飞的作者。
 - 覆盖下面两条规则：规则 6（user 要的就是 PR 流程，推分支、合并授权内）、规则 9（作者在自己的 worktree 里跑快门禁）。
+
+## 里程碑模式
+
+user 给一个 milestone（「这个 milestone 要做 X」「开个 milestone」「按 milestone 走」），要你从 brainstorm 一路推到合进默认分支时，
+**先读同目录的 `milestone.md` 全文再动手**。它是协作 PR 模式前面加了规划、后面换了门禁：
+
+- 一个 session 只管一个 milestone，开一条 `milestone/<ms>` dev 分支；别的 milestone 各开各的 session。
+- 规划全在 GitHub issue 里，不写本地 md：milestone issue（Points 清单就是 todo）→ 影响微架构的开 decision issue
+  （选项、tradeoff、research、决定；推翻只开新的，历史不改写）→ decision 定了开 feature / infra issue（功能、目标、方案、测试、文件、`Blocked-by:`）。
+- `scripts/ready-issues.py` 按 `Blocked-by:` 算出能派的一批，一条消息并行派；每合一个就再算一次，新就绪的当场派。
+- 作者端到端：自己的 worktree、静态检查、unit + 自己 feature 的 system 测试（要不要自建 unit testbench 自己定）、
+  和便宜的别家模型（advisor）结伴；PR 进 dev 分支，review LGTM 就合，**不等 dev 上的 CI**。
+- 全量测试（静态检查 + unit + system）每次 push dev 时异步跑，红了找到是谁、让他修；dev → 默认分支时同一套全量挡合并（合并队列）。
+  heavy 测试夜跑，不进任何 PR 的门禁；不碰代码逻辑的提交不跑任何测试。
+- 覆盖下面工作流第 2 步（todo 是 milestone issue，不是 scratchpad 文件）、规则 5（作者的 PR 合进 dev 不等 dev 的测试；dev → 默认分支红灯不前进）、
+  规则 6 和规则 9（同协作 PR 模式；作者自己跑测试）。
 
 ## 十条规则
 
@@ -90,6 +106,17 @@ user 要你**并行派 agent 走标准多人协作流程（PR）推进仓库**�
 ## 门禁怎么选（研究代码仓库）
 
 - **语法/导入**：用仓库自己的解释器 `python -c "import <module>"`，不要用系统 python。
+- **静态检查先行**：能用脚本静态查出来的（lint、类型、shellcheck、schema、import、禁用写法的 grep）都放进仓库的静态检查脚本，
+  每次先于测试跑。review 里同一类意见第二次出现，就把它写成一条检查，不再靠人看。
+- **测试分层**：unit（单个模块，邻居用 stub / fake，秒级）/ system（跨模块、走真入口）/ heavy（GPU、大数据、长回归，夜跑）。
+  用 marker 或目录分开，每层一条命令；PR 的门禁只含 unit + system。
+- **全量跑、不 fail-fast，第一处失败就开始修**：不加 `-x` / `--maxfail` / `-failfast`，一次把问题全暴露出来；测试命令要逐条打印结果
+  （pytest 加 `-v -rfE`，只打点的 `-q` 要到跑完才列失败）。用 `scripts/snapshot-run.sh` 在快照里后台跑，日志里一出现第一条失败
+  就开始修（规则 9 下由你派修补子 agent，不等跑完）；修的是工作树，快照不受影响。跑完拿完整失败列表一起修，
+  先只重跑失败的（测试 ID 从日志里取：快照跑完就删，`--lf` 这类缓存跟着没了），最后全量再跑一遍。
+  这样就没有「跑 → 第一处红 → 修 → 从头再跑 → 下一处红」的串行循环。用法和取失败 ID 的命令见脚本开头。
+- **不碰代码逻辑就不跑测试**：`scripts/touches-logic.sh <base>`（到工作树为止，没提交的改动也算）退出 1，即改的全是文档这类非逻辑文件，
+  就不跑任何测试；CI 用两个参数 `<base> <head>`，同一个判据（`milestone.md` 第 6 步）。
 - **离线核对**：把新代码跑在已有的、标签已知的产物上，和旧标签逐字节比；这是比单测强得多的判据。
 - **冒烟**：真实入口、最小规模（1 个 task、2 个 episode、1 张卡），看产物目录里有没有东西，再放量。
 - **放量跑**：按 `background-tasks-freeze-with-session` 用 `setsid nohup` 挂在盒子上并验 `ppid=1`；
