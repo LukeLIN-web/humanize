@@ -1,6 +1,6 @@
 ---
 name: todo-dispatch
-description: One tick of the todo dispatcher loop, run as `/loop 30m /todo-dispatch` — read the repo's todo ledger, open a new claude-board card (a fresh Claude Code session) for every open item nobody has claimed, let each session claim, do and tick its own item; meanwhile watch the collaboration friction between the parallel sessions and fix it in the process (merge queue, SemVer, CI/CD), and push the shared default branch through the gate. Triggers: 看 todo 派活、没人做的开 session 去做、todo 派单循环、观察协作摩擦、dispatcher loop.
+description: One tick of the todo dispatcher loop, run as `/loop 30m /todo-dispatch` — read the repo's todo ledger, open a new claude-board card (a fresh Claude Code session) for every open item nobody has claimed, let each session claim, do and tick its own item; meanwhile watch the collaboration friction between the parallel sessions and fix it in the process (merge queue, SemVer, CI/CD), push the shared default branch through the gate, and run one gpu-priority loop round over the fleet's GPUs. Triggers: 看 todo 派活、没人做的开 session 去做、todo 派单循环、观察协作摩擦、dispatcher loop.
 argument-hint: "[可选：只看 todo 的哪一节]"
 ---
 
@@ -9,11 +9,11 @@ argument-hint: "[可选：只看 todo 的哪一节]"
 user 的原话（2026-10-14）：「你的任务就是看 todo，然后把没人做的，你新建 claude board card claude session 去做，没别的了，
 他们做完应该自己标注 todo done。你要研究的是观察协作摩擦、在流程上解决，考虑 merge queue、SemVer、CI/CD。」
 
-定时跑：`/loop 30m /todo-dispatch`（插件装法下叫 `/humanize:todo-dispatch`）。每轮按下面六步走完再停，不在两轮之间常驻。
+定时跑：`/loop 30m /todo-dispatch`（插件装法下叫 `/humanize:todo-dispatch`）。每轮按下面七步走完再停，不在两轮之间常驻。
 
 ## 角色
 
-你是派单员和流程维护者，**不做条目本身的活**。四件事：派活、看摩擦、修流程、推共享默认分支。
+你是派单员和流程维护者，**不做条目本身的活**。五件事：派活、看摩擦、修流程、推共享默认分支、照 GPU 排程转达和核对。
 条目的认领、进度、做完都由派出去的会话自己写；你只读台账、不替它们改条目。
 
 ## 先读的（每轮重读，不凭上一轮的记忆）
@@ -22,7 +22,7 @@ user 的原话（2026-10-14）：「你的任务就是看 todo，然后把没人
 - 摩擦台账（目标仓库的 `docs/collab-friction.md`，没有就建）：上一轮记到哪、哪些修补在「待核」。
 - `git log` 自上一轮以来的提交（新会话没有「上一轮」：从摩擦台账最后一行的时间算起）、`gh run list -R <origin>` 最近的 CI、`ListAgents` 和 board 上的卡片。
 
-## 一轮六步
+## 一轮七步
 
 ### 1. 分类台账里的 open 条目
 
@@ -44,7 +44,7 @@ user 的原话（2026-10-14）：「你的任务就是看 todo，然后把没人
 
 - **先找合适的现成卡**（user 2026-10-15）：卡上的会话和这一条共用产物、脚本或同一场发射，或刚做完紧挨着的条目，就让它接着做——用 board 的 `POST /api/windows/<key>/prompt` 把派单打进它的输入框，派单里写为什么派给它、和它手上的活谁先。只是空着、上下文和这一条无关的卡不算合适（等于新卡，还带着无关的上下文）；卡已经不在 board 上就另找。没有合适的才开新卡。
 
-- **选机器**：要 Isaac / L40S 的评测、要某台机器上的服务栈的，开在那台；零 GPU 的读数、判断、写文档开在本机。
+- **选机器**：要 Isaac / L40S 的评测、要某台机器上的服务栈的，开在那台；零 GPU 的读数、判断、写文档开在本机。要 GPU 的先看 gpu-priority 的排程文件（plan.md）：卡已经排给别的活的主机不开；排程里没有它的位置，就照常经 gpu_wait 排队，第 6 步会把它提出来等 user 排。
 - **开卡**：把派单写进 scratchpad 的一个文件，跑 `python3 <本 skill>/scripts/dispatch.py <host> <仓库路径> <派单文件>`，
   它在 board 上开卡、等卡出现、把派单打进输入框，打印卡的 key 和会话名。新开的卡一条一卡。
 - **派单**（自包含、单段，不带换行；措辞照下面的骨架填）：
@@ -100,9 +100,13 @@ bash <本 skill>/scripts/push-shared-main.sh            # 在目标仓库里跑�
 | 6 | 推被拒，origin 刚前进 | 下一轮重跑；永远不 `--force` |
 | 2 | 推失败但不是因为 origin 前进（例如分支保护） | 看报错，告诉 user |
 
-### 6. 汇报
+### 6. GPU 排程
 
-一段短的：这一轮派了谁（卡、会话名、条目）、哪些条目在等 user（每条一句为什么）、新记的摩擦和修补进度、推送结果。
+用 Skill 调 `gpu-priority`（插件装法下 `humanize:gpu-priority`），参数 `loop`（user 2026-10-23「让 todo dispatch 自动调用一下这个 skill.」）。它只提醒 user 拍过板、已经到点的那几步，核对放卡和领卡；要新拍板的写进排程文件的「待 user 拍板」，由第 7 步转给 user。不管条目是不是你派的，全集群的卡都看。
+
+### 7. 汇报
+
+一段短的：这一轮派了谁（卡、会话名、条目）、哪些条目在等 user（每条一句为什么）、新记的摩擦和修补进度、推送结果、GPU（提醒了谁接哪几张卡；「待 user 拍板」里的建议原样列出）。
 **派出去的会话问 user 的话只落在它自己的 pane 里**，user 多半看不到：每轮读每张派出去的卡最近一条输出
 （board 的 `GET /api/windows/<key>/timeline`，跨机的卡由 board 转发），在等 user 定的问题连同它给的选项和建议原样转给 user，
 并说明它停着占了什么（卡、服务）。转述台账里等 user 的条目前，当场重读那一条的现行文字，别用早先读到的（条目常被别的会话改过）。
@@ -118,6 +122,6 @@ user 已经裁定过的事不再问。不用 AskUserQuestion。
 
 台账、认领工具在根目录 CLAUDE.md 第 9 节，门禁、推送、分支保护在 CONTRIBUTING §2，体检结果在 `docs/collab-friction.md` 开头；这里只记它们没写的：
 
-- board 跑在 nnmc71，派单员也在 nnmc71 上跑（别处跑要设 `CLAUDE_BOARD_URL`、`CLAUDE_BOARD_TOKEN`）；它同时汇总 `61`、`63` 的卡。
+- board 跑在 nnmc71，派单员也在 nnmc71 上跑（别处跑要设 `CLAUDE_BOARD_URL`、`CLAUDE_BOARD_TOKEN`）；它同时汇总 `61`–`65` 的卡和 GPU。
 - RoboLab / Isaac 的活开在 `63`，RoboCasa（MuJoCo，H100）和零 GPU 的开在 `71`。
 - `todo.html`、`idea.html`、`contribution.html` 改完要发回固定的 Artifact URL（`docs/html/CLAUDE.md`），nnmc63 上的会话发不了：第 5 步推完，这三页 HEAD 里有上次发布之后的提交，派单员通读全文后发回原 URL（2026-10-16：nnmc63 改的 `idea.html` 等了约 10 小时没人发）。
