@@ -1,6 +1,6 @@
 ---
 name: gpu-priority
-description: 协调整个 claude-board 的 GPU 先后（跨项目、跨主机）——给全集群拍一张占卡快照，把每张卡对回 board 上的卡片和 todo 条目，按「推迟它的代价 ÷ 它还要的卡时」排先后，按每件活的有用并行度上限依次分卡，出一份排程给 user 拍板，拍板后经 board 把各自那一段转给对应会话。Triggers: 协调 GPU、GPU 优先级、谁先用卡、卡不够分、整个 board 的优先级、一个 issue 用所有 GPU 还是分开、让某个项目先跑完.
+description: 协调整个 claude-board 的 GPU 先后（跨项目、跨主机）——从 board 读全集群每张卡上是谁、谁在排队，把每张卡对回 board 上的卡片和 todo 条目，按「推迟它的代价 ÷ 它还要的卡时」排先后，按每件活的有用并行度上限依次分卡，出一份排程给 user 拍板，拍板后经 board 把各自那一段转给对应会话。Triggers: 协调 GPU、GPU 优先级、谁先用卡、卡不够分、整个 board 的优先级、一个 issue 用所有 GPU 还是分开、让某个项目先跑完.
 argument-hint: "[可选：只排哪几台机器，或 user 刚给的先后]"
 ---
 
@@ -40,13 +40,14 @@ user 的原话（2026-10-23）：「我现在感觉需要整体协调一下整�
 
 ## 一轮五步
 
-### 1. 拍快照
+### 1. 读占卡
 
-每台都跑 `scripts/gpu_snapshot.py`，写 `/shared/user62/workspace/juyi/gpu-board/<主机>.json`：每张卡上的进程（cwd、命令、起了多久、`CLAUDE_CODE_SESSION_ID`、从哪台 ssh 来）、gpu_wait 的锁谁拿着、还在等卡的 gpu_wait。只读，只用标准库。
+每台跑 board 的机器每 15 秒采一次本机 GPU（claude-board 的 `core/gpus.py`），随 `GET /api/windows` 的 `gpus` 汇总到聚合的那台；页面上的 **GPUs** 面板画的是同一份。`python3 <本 skill>/scripts/board_gpus.py` 把它印成一台一段：
 
-- 本机：`python3 -I <本 skill>/scripts/gpu_snapshot.py`。
-- 远端照 remote-tmux：私有 socket 开一个会话，每台一个窗口、各 ssh 一次，之后每轮只往窗口里发 `python3 -I <本 skill>/scripts/gpu_snapshot.py; echo SNAP_RC=$?_$(hostname)`。文件按脚本实际跑在哪台命名，pane 掉回发起机时目标机那份不更新，`board_gpus.py` 会标 `STALE`。
-- 汇总：`python3 <本 skill>/scripts/board_gpus.py`，一台一段：每张卡上是谁（项目、命令、多久、board 卡名）；`LOCK` 行是谁拿着哪几张卡的 gpu_wait 锁（CUDA 序号，有隐藏卡的盒上和上面的 nvidia-smi 序号对不上）；`WAIT` 行是谁在等、要多少。
+- 每张卡上的进程：有 board 卡名的是那张卡片的会话起的（进程带 `CLAUDE_CODE_SESSION_ID`）；没有的是从 cwd、命令里认出的项目目录。另有命令、起了多久，`ssh<IP>` 是起它的 shell 从哪台 ssh 进来。
+- `CLAIM` 行：gpu_wait 占着哪几张卡（CUDA 序号，有隐藏卡的盒上和上面的 nvidia-smi 序号对不上；一张卡占了 k 个 slot 就重复 k 次）。卡上没进程但还有 CLAIM，就是批尾空占。
+- `WAIT` 行：还在排队的 gpu_wait，几个、各要多少显存、谁的。
+- `STALE`：那台的 board 没在应答，或它的 nvidia-smi 卡住了。有 GPU 的机器不在表里，就是那台没跑 board：照 claude-board README 起一个（没有会话也能起）、聚合机加一条隧道，不另开 ssh 去拍。
 
 ### 2. 把卡对回活
 
@@ -78,7 +79,7 @@ user 拍板后，对每个要变的会话用 board 的 `POST /api/windows/<key>/
 
 「我是 <你的会话名>（<主机>），转达 user <时间> 拍板的 GPU 排程（<plan.md 路径>）里给你的那一段：<在哪台、留几张或放哪几张、在什么时刻或哪个批边界、之后什么时候可以再扩>。user 原话：「<原话>」。怎么放卡由你按你仓库的规则做（批边界、STOP 文件、存好进度），做完回我一句放了哪些卡、什么时候能接着跑。和你手上的判断冲突就直接问 user。」
 
-下一轮第 1 步的快照里核对：该放的卡放没放，该领的领没领。没动的去问，不替它动。
+下一轮第 1 步里核对：该放的卡放没放，该领的领没领。没动的去问，不替它动。
 
 ## 不做
 
