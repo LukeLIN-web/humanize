@@ -9,7 +9,8 @@ $CLAUDE_BOARD_TOKEN; either one unset comes from the board checkout's own loader
 ($CLAUDE_BOARD_DIR, default ~/workspace/juyi/claude-board, scripts/env.sh).
 
 Exit codes: 0 sent; 1 create failed or unknown host; 2 our card did not show up, or
-more than one new card could be ours (nothing typed); 3 the prompt did not land.
+more than one new card could be ours (nothing typed); 3 the prompt did not land;
+4 a `/goal` prompt too long to stay a command (nothing created).
 """
 import json
 import os
@@ -29,6 +30,9 @@ def board_config() -> tuple[str, str]:
 
 
 URL, TOKEN = board_config()
+# Claude Code takes a typed burst of 800+ chars as a paste, and a pasted `/goal …` is
+# a plain message, not the command (seen 2026-10-23: 795 chars set the goal, 939 did not).
+GOAL_MAX_CHARS = 800
 
 
 def call(method: str, path: str, body: dict | None = None):
@@ -47,6 +51,10 @@ def main() -> int:
     host, cwd, prompt_file = sys.argv[1:4]
     with open(prompt_file, encoding="utf-8") as f:
         text = f.read().strip()
+    if text.startswith("/goal ") and len(text) >= GOAL_MAX_CHARS:
+        print(f"/goal prompt is {len(text)} chars; keep it under {GOAL_MAX_CHARS} or it lands as a paste",
+              file=sys.stderr)
+        return 4
     snap = call("GET", "/api/windows")
     hosts = {snap["host"]} | {p["host"] for p in snap.get("peers", []) if p["online"]}
     if host not in hosts:
