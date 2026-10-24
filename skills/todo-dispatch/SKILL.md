@@ -125,4 +125,3 @@ user 已经裁定过的事不再问。不用 AskUserQuestion。
 
 - board 跑在 nnmc71，派单员也在 nnmc71 上跑；它同时汇总 `61`–`65` 的卡和 GPU。别的机器上的 board 不汇总，71 的只听 127.0.0.1：别处跑先在私有 tmux（`tmux -L avocpriv`，memory `remote-access-and-retired-boxes`）里开 `ssh -L 50957:127.0.0.1:50956 nnmc71`，再给 `dispatch.py`、`board_gpus.py` 设 `CLAUDE_BOARD_URL=http://127.0.0.1:50957`（token 照常从 board 的 env.sh 读）。
 - RoboLab / Isaac 的活开在 `63`，RoboCasa（MuJoCo，H100）和零 GPU 的开在 `71`。
-- `todo.html`、`idea.html`、`contribution.html` 改完要发回固定的 Artifact URL（`docs/html/CLAUDE.md`），nnmc63 上的会话发不了：第 5 步推完，这三页 HEAD 里有上次发布之后的提交，派单员通读全文后发回原 URL（2026-10-16：nnmc63 改的 `idea.html` 等了约 10 小时没人发）。派单员自己在 nnmc63 上时也发不了（10-21、10-24 两次）：托 nnmc71 上一张卡——上一轮发页的卡还在就打进它，不在就用 `dispatch.py` 开一张——读线上版、和 HEAD 不同才通读后发，回报每页发没发、第几版。
