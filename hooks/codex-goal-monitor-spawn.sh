@@ -179,6 +179,9 @@ if [ "${GOAL_MONITOR_DRYRUN:-0}" = "1" ]; then
 fi
 
 "${TM[@]}" new-session -d -s "$mon" -c "$cwd" "$cmd" || die "tmux new-session failed for '$mon'"
+# An overseer is a helper, not a session the user drives: the board keeps a
+# pane marked @fleet-passive off its cards. A failed mark only shows a card.
+"${TM[@]}" set-option -p -t "=$mon:" @fleet-passive 1 2>/dev/null || :
 printf '%s\t%s\t%s\t%s\n' "$(date -Is 2>/dev/null)" "$mon" "$sid" "${target:-no-tmux}" \
   >> "$state_dir/spawn.log" 2>/dev/null
 
