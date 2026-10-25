@@ -396,6 +396,9 @@ exec ${SHELL:-/bin/bash} -i"
     "${TM[@]}" has-session -t "=$mon" 2>/dev/null && return 0
     die "tmux new-session failed for '$mon'"
   fi
+  # An overseer is a helper, not a session the user drives: the board keeps a
+  # pane marked @fleet-passive off its cards. A failed mark only shows a card.
+  "${TM[@]}" set-option -p -t "=$mon:" @fleet-passive 1 2>/dev/null || :
   # An overseer that can't be ticked would audit once and then watch nothing.
   if [ -n "$driver" ] && ! "${TM[@]}" new-window -d -t "=$mon:1" -n tick -c "$cwd" "$driver"; then
     "${TM[@]}" kill-session -t "=$mon" 2>/dev/null
