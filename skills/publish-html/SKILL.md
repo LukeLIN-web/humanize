@@ -1,11 +1,14 @@
 ---
 name: publish-html
 description: 把项目里改过的 HTML 页发回各自的 Artifact URL——发一下 / 发布 / publish / 推到 artifact。项目的 docs/html/publish.json 登记过的页（或生成它们的脚本）改完以后，不等 user 说就跑一遍（user 2026-10-26「把发一下弄成一个脚本, 这样以后 run一下就行了. 以后每次改完 run一下.」）。
+argument-hint: "[可选：报告文件路径，scripts/publish.sh 传]"
 ---
 
 # 发一下
 
 页面 → Artifact URL、每页一起发的文件、标题前缀、扫描用的正则、发不了的机器，都写在项目的 `docs/html/publish.json`，格式见 `scripts/publish.py` 开头。页面写法（不写机器名、产物名等）在项目的 `docs/html/CLAUDE.md`。
+
+不在 Claude 会话里时，在仓库根跑 `bash <本 skill>/scripts/publish.sh`：没改的页它直接退出；有要发的，它在私有 tmux 里起一个交互 claude 跑本 skill（`claude -p` 没有 Artifact 工具），等报告、打印、关会话。
 
 1. 在仓库根跑 `python3 <本 skill>/scripts/publish.py`：列出要发的页（JSON）；没改过的页不在里面，空列表就是都发过了。在 `skip_hosts` 里的机器上它直接退出，换台机器发。
 2. 每一项：
@@ -14,7 +17,7 @@ description: 把项目里改过的 HTML 页发回各自的 Artifact URL——发
    - 发：`files` 里每一批发一次，同一个 `url` 和 `file_path`；批不空就作 `files` 传（值为 null 是删远端那个文件）。`url` 为 null 是新页：第一批不带 `url`、带 `icon` 发，后面的批带拿到的 URL，再把 URL 写进 `publish.json`。
    - 发完：`python3 <本 skill>/scripts/publish.py --mark <page>`。
 3. 改了 `publish.json` 就提交它（commit 带 pathspec）。
-4. 回复：每页一行，链接和版本号；没发的页写原因。
+4. 回复：每页一行，链接和版本号；没发的页写原因。带了参数（报告文件路径）就把同一份回复写进那个文件，放在所有步骤之后：脚本看到它就关掉会话。
 
 `docs/html/.published.json` 是本机缓存，项目要把它写进 `.gitignore`。缓存丢了或换了机器，下次会把没改的页再发一遍，多文件页会整份重传：先 `Artifact list`（`scope: "files"`）对一遍远端，远端有、本地没有的路径在第一批里设 null。
 
