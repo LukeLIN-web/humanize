@@ -64,6 +64,7 @@ user 的原话（2026-10-14）：「你的任务就是看 todo，然后把没人
 - 本地默认分支和 origin 的差距：`git rev-list --left-right --count <分支>...origin/<分支>`；
 - 认领碰撞：同一条被两个会话认领、认领后卡片没了、认领提交里带了别人的改动（`git show --stat` 看认领提交是不是只改一行）；
 - 热点文件：`git log --since=<上一轮> --name-only` 计数，最高的几个；
+- 会话里反复撞的错：本机有 `agentshark` 时跑 `agentshark index && agentshark failures --since <上一轮> --signatures`，看 SESSIONS ≥ 2 的签名——权限拦截（policy 族：一条命令多个操作、`cd` 后跑 git、变量没法预检）、worktree 隔离拦截、同一个缺文件。只读本机日志，跨机的不在里面；没装就跳过这项；
 - 修补后的复发：台账里每条「待核」的修补，这一轮同类现象出现没有。
 
 每条写进摩擦台账一行：时间 / 涉及谁 / 现象（可观察的）/ 代价 / 根因 / 流程修补（落在哪个文件、哪个 PR）/ 复发没有。
