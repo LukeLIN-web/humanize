@@ -23,6 +23,7 @@ Choose the CLI from the running parent, not from this skill's directory: a Codex
    tmux new-session -d -s "$S" -x 220 -y 50
    tmux send-keys -t "$S" 'ssh <host>' Enter
    ```
+   If the task chain works on a GitHub issue `#N`, tag this session and the remote tmux layer you open later, each on its own server, so CI can close them once the issue closes: `tmux set-option -t "=$S:" @issue N`.
 
 3. **Wait for login** (end-marker with bounded polling, never a fixed sleep). The
    marker MUST contain a shell expansion so that only a real remote shell can
