@@ -8,7 +8,7 @@ argument-hint: "[可选：报告文件路径，scripts/publish.sh 传]"
 
 页面 → Artifact URL、每页一起发的文件、标题前缀、扫描用的正则、发不了的机器，都写在项目的 `docs/html/publish.json`，格式见 `scripts/publish.py` 开头。页面写法（不写机器名、产物名等）在项目的 `docs/html/CLAUDE.md`。
 
-不在 Claude 会话里时，在仓库根跑 `bash <本 skill>/scripts/publish.sh`：没改的页它直接退出；有要发的，它在私有 tmux 里起一个交互 claude 跑本 skill（`claude -p` 没有 Artifact 工具），等报告、打印、关会话。
+不在 Claude 会话里时，在仓库根跑 `bash <本 skill>/scripts/publish.sh`：没改的页它直接退出；有要发的，它在私有 tmux 里起一个交互 claude 跑本 skill（`claude -p` 没有 Artifact 工具），等报告、打印、关会话。它要这台机器上开 claude 不弹对话框（信任过这个仓库、跳过权限模式不要确认）；60 s 内会话没收到提示就报错退出，在仓库根手动开一次 claude 把提示接受了再跑。
 
 1. 在仓库根跑 `python3 <本 skill>/scripts/publish.py`：列出要发的页（JSON）；没改过的页不在里面，空列表就是都发过了。在 `skip_hosts` 里的机器上它直接退出，换台机器发。
 2. 每一项：

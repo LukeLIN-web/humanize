@@ -17,13 +17,30 @@ claude=$(command -v claude || echo "$HOME/.local/bin/claude")
 dir="$HOME/tmp/publish-html"
 mkdir -p "$dir"
 report="$dir/report-$(date +%Y%m%d-%H%M%S)-$$.md"
+marker="$dir/.start-$$"
+: > "$marker"
 sock=publish-html
 sess="publish-$$"
+transcripts="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/$(printf '%s' "$PWD" | sed 's/[^A-Za-z0-9]/-/g')"
 
 # a private socket keeps the session off the fleet board; the session is killed on exit unless we time out
 tmux -L "$sock" new-session -d -s "$sess" -x 220 -y 50 -c "$PWD" \
   "$claude" --dangerously-skip-permissions "/publish-html $report"
-trap 'tmux -L "$sock" kill-session -t "$sess" 2>/dev/null || true' EXIT
+trap 'tmux -L "$sock" kill-session -t "$sess" 2>/dev/null || true; rm -f "$marker"' EXIT
+
+# a startup dialog (trusting the folder, the skip-permissions warning, a login) holds the prompt back and nothing
+# is written; the prompt landing in a new transcript is the sign it started
+started=$((SECONDS + 60))
+until find "$transcripts" -maxdepth 1 -name '*.jsonl' -newer "$marker" -exec grep -qF "$report" {} \; -print 2>/dev/null |
+      grep -q .; do
+  if [ "$SECONDS" -ge "$started" ] || ! tmux -L "$sock" has-session -t "$sess" 2>/dev/null; then
+    tmux -L "$sock" capture-pane -p -t "$sess" 2>/dev/null | grep -v '^[[:space:]]*$' | tail -15 >&2 || true
+    echo "claude 60 s 内没收到 /publish-html，多半停在启动对话框（信任这个仓库、跳过权限模式的确认、登录）。" \
+         "在仓库根手动开一次 claude，把提示都接受了再跑。" >&2
+    exit 1
+  fi
+  sleep 2
+done
 
 deadline=$((SECONDS + ${PUBLISH_HTML_TIMEOUT:-1800}))
 until [ -s "$report" ]; do
