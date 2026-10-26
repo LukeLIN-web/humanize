@@ -12,12 +12,15 @@ publish unchanged pages again. Run from the repo root.
 publish.json:
     {"title_prefix": "Yaofen_",                # every page's <title> starts with it
      "leak": "nnmc\\d+|/shared/|outputs/",      # regex a page read outside the lab must not match
-     "skip_hosts": ["nnmc63"],                  # hosts whose claude.ai account cannot reach these URLs
+     "skip_hosts": ["hostA"],                   # hosts whose claude.ai account cannot reach these URLs
+     "accounts": {"hostB": {"docs/html/idea.html": "https://claude.ai/artifact/…"}},
+                                                # a host whose account keeps its own copies: only these pages, to these URLs
      "pages": {"docs/html/idea.html": {"url": "https://claude.ai/artifact/…"},
                "code/vis/index.html": {"url": "…", "files": ["data.js", "media/*.mp4"]},
                "docs/html/todo.html": {"url": "…", "public": false},
                "docs/html/new.html": {"url": null}}}
-    files are globs relative to the page's directory; url null publishes a new artifact.
+    files are globs relative to the page's directory; url null publishes a new artifact. An accounts copy takes its
+    files from the page's entry in pages and is cached apart (page@host), so the two accounts never mark each other done.
 """
 import glob
 import hashlib
@@ -89,11 +92,22 @@ def load():
     return json.loads(read(STATE)) if os.path.exists(STATE) else {}
 
 
-def plan(cfg):
+def target(cfg):
+    """the pages this host publishes, with its account's URLs, and the suffix its cache entries carry"""
+    host = socket.gethostname()
+    own = cfg.get("accounts", {}).get(host)
+    if own is not None:
+        return {page: {**cfg["pages"][page], "url": url} for page, url in own.items()}, "@" + host
+    if host in cfg.get("skip_hosts", []):
+        sys.exit(f"{host} 登录的 claude.ai 账号看不到这些 URL，换台机器发")
+    return cfg["pages"], ""
+
+
+def plan(cfg, pages, key):
     state, items = load(), []
-    for page, p in cfg["pages"].items():
+    for page, p in pages.items():
         files = files_of(page, p.get("files", []))
-        was = state.get(page, {})
+        was = state.get(page + key, {})
         now = {pub: sha(path) for pub, path in files.items()}
         name = os.path.basename(page)
         upload = {pub: os.path.abspath(files[pub]) for pub in now if pub != name and was.get(pub) != now[pub]}
@@ -106,19 +120,18 @@ def plan(cfg):
     return items
 
 
-def mark(cfg, page):
+def mark(pages, key, page):
     state = load()
-    state[page] = {pub: sha(path) for pub, path in files_of(page, cfg["pages"][page].get("files", [])).items()}
+    state[page + key] = {pub: sha(path) for pub, path in files_of(page, pages[page].get("files", [])).items()}
     with open(STATE, "w") as f:
         json.dump(state, f, indent=1, sort_keys=True)
 
 
 if __name__ == "__main__":
     cfg = json.loads(read(MANIFEST))
-    if socket.gethostname() in cfg.get("skip_hosts", []):
-        sys.exit(f"{socket.gethostname()} 登录的 claude.ai 账号看不到这些 URL，换台机器发")
+    pages, key = target(cfg)
     if sys.argv[1:2] == ["--mark"]:
         for page in sys.argv[2:]:
-            mark(cfg, page)
+            mark(pages, key, page)
     else:
-        print(json.dumps(plan(cfg), ensure_ascii=False, indent=1))
+        print(json.dumps(plan(cfg, pages, key), ensure_ascii=False, indent=1))

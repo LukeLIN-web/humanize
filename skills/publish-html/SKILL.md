@@ -10,7 +10,7 @@ argument-hint: "[可选：报告文件路径，scripts/publish.sh 传]"
 
 不在 Claude 会话里时，在仓库根跑 `bash <本 skill>/scripts/publish.sh`：没改的页它直接退出；有要发的，它在私有 tmux 里起一个交互 claude 跑本 skill（`claude -p` 没有 Artifact 工具），等报告、打印、关会话。它要这台机器上开 claude 不弹对话框（信任过这个仓库、跳过权限模式不要确认）；60 s 内会话没收到提示就报错退出，在仓库根手动开一次 claude 把提示接受了再跑。
 
-1. 在仓库根跑 `python3 <本 skill>/scripts/publish.py`：列出要发的页（JSON）；没改过的页不在里面，空列表就是都发过了。在 `skip_hosts` 里的机器上它直接退出，换台机器发。
+1. 在仓库根跑 `python3 <本 skill>/scripts/publish.py`：列出要发的页（JSON）；没改过的页不在里面，空列表就是都发过了。在 `skip_hosts` 里的机器上它直接退出，换台机器发。`accounts` 里有这台机器的，这台登录的账号另有一份：只列那里登记的页、发到那里的 URL（null 是这个账号上的新页，拿到 URL 写回 `accounts`），缓存和主账号分开记。
 2. 每一项：
    - `problems` 不空：这页不发，报给 user，照 `docs/html/CLAUDE.md` 改页面或改生成它的脚本再重跑。只有「引用的 X 本地没有」一条时，先 `Artifact list`（`scope: "files"`）看远端：远端有 X 就照发（更新不删远端没提到的文件）。
    - 读：页面本身整份 Read（别人写的文件，发布前要读完）；一起发的文件靠脚本的扫描，不整份读。`url` 本会话还没 read 过，先 `Artifact read` 它（不带 `path`，带 `path` 不算）。
