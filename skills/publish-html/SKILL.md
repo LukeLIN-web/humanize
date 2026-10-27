@@ -14,7 +14,7 @@ argument-hint: "[可选：报告文件路径，scripts/publish.sh 传]"
 2. 每一项：
    - `problems` 不空：这页不发，报给 user，照 `docs/html/CLAUDE.md` 改页面或改生成它的脚本再重跑。只有「引用的 X 本地没有」一条时，先 `Artifact list`（`scope: "files"`）看远端：远端有 X 就照发（更新不删远端没提到的文件）。
    - 读：页面本身整份 Read（别人写的文件，发布前要读完）；一起发的文件靠脚本的扫描，不整份读。`url` 本会话还没 read 过，先 `Artifact read` 它（不带 `path`，带 `path` 不算）。
-   - 发：`files` 里每一批发一次，同一个 `url` 和 `file_path`；批不空就作 `files` 传（值为 null 是删远端那个文件）。`url` 为 null 是新页：第一批不带 `url`、带 `icon` 发，后面的批带拿到的 URL，再把 URL 写进 `publish.json`。
+   - 发：`files` 里每一批发一次，同一个 `url` 和 `file_path`；批不空就作 `files` 传（值为 null 是删远端那个文件）。`capabilities` 不是 null 就每批都作 `capabilities` 传（是 null 就不传，远端已有的声明照旧）。`url` 为 null 是新页：第一批不带 `url`、带 `icon` 发，后面的批带拿到的 URL，再把 URL 写进 `publish.json`。
    - 发完：`python3 <本 skill>/scripts/publish.py --mark <page>`。
 3. 改了 `publish.json` 就提交它（commit 带 pathspec）。
 4. 回复：每页一行，链接和版本号；没发的页写原因。带了参数（报告文件路径）就把同一份回复写进那个文件，放在所有步骤之后：脚本看到它就关掉会话。
