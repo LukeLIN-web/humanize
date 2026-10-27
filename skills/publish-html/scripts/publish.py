@@ -16,10 +16,11 @@ publish.json:
      "accounts": {"hostB": {"docs/html/idea.html": "https://claude.ai/artifact/…"}},
                                                 # a host whose account keeps its own copies: only these pages, to these URLs
      "pages": {"docs/html/idea.html": {"url": "https://claude.ai/artifact/…"},
-               "code/vis/index.html": {"url": "…", "files": ["data.js", "media/*.mp4"]},
+               "code/vis/index.html": {"url": "…", "files": ["media/*.mp4"], "capabilities": {"downloads": true}},
                "docs/html/todo.html": {"url": "…", "public": false},
                "docs/html/new.html": {"url": null}}}
-    files are globs relative to the page's directory; url null publishes a new artifact. An accounts copy takes its
+    files are globs relative to the page's directory; url null publishes a new artifact; capabilities is the page's
+    runtime capability declaration, sent with every publish of it. An accounts copy takes its
     files from the page's entry in pages and is cached apart (page@host), so the two accounts never mark each other done.
 """
 import glob
@@ -115,7 +116,7 @@ def plan(cfg, pages, key):
         if was.get(name) == now[name] and not upload and not removed:
             continue
         items.append({"page": page, "url": p["url"], "file_path": os.path.abspath(page),
-                      "files": batches({**upload, **removed}),
+                      "files": batches({**upload, **removed}), "capabilities": p.get("capabilities"),
                       "problems": problems(cfg, page, files, p.get("public", True))})
     return items
 
