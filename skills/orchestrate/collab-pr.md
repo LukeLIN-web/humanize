@@ -104,7 +104,7 @@ GPU、评测这类慢门禁照旧不跑。规则 6 也被覆盖：user 要的就
 每个 PR 一开，就派一个零上下文的审阅 agent（多个 PR 一条消息并行发）：
 
 ```
-只读审 PR #N（gh pr view N -R <owner/repo>、gh pr diff N -R <owner/repo>、需要时读仓库文件）。不改代码、不 checkout。
+只读审 PR #N（gh pr view N -R <owner/repo>、gh pr diff N -R <owner/repo>、需要时读仓库文件）。不改代码、不 checkout。要跑探针只在自己的临时 worktree 或沙箱里，只停自己记下的 pid（不用 `pkill -f`、`killall`），不用 `--force`（worktree、push、rm 都一样）。
 清单：1. 做的是不是 issue #<M> 要的，有没有多做少做；2. 改了归属表以外的文件没有：<该 PR 拥有的文件>；
 3. 改了共享接口却没在标题用 `!`；4. 正确性和边界情况；5. 验证方式够不够。
 用 gh pr review N -R <owner/repo> --comment --body-file <文件> 发出，正文第一行只写 LGTM 或 CHANGES，后面逐条列意见（文件:行 + 怎么改）。
