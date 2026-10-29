@@ -42,9 +42,9 @@ user 的原话（2026-10-14）：「你的任务就是看 todo，然后把没人
 
 ### 2. 派活：每个空闲条目找一张卡（合适的现成卡优先，没有才开新卡）
 
-- **先找合适的现成卡**（user 2026-10-15）：卡上的会话和这一条共用产物、脚本或同一场发射，或刚做完紧挨着的条目，就让它接着做——用 board 的 `POST /api/windows/<key>/prompt` 把派单打进它的输入框，派单里写为什么派给它、和它手上的活谁先。只是空着、上下文和这一条无关的卡不算合适（等于新卡，还带着无关的上下文）；卡已经不在 board 上就另找。没有合适的才开新卡。
+- **先找合适的现成卡**（user 2026-10-15）：卡上的会话和这一条共用产物、脚本或同一场发射，或刚做完紧挨着的条目，就让它接着做——用 board 的 `POST /api/windows/<key>/prompt` 把派单打进它的输入框，派单里写为什么派给它、和它手上的活谁先。只是空着、上下文和这一条无关的卡不算合适（等于新卡，还带着无关的上下文）；卡已经不在 board 上、或它的账号周额度已满（见「选机器」）就另找。没有合适的才开新卡。
 
-- **选机器**（user 2026-10-26「你别都 71 派 card, 你考虑一下 cluade session usage, 均衡负载一下.」）：卡开在哪台，定的是会话花哪个 Claude 账号的用量、占哪台的 CPU 和内存；GPU 作业照常经 ssh 发到要的盒，不因为要那台的卡就把会话开在那台。开在 board 在线的机器里、Claude 账号过去 5 小时用量最低的那台（额度按 5 小时一窗算，撞满了同账号的卡一起停；同一个账号的几台合算，派单员自己那台也算），相近再看过去 7 天（周额度：撞满了同账号的卡一起停到重置），再挑现有卡片少的。某个账号的卡回过「You've hit your weekly limit」，重置时刻前不在那个账号的机器上开卡，也不往那个账号的现成卡打新派单（它停着收不到）。要 GPU 的先看 gpu-priority 的排程文件（plan.md）：卡已经排给别的活的主机不开；排程里没有它的位置，就照常经 gpu_wait 排队，第 6 步会把它提出来等 user 排。
+- **选机器**（user 2026-10-26「你别都 71 派 card, 你考虑一下 cluade session usage, 均衡负载一下.」）：卡开在哪台，定的是会话花哪个 Claude 账号的用量、占哪台的 CPU 和内存；GPU 作业照常经 ssh 发到要的盒，不因为要那台的卡就把会话开在那台。开在 board 在线的机器里、Claude 账号过去 5 小时用量最低的那台（额度按 5 小时一窗算，撞满了同账号的卡一起停；同一个账号的几台合算，派单员自己那台也算），相近再挑周额度用得少的，再挑现有卡片少的。周额度（撞满了同账号的卡一起停到重置）看 board 的 `POST /api/usage`（body `{"host": "<NN>", "cli": "claude"}`）返回里「Current week (all models)」那行的 `used`（百分比）和 `resets`，同账号的几台读一台；没有这一行的账号（Enterprise）没有周上限，按 0 算。那行到 100% 就是周额度已满：到它的 `resets` 时刻前不在那个账号的机器上开卡，也不往那个账号的现成卡打派单（打进去只回「You've hit your weekly limit」，不会做）。要 GPU 的先看 gpu-priority 的排程文件（plan.md）：卡已经排给别的活的主机不开；排程里没有它的位置，就照常经 gpu_wait 排队，第 6 步会把它提出来等 user 排。
 - **开卡**：把派单写进 scratchpad 的一个文件，跑 `python3 <本 skill>/scripts/dispatch.py <host> <仓库路径> <派单文件>`，
   它在 board 上开卡、等卡出现、把派单打进输入框，打印卡的 key 和会话名。新开的卡一条一卡。
 - **派单**（自包含、单段，不带换行；措辞照下面的骨架填，不另加「回我」：跨机的 SendMessage 送不到，做没做完你从台账、`git log` 和那张卡的 timeline 读）：
@@ -125,4 +125,4 @@ user 已经裁定过的事不再问。不用 AskUserQuestion。
 台账、认领工具在根目录 CLAUDE.md 第 9 节，门禁、推送、分支保护在 CONTRIBUTING §2，体检结果在 `docs/collab-friction.md` 开头；这里只记它们没写的：
 
 - board 跑在 nnmc71，派单员也在 nnmc71 上跑；它同时汇总 `61`–`65` 的卡和 GPU。别的机器上的 board 不汇总，71 的只听 127.0.0.1：别处跑先在私有 tmux（`tmux -L avocpriv`，memory `remote-access-and-retired-boxes`）里开 `ssh -L 50957:127.0.0.1:50956 nnmc71`，再给 `dispatch.py`、`board_gpus.py` 设 `CLAUDE_BOARD_URL=http://127.0.0.1:50957`（token 照常从 board 的 env.sh 读）。
-- 各机的 Claude 账号看那台 `~/.claude.json` 的 `oauthAccount.emailAddress`；62、64 的 Claude 不登录（user 2026-10-27「62,64 不登录」），不在那两台开卡（用量为 0 的机器多半是登录过期，开了卡只回「Login expired」）；用量一台一跑 `python3 scripts/cc_token_usage.py --days 0.21 /shared/user<NN>/.claude/projects`（5 小时；`--days 7` 看 7 天），现有卡片数按 `/api/windows` 的 `host` 计。RoboLab / Isaac 的作业跑在 61–65 的 L40S 上，RoboCasa（MuJoCo）跑在 71 的 H100 上，会话从哪台都经 ssh 发过去。
+- 各机的 Claude 账号看那台 `~/.claude.json` 的 `oauthAccount.emailAddress`；62、64 的 Claude 不登录（user 2026-10-27「62,64 不登录」），不在那两台开卡（用量为 0 的机器多半是登录过期，开了卡只回「Login expired」）；用量一台一跑 `python3 scripts/cc_token_usage.py --days 0.21 /shared/user<NN>/.claude/projects`（5 小时），现有卡片数按 `/api/windows` 的 `host` 计。RoboLab / Isaac 的作业跑在 61–65 的 L40S 上，RoboCasa（MuJoCo）跑在 71 的 H100 上，会话从哪台都经 ssh 发过去。
