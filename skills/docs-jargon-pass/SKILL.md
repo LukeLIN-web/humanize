@@ -1,6 +1,6 @@
 ---
 name: docs-jargon-pass
-description: Use when docs read fine to the author but not to anyone else — 文档术语审查/把只有作者懂的词换成领域通用说法/新人读不懂文档/统一术语/jargon audit, and before a doc or HTML page leaves the repo (发布成网页、发给合作者). Catches made-up words, terms used before they are defined, config numbers that arrive before the thing they configure is named, one word with three meanings, internal names a reader outside the repo cannot resolve (machine names, how many machines, local paths, outputs/ directory names, checkpoint / eval-dir / dataset names), artifact-lineage modifiers that only the outputs tree can translate (「补跑的那份」「上一轮的枚举」「第三次扫描」 — never a stall, so caught by a grep and the question "what input difference does this modifier name?"), and 废话 (sentences that pass the delete-test). Two passes:先逐个盲读标出看不懂的词(HTML 读去标签后的页序文本),再读仓库查证并改写;看不懂的词先试删、再换成文档已有的词,补定义是最后手段。
+description: Use when docs read fine to the author but not to anyone else — 文档术语审查/把只有作者懂的词换成领域通用说法/新人读不懂文档/统一术语/jargon audit — and before a doc or HTML page leaves the repo (发布成网页、发给合作者). Catches made-up words, terms used before they are defined, one word with several meanings, internal names an outside reader cannot resolve (machines, local paths, run / checkpoint / dataset names, lineage modifiers like 「补跑的那份」), and 废话. Two passes — blind read first, then verify against the repo and rewrite.
 argument-hint: "[docs 目录或文件列表,默认 docs/]"
 ---
 

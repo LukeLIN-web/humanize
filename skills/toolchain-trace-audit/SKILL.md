@@ -1,6 +1,6 @@
 ---
 name: toolchain-trace-audit
-description: Trace-first audit of our own agent tooling (CLI invocations, API call sites, hooks, plugins). Use when the user asks to review or improve "our CLI and API", 根据使用的 trace 看看有没有能改进的地方, 工具链体检, "audit our hooks/plugins", or after a tool-chain incident (hook wedge, silent review skip, runaway overseer). Re-runnable: each pass produces a prioritized findings report and a dated audit log entry.
+description: Trace-first audit of our own agent tooling (CLI invocations, API call sites, hooks, plugins). Use when the user asks to review or improve "our CLI and API", 根据使用的 trace 看看有没有能改进的地方, 工具链体检, "audit our hooks/plugins", or after a tool-chain incident (hook wedge, silent review skip, runaway overseer).
 ---
 
 # Toolchain Trace Audit

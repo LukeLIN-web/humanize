@@ -1,6 +1,6 @@
 ---
 name: docs-prose-tighten
-description: Use when a result page, plan page or HTML page has turned into an audit log — 文档废话太多/caveat 太多/越讲越乱/别解释了/不要罗列/清理废话/无中生有/错误的转折/字太多/docs prose tighten. Deletes sentences that carry no claim while holding every claim constant: bookkeeping counts (「569 → 551」「32 条里的 39」), defensive meta-narration (「这里只报不主张」), journey narration (「起初以为 X，重跑推翻」), restatement and hedge stacking, narrated absences (「X 没有报这一格」), false pivots (「不是 A 而是 B」), value series (一个量在三档以上条件下的读数串成一句), provenance assurance, process vocabulary (「预注册」「冻结后才读」) and the escalation rule: a secondary claim that survives only behind a pile of caveats is deleted. For HTML pages it edits only the text a reader sees (图注、表格里的短语、页面段落), never the numbers. Not for terms a reader cannot parse (docs-jargon-pass) or numbers copied across pages (docs-ssot-tighten).
+description: Use when a result page, plan page or HTML page has turned into an audit log — 文档废话太多/caveat 太多/越讲越乱/别解释了/不要罗列/清理废话/无中生有/错误的转折/字太多/docs prose tighten. Deletes sentences that carry no claim (bookkeeping counts, defensive meta-narration, journey narration, hedge stacking, false pivots 「不是 A 而是 B」) while holding every claim and number constant. Not for terms a reader cannot parse (docs-jargon-pass) or numbers copied across pages (docs-ssot-tighten).
 argument-hint: "[文件或目录,默认 docs/]"
 ---
 

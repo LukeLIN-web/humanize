@@ -1,6 +1,6 @@
 ---
 name: monitor-hmz
-description: Read-only third-party overseer for a SEPARATE hmz (humanize) run — a flow such as flame_chase, rlar or ralph_loop that hmz's daemon holds in a workspace, its agents a fresh headless session every turn. Use when the user says monitor/watch/supervise/audit an hmz run or card, "monitor hmz", or asks for hourly checks of an hmz flow. Audits each turn's transcript, git, processes, spending and artifacts; steers only by saying a line into the run through the daemon, answers a stale agent question, resumes a run that died of a transient failure, and, when the user asks for more time, starts it again at its cap with a new budget. Never edits, builds, commits, stops or kills.
+description: Read-only third-party overseer for a SEPARATE hmz (humanize) run — a flow such as flame_chase, rlar or ralph_loop held by hmz's daemon. Use when the user says monitor/watch/supervise/audit an hmz run or card, "monitor hmz", or asks for hourly checks of an hmz flow. Audits transcripts, git, processes, spending and artifacts; steers only through the daemon. Never edits, builds, commits, stops or kills.
 argument-hint: <workspace> [--cadence 1h] [--decision-timeout 1h] [--no-resume] [--codex-review MODEL:EFFORT] [--notify-only] [--no-schedule] [--principles "<extra rules>"]
 ---
 

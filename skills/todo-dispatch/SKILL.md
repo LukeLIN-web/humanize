@@ -1,6 +1,6 @@
 ---
 name: todo-dispatch
-description: One tick of the todo dispatcher loop, run as `/loop 30m /todo-dispatch` — read the repo's todo ledger, open a new claude-board card (a fresh Claude Code session) for every open item nobody has claimed, let each session claim, do and tick its own item; meanwhile watch the collaboration friction between the parallel sessions and fix it in the process (merge queue, SemVer, CI/CD), push the shared default branch through the gate, and run one gpu-priority loop round over the fleet's GPUs. Triggers: 看 todo 派活、没人做的开 session 去做、todo 派单循环、观察协作摩擦、dispatcher loop.
+description: One tick of the todo dispatcher loop (`/loop 30m /todo-dispatch`) — open a claude-board card for every unclaimed open todo item, fix collaboration friction between the parallel sessions in the process (merge queue, SemVer, CI/CD), push the shared default branch through the gate, and run one gpu-priority round. Triggers: 看 todo 派活、没人做的开 session 去做、todo 派单循环、观察协作摩擦、dispatcher loop.
 argument-hint: "[可选：只看 todo 的哪一节]"
 ---
 

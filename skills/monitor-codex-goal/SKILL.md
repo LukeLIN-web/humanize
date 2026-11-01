@@ -1,6 +1,6 @@
 ---
 name: monitor-codex-goal
-description: Read-only third-party overseer for a SEPARATE Codex CLI session that is running a long /goal task. Audits progress from the transcript + git + artifacts, and under a strict gate injects steering into that session via a hardened tmux script. Use when the user wants to watch, supervise, audit, or steer another running Codex /goal session without taking it over. Never edits code, builds, merges, or drives the target autonomously — it is an auditor with an injection protocol.
+description: Read-only third-party overseer for a SEPARATE Codex CLI session running a long /goal task. Use when the user wants to watch, supervise, audit, or steer another running Codex /goal session without taking it over. Audits transcript, git and artifacts; steers only through a gated tmux injection. Never edits, builds, merges, or drives the target autonomously.
 argument-hint: <codex-session-id> [<session:window.pane>] [--discover] [--cadence 1h] [--decision-timeout 1h] [--approve-safe-destructive] [--notify-only] [--no-schedule] [--principles "<extra rules>"] [--steer "<raw request>"]
 allowed-tools: Bash, Read, Grep, Glob, Agent, ToolSearch
 ---
