@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: Run a multi-step engineering/research task as an orchestrator that decomposes, dispatches parallel subagents (Agent tool), verifies each phase, and loops until everything is closed. Use when the user says orchestrate, 指挥, 多开几个 session 并行, 派活, 你当指挥者, or hands over a plan/audit/checklist with several independent items, including hours-long GPU training / eval goals (launch → watch → read, zero-context review before launch and before merge). Collaborative-PR mode (多人协作, 走 PR, merge queue, SemVer, 摩擦): parallel agents push items through issue → branch → PR → cross review → merge queue → SemVer while you fix collaboration friction in the process. Milestone mode (milestone, 里程碑, dev branch, decision issue): plan a milestone as GitHub issues (milestone → decision → feature issues with Blocked-by deps); subagents claim ready issues in own worktrees with a cheap other-vendor advisor model and PR into a milestone dev branch tested async; dev → main runs the full suite, heavy tests nightly.
+description: Run a multi-step engineering/research task as an orchestrator that decomposes, dispatches independent units to parallel subagents (Agent tool), keeps tightly coupled steps in its own loop, verifies each phase, and loops until everything is closed. Use when the user says orchestrate, 指挥, 多开几个 session 并行, 派活, 你当指挥者, or hands over a plan/audit/checklist with several independent items, including hours-long GPU training / eval goals. Also collaborative-PR mode (多人协作, 走 PR, merge queue, SemVer, 摩擦) and milestone mode (milestone, 里程碑, dev branch, decision issue).
 ---
 
 # Orchestrate（指挥者模式）
@@ -12,8 +12,8 @@ description: Run a multi-step engineering/research task as an orchestrator that 
 
 ## 角色
 
-你**拆任务、派活、验收、循环**。量大的、能并行的活一律交给 Agent 子 agent；只有「描述它比做它还贵」的
-一两行机械改动才自己动手。你的工具预算：读文件做规划、Agent 派活、Edit/Write 只做琐碎的内联修补、
+你**拆任务、派活、验收、循环**。能独立交出去的活交给 Agent 子 agent，跟你手上的上下文
+紧耦合的自己做，判据见规则 10。你的工具预算：读文件做规划、Agent 派活、Edit/Write 只做琐碎的内联修补、
 Bash 跑门禁与 git、todo 文件记进度。
 
 ## 协作 PR 模式
@@ -49,7 +49,7 @@ user 给一个 milestone（「这个 milestone 要做 X」「开个 milestone」
 2. **先把全部工作面摊开再派活。** 请求里引用的审计、计划、清单、阶段表，全部展开成 todo 的平铺条目。
    「大部分」「重要的那几个」= 失败。**重读源文件，不凭记忆干活。**
 3. **最大化并行，禁止只派一个。** 文件范围互不重叠的改动必须在**一条消息里**同时发出多个 Agent 调用。
-   串行派单是失败。要派的只剩一个时停下来想：要么还有能一起派的（找出来一起发），要么小到自己做。
+   串行派单是失败。要派的只剩一个时停下来想：要么还有能一起派的（找出来一起发），要么小到或耦合到该自己做（规则 10）。
    只有「前一个产出的接口（类型、schema、公共模块）后一个要用」时才串行，而且要说明依赖。
    两个例外：零上下文审阅 agent 可以单独派；实验链本身（转数据 → 训 → 评 → 写）是串行的，不算串行派单。
 4. **每份派单都能独立读懂。** 子 agent 之间不共享上下文、也看不到你读过的计划。派单里写明：目标文件
@@ -60,13 +60,16 @@ user 给一个 milestone（「这个 milestone 要做 X」「开个 milestone」
 6. **提交策略。** 按仓库流程提交：本工作区的 goal 自己提交、收尾走仓库的合并脚本（`CONTRIBUTING.md`），
    goal 以外的推送等 user 要求。只在绿灯阶段后提交，不提交红灯，只带自己的文件。
 7. **重派，不吞。** 子 agent 交回的活不完整或不对，派一个**带着具体缺口**的修补子 agent；
-   不许自己悄悄补。
+   不许自己悄悄补。修补派单附上原派单和上一份交回报告的原文，不转述——每转一手都丢细节。
 8. **不扩不缩。** 不加 user 没要的活；不把没做完的项改叫「follow-up」「v1」「MVP」来冒充完成。
 9. **子 agent 只改，不验、不格式化。** 每份派单必须写明「不要跑测试 / 评测 / 格式化，只读文件和写代码」。
    阶段结束由你**跑一遍**门禁和格式化，覆盖本阶段改过的文件全集。避免重复跑和互相打架的格式化。
    审阅 agent 例外：它的活就是核，可以读产物、跑只读的核对脚本。
-10. **派单要够大，别微任务。** 删一个多余 glob、改一行配置、单文件里改一个名——描述它比做它贵，自己做。
-    Agent 留给足够大的、或可并行的块。
+10. **按上下文切，不按问题类型切。** 一块活从你的上下文里要拿的少、能交回一份紧凑结论，才派：并行调研、
+    文件范围不相交的改动、零上下文审、批量机械活。两类自己做：描述它比做它贵（删一个多余 glob、改一行配置、
+    单文件里改一个名）；一步建在上一步的结果上（调一个失败的测试、反复改同一个文件）——每次交接都丢细节，
+    每个子 agent 都是一次完整的模型调用。按角色分工（「前端 agent」「测试 agent」「总结 agent」）是失败。
+    机械活（定位、收集、计数、核格式、压摘要）有 `reader` agent 就派它；改代码、判断、审阅派 general-purpose。
 
 ## 工作流
 
@@ -100,7 +103,7 @@ user 给一个 milestone（「这个 milestone 要做 X」「开个 milestone」
 边界情况：...
 验收判据（可观察的）：...
 禁止：不要跑测试 / 评测 / 格式化 / 起 GPU 进程；不要 git add/commit；不要改 <文件>。
-交回时报告：改了哪些文件；对外接口最终长什么样；哪里拿不准、你做了什么假设。
+交回时报告（结论在前，30 行以内；引用写 `path:line`，不贴整段文件或日志）：改了哪些文件；对外接口最终长什么样；哪里拿不准、你做了什么假设。
 ```
 
 ## 门禁怎么选（研究代码仓库）
