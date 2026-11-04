@@ -10,8 +10,8 @@ publish unchanged pages again. Run from the repo root.
     python3 publish.py --mark PAGE  # after publishing PAGE: record what is now live
 
 publish.json:
-    {"title_prefix": "<someone>_",                # every page's <title> starts with it
-     "leak": "<host>\\d+|/shared/|outputs/",      # regex a page read outside the lab must not match
+    {"title_prefix": "Proj_",                  # every page's <title> starts with it
+     "leak": "node\\d+|/shared/|outputs/",      # regex a page read outside the lab must not match
      "skip_hosts": ["hostA"],                   # hosts whose claude.ai account cannot reach these URLs
      "accounts": {"hostB": {"docs/html/idea.html": "https://claude.ai/artifact/…"}},
                                                 # a host whose account keeps its own copies: only these pages, to these URLs
