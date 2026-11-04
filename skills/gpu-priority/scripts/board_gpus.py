@@ -15,7 +15,7 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../todo-dispatch/scripts"))
 import dispatch  # noqa: E402  the board client todo-dispatch already uses
 
-PROJECT = re.compile(r"/workspace/([\w.-]+)|/tmp/([\w.-]+)|/(volo)/")
+PROJECT = re.compile(dispatch.FLEET.get("gpu", {}).get("project_regex") or r"/workspace/([\w.-]+)|/tmp/([\w.-]+)")
 
 
 @functools.cache

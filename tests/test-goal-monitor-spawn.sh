@@ -33,15 +33,18 @@ mkdir -p "$STATE_DIR" "$TEST_DIR/tmux"
 
 # hook EVENT [JQ-ARGS…] — run the hook on a payload for EVENT; extra fields come
 # from jq --arg pairs named prompt / notification_type. Prints what it would do.
-# REVIEW_HOSTS stands in for GOAL_MONITOR_CODEX_REVIEW_HOSTS (default: none).
+# REVIEW_HOSTS, when set (even empty), stands in for GOAL_MONITOR_CODEX_REVIEW_HOSTS;
+# FLEET, when set, for HUMANIZE_FLEET_CONFIG. Unset, neither reaches the hook.
 hook() {
   local event="$1"; shift
   jq -n --arg ev "$event" --arg sid "$SID" --arg tp "$TRANSCRIPT" --arg cwd "$TEST_DIR" "$@" \
     '{hook_event_name: $ev, session_id: $sid, transcript_path: $tp, cwd: $cwd}
      + ($ARGS.named | del(.ev, .sid, .tp, .cwd))' \
   | env -u TMUX -u TMUX_PANE -u CLAUDE_GOAL_MONITOR \
-      TMPDIR="$TEST_DIR" TMUX_TMPDIR="$TEST_DIR/tmux" \
-      GOAL_MONITOR_DRYRUN=1 GOAL_MONITOR_CODEX_REVIEW_HOSTS="${REVIEW_HOSTS:-}" \
+      -u GOAL_MONITOR_CODEX_REVIEW_HOSTS -u HUMANIZE_FLEET_CONFIG \
+      TMPDIR="$TEST_DIR" TMUX_TMPDIR="$TEST_DIR/tmux" GOAL_MONITOR_DRYRUN=1 \
+      ${REVIEW_HOSTS+"GOAL_MONITOR_CODEX_REVIEW_HOSTS=$REVIEW_HOSTS"} \
+      ${FLEET+"HUMANIZE_FLEET_CONFIG=$FLEET"} \
       GOAL_MONITOR_CLAUDE_BIN=/bin/true GOAL_MONITOR_CODEX_BIN=/bin/true \
       "$HOOK" 2>&1
 }
@@ -169,6 +172,21 @@ if REVIEW_HOSTS="$HOST" hook UserPromptSubmit --arg prompt 'goal x' | grep -q --
   fail "a Codex overseer never takes the review leg"
 else
   pass "a Codex overseer never takes the review leg"
+fi
+printf 'goal_monitor:\n  codex_review_hosts: ["%s"]\n' "$HOST" > "$TEST_DIR/fleet.yaml"
+expect "with no override the fleet config names the review hosts" \
+  "$(FLEET="$TEST_DIR/fleet.yaml" GOAL_MONITOR_OVERSEER=claude hook UserPromptSubmit --arg prompt 'goal x')" \
+  "--codex-review gpt-6.1-sol:high"
+if FLEET="$TEST_DIR/fleet.yaml" REVIEW_HOSTS="" GOAL_MONITOR_OVERSEER=claude hook UserPromptSubmit --arg prompt 'goal x' \
+  | grep -q -- '--codex-review'; then
+  fail "an empty override turns the review leg off over the fleet config"
+else
+  pass "an empty override turns the review leg off over the fleet config"
+fi
+if GOAL_MONITOR_OVERSEER=claude hook UserPromptSubmit --arg prompt 'goal x' | grep -q -- '--codex-review'; then
+  fail "no override and no fleet config: no review leg"
+else
+  pass "no override and no fleet config: no review leg"
 fi
 
 echo "== lifecycle edges"

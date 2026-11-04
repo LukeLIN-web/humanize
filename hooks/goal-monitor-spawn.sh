@@ -85,10 +85,12 @@
 #                             ~/.claude, ~/.codex or ~/.agents skills)
 #   GOAL_MONITOR_CLAUDE_ARGS  (default --permission-mode bypassPermissions)
 #   GOAL_MONITOR_CLAUDE_BIN   (default: `claude` on PATH)
-#   GOAL_MONITOR_CODEX_REVIEW_HOSTS (default <host> — space-separated short hostnames
-#                             whose Claude overseer also runs a Codex review each tick,
-#                             SKILL.md §4.1; set empty to turn it off everywhere. A
-#                             Codex overseer never does: it already is Codex)
+#   GOAL_MONITOR_CODEX_REVIEW_HOSTS (space-separated short hostnames whose Claude
+#                             overseer also runs a Codex review each tick, SKILL.md §4.1;
+#                             default goal_monitor.codex_review_hosts of the fleet config,
+#                             $HUMANIZE_FLEET_CONFIG else .humanize/fleet.yaml at the top of
+#                             the target's checkout; none = off; set empty to turn it off
+#                             everywhere. A Codex overseer never does: it already is Codex)
 #   GOAL_MONITOR_CODEX_REVIEW_MODEL (default gpt-6.1-sol:high — MODEL:EFFORT)
 #   GOAL_MONITOR_DRYRUN       (1 = print what would be spawned/killed, act on nothing)
 #
@@ -236,10 +238,18 @@ spawn() {
   # The Codex review leg spends Codex quota every tick, so it runs only on the hosts
   # chosen for it, and only for a Claude overseer: a Codex one already is Codex.
   # `-` rather than `:-`: an explicitly empty list means off everywhere.
-  local host
+  local host hosts fleet
   host="$(hostname -s 2>/dev/null)"
+  if [ -n "${GOAL_MONITOR_CODEX_REVIEW_HOSTS+x}" ]; then
+    hosts="$GOAL_MONITOR_CODEX_REVIEW_HOSTS"
+  else
+    fleet="${HUMANIZE_FLEET_CONFIG:-$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)/.humanize/fleet.yaml}"
+    hosts="$(python3 -c 'import sys, yaml
+d = yaml.safe_load(open(sys.argv[1])) or {}
+print(" ".join(map(str, (d.get("goal_monitor") or {}).get("codex_review_hosts") or [])))' "$fleet" 2>/dev/null)"
+  fi
   if [ "$OVERSEER" = claude ] && [ -n "$host" ]; then
-    case " ${GOAL_MONITOR_CODEX_REVIEW_HOSTS-<host>} " in
+    case " $hosts " in
       *" $host "*) skill_args="$skill_args --codex-review ${GOAL_MONITOR_CODEX_REVIEW_MODEL:-gpt-6.1-sol:high}" ;;
     esac
   fi

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Say one line into a workspace's running hmz run, and report whether a turn took it.
 
-Run it with the Python that hmz is installed in (on <host> and <host>, ~/miniconda3/bin/python):
+Run it with the Python that hmz is installed in:
 
     hmz-say.py <workspace> "<text>" [--to VIEW] [--wait 120]
     hmz-say.py <workspace> "<text>" --answer QUESTION_ID

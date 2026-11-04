@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Read-only snapshot of one workspace's hmz run, printed as JSON, for monitor-hmz.
 
-Run it with the Python that hmz is installed in (on <host> and <host>, ~/miniconda3/bin/python):
+Run it with the Python that hmz is installed in:
 
     hmz-snapshot.py <workspace> [--epic NAME] [--tail-mb 4] [--lines 10]
 

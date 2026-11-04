@@ -23,14 +23,14 @@ This is the hmz twin of `monitor-claude-goal` (same directory tree, `../monitor-
 - `--cadence 1h` — tick interval.
 - `--decision-timeout 1h` — how long an agent's question to a person may stay unanswered before the monitor answers it (§5.2). `off` keeps it notify-only.
 - `--no-resume` — never `/resume` a run that died (§5.3). Notify instead.
-- `--codex-review MODEL:EFFORT` — add the Codex review leg exactly as `monitor-claude-goal` §4.1, with its files under `/tmp/hmz-monitor/<slug>.codex/` and `-C <workspace>`. Off unless passed; on this fleet it runs only on <host>.
+- `--codex-review MODEL:EFFORT` — add the Codex review leg exactly as `monitor-claude-goal` §4.1, with its files under `/tmp/hmz-monitor/<slug>.codex/` and `-C <workspace>`. Off unless passed; the spawner passes it only on the hosts in `goal_monitor.codex_review_hosts` of the fleet config (`.humanize/fleet.yaml`).
 - `--notify-only` — kill switch: no say, no answer, no resume, no stop. Every proposed action goes to the tick output and the findings log.
 - `--no-schedule` — one tick, no recurrence.
 - `--principles` — extra rules, merged with the task and the repository's own rules.
 
 The caps the monitor holds the run to are the `budget` on the `began` line of the **first** epic of the chain (§2). The human set them when starting the run.
 
-Run the scripts with the Python that hmz is installed in: `PY=$(head -1 "$(command -v hmz)" | sed 's/^#!//')`, which is `~/miniconda3/bin/python` on <host> and <host>. Run them with `-I` from a neutral cwd: `cd /tmp && $PY -I <skill-dir>/scripts/hmz-snapshot.py <workspace>`.
+Run the scripts with the Python that hmz is installed in: `PY=$(head -1 "$(command -v hmz)" | sed 's/^#!//')`. Run them with `-I` from a neutral cwd: `cd /tmp && $PY -I <skill-dir>/scripts/hmz-snapshot.py <workspace>`.
 
 ## 2. What an hmz run is, and where it is read
 

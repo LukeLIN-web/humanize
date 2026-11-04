@@ -6,7 +6,8 @@
 the board's own label spawns locally, a peer label spawns on that peer. Prints the new
 card's key and session name. The board is reached at $CLAUDE_BOARD_URL with
 $CLAUDE_BOARD_TOKEN; either one unset comes from the board checkout's own loader
-($CLAUDE_BOARD_DIR, default <claude-board>, scripts/env.sh).
+($CLAUDE_BOARD_DIR, else `board.dir` of the fleet config, scripts/env.sh). A fleet config
+with `dispatch.card_hosts` refuses any other host.
 
 Exit codes: 0 sent; 1 create failed or unknown host; 2 our card did not show up, or
 more than one new card could be ours (nothing typed); 3 the prompt did not land;
@@ -19,9 +20,31 @@ import sys
 import time
 import urllib.request
 
+import yaml
+
+
+def fleet() -> dict:
+    """This fleet's wiring (hosts, paths, accounts), kept out of this public repo:
+    $HUMANIZE_FLEET_CONFIG, else .humanize/fleet.yaml at the top of the current checkout."""
+    path = os.environ.get("HUMANIZE_FLEET_CONFIG")
+    if not path:
+        top = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip()
+        path = os.path.join(top or ".", ".humanize", "fleet.yaml")
+    try:
+        with open(path, encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
+    except FileNotFoundError:
+        return {}
+
+
+FLEET = fleet()
+
 
 def board_config() -> tuple[str, str]:
-    root = os.path.expanduser(os.environ.get("CLAUDE_BOARD_DIR", "<claude-board>"))
+    root = os.environ.get("CLAUDE_BOARD_DIR") or FLEET.get("board", {}).get("dir")
+    if not root:
+        sys.exit("no board checkout: set CLAUDE_BOARD_DIR or board.dir in the fleet config (.humanize/fleet.yaml)")
+    root = os.path.expanduser(root)
     port, token = subprocess.run(
         ["bash", "-c", 'cd "$1" && source scripts/env.sh && printf "%s\\0%s" "$PORT" "${FLEET_API_TOKEN-}"', "_", root],
         capture_output=True, text=True, check=True).stdout.split("\0")
@@ -59,6 +82,10 @@ def main() -> int:
     hosts = {snap["host"]} | {p["host"] for p in snap.get("peers", []) if p["online"]}
     if host not in hosts:
         print(f"no host {host!r} on the board at {URL} (online: {sorted(hosts)})", file=sys.stderr)
+        return 1
+    allowed = FLEET.get("dispatch", {}).get("card_hosts")
+    if allowed is not None and host not in map(str, allowed):
+        print(f"host {host!r} is not in dispatch.card_hosts {allowed} of the fleet config", file=sys.stderr)
         return 1
     cwd = os.path.realpath(os.path.expanduser(cwd))
     before = {w["key"] for w in snap["windows"]}

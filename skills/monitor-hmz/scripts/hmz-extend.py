@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Give an hmz run more time: wait for its cap to end it, then start it again with a new budget.
 
-Run it with the Python that hmz is installed in (on <host> and <host>, ~/miniconda3/bin/python),
+Run it with the Python that hmz is installed in,
 detached from the session that arms it, so the resume does not depend on that session being awake:
 
     setsid nohup $PY -I hmz-extend.py <workspace> --until "2026-10-17 13:45" \\
