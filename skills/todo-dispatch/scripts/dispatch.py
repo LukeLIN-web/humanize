@@ -9,12 +9,19 @@ $CLAUDE_BOARD_TOKEN; either one unset comes from the board checkout's own loader
 ($CLAUDE_BOARD_DIR, else `board.dir` of the fleet config, scripts/env.sh). A fleet config
 with `dispatch.card_hosts` refuses any other host.
 
+The session name is the card's address (todo claims, issue start comments, SendMessage), and
+Claude Code derives it as `<project dir>-<2 hex>`: 256 values, so two cards on one board do come
+up with the same one. A new card whose name another card on the board already has is renamed
+(`/rename`) to a free name of that shape before the prompt goes in. If the board never shows the
+new name, the prompt still goes in and the printed JSON carries a `warning`.
+
 Exit codes: 0 sent; 1 create failed or unknown host; 2 our card did not show up, or
 more than one new card could be ours (nothing typed); 3 the prompt did not land;
 4 a `/goal` prompt too long to stay a command (nothing created).
 """
 import json
 import os
+import random
 import subprocess
 import sys
 import time
@@ -70,6 +77,28 @@ def cards() -> dict:
     return {w["key"]: w for w in call("GET", "/api/windows")["windows"]}
 
 
+def claim_unique_name(key: str, cwd: str) -> tuple[str | None, str | None]:
+    """Give card `key` a session name no other card on the board has: its own if that is free,
+    else `/rename` to a free `<basename of cwd>-<2 hex>`. Returns (name, warning); the warning
+    says the name is still shared because the board never showed the new one."""
+    now = cards()
+    name = now[key].get("name")
+    taken = {w.get("name") for k, w in now.items() if k != key}
+    if name and name not in taken:
+        return name, None
+    base = os.path.basename(cwd)
+    want = random.choice([n for n in (f"{base}-{i:02x}" for i in range(256)) if n not in taken])
+    r = call("POST", f"/api/windows/{key}/prompt", {"text": f"/rename {want}"})
+    if r.get("ok"):
+        for _ in range(15):
+            time.sleep(2)
+            if cards().get(key, {}).get("name") == want:
+                return want, None
+    why = f"session name {name!r} is also on another card" if name else "the card has no session name"
+    how = "did not show on the board within 30 s" if r.get("ok") else f"was not typed ({r})"
+    return name, f"{why}, and `/rename {want}` {how}: claims and messages by name can reach the wrong card"
+
+
 def main() -> int:
     host, cwd, prompt_file = sys.argv[1:4]
     with open(prompt_file, encoding="utf-8") as f:
@@ -110,12 +139,16 @@ def main() -> int:
         return 2
     key = new[0]
     time.sleep(8)
+    name, warning = claim_unique_name(key, cwd)
     r = call("POST", f"/api/windows/{key}/prompt", {"text": text})
     try:
-        name = cards().get(key, now[key]).get("name")
+        name = cards().get(key, {}).get("name", name)
     except OSError:
-        name = now[key].get("name")
-    print(json.dumps({"key": key, "name": name, "prompt": r}, ensure_ascii=False))
+        pass
+    out = {"key": key, "name": name, "prompt": r}
+    if warning:
+        out["warning"] = warning
+    print(json.dumps(out, ensure_ascii=False))
     return 0 if r.get("ok") else 3
 
 

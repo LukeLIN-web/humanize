@@ -123,6 +123,8 @@ TEST_SUITES=(
     "test-style-compliance.sh"
     # orchestrate skill scripts
     "../skills/orchestrate/scripts/test-milestone-scripts.sh"
+    # todo-dispatch skill scripts
+    "../skills/todo-dispatch/scripts/test-dispatch.py"
     # Robustness tests
     "robustness/test-state-file-robustness.sh"
     "robustness/test-session-robustness.sh"
