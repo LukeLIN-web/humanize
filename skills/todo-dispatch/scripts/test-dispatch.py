@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Offline tests for dispatch.py against a fake claude-board served over HTTP.
+"""Offline tests for dispatch.py against a fake claude-board served over HTTP, and for which
+board URL board_config() picks on which host (fake hostnames; the fake board stands in for the tunnel).
 
 The fake board answers GET /api/windows, POST /api/windows/create (a new card appears at once,
 under the name the test picks) and POST /api/windows/<key>/prompt (recorded; `/rename <name>`
@@ -14,6 +15,7 @@ import io
 import json
 import os
 import shutil
+import socket
 import sys
 import tempfile
 import threading
@@ -184,6 +186,40 @@ class DispatchNames(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("not checked", out["warning"])
         self.assertEqual(BOARD.prompts[-1], ("h2:999", "do the item"))
+
+
+AGGREGATOR = {"board": {"aggregator": "agg-host", "tunnel_port": BOARD.server.server_address[1]}}
+
+
+def board_url(hostname: str, fleet: dict, env_url: str | None = None) -> str:
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_BOARD_URL"}
+    if env_url:
+        env["CLAUDE_BOARD_URL"] = env_url
+    with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(dispatch, "FLEET", fleet), \
+            mock.patch.object(socket, "gethostname", return_value=hostname):
+        return dispatch.board_config()[0]
+
+
+class BoardUrl(unittest.TestCase):
+    def test_env_url_wins(self):
+        self.assertEqual(board_url("worker-a", AGGREGATOR, "http://board.example:9"), "http://board.example:9")
+
+    def test_other_host_uses_the_tunnel_port(self):
+        self.assertEqual(board_url("worker-a.example.org", AGGREGATOR), BOARD.url)
+
+    def test_aggregator_host_uses_the_local_port(self):
+        self.assertEqual(board_url("agg-host.example.org", AGGREGATOR), "http://127.0.0.1:1")
+
+    def test_no_aggregator_uses_the_local_port(self):
+        self.assertEqual(board_url("worker-a", {"board": {"tunnel_port": 2}}), "http://127.0.0.1:1")
+
+    def test_closed_tunnel_exits_with_the_ssh_command(self):
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            closed = s.getsockname()[1]
+        with self.assertRaises(SystemExit) as e:
+            board_url("worker-a", {"board": {"aggregator": "agg-host", "tunnel_port": closed}})
+        self.assertIn(f"ssh -N -L {closed}:127.0.0.1:1 agg-host", str(e.exception.code))
 
 
 if __name__ == "__main__":

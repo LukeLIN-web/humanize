@@ -122,4 +122,4 @@ user 已经裁定过的事不再问。不用 AskUserQuestion。
 
 ## 目标仓库的接线
 
-本仓库公开：主机、路径、端口、账号这类接线一律写在目标仓库的 fleet 配置里，不写进本仓库。fleet 配置是 `$HUMANIZE_FLEET_CONFIG`，没设就是当前 git checkout 根下的 `.humanize/fleet.yaml`；`scripts/dispatch.py` 的 `fleet()` 读它，`board.dir`（board 的 checkout）、`dispatch.card_hosts`（能开新卡的主机，dispatch.py 拒绝别的）由代码用，其余键（board 隧道、不开卡的主机和原因、同账号的主机、用量命令、`gpu.plan`）每轮读一遍照做。台账、认领工具、门禁、推送规则照目标仓库的 `CLAUDE.md`、`CONTRIBUTING.md`。
+本仓库公开：主机、路径、端口、账号这类接线一律写在目标仓库的 fleet 配置里，不写进本仓库。fleet 配置是 `$HUMANIZE_FLEET_CONFIG`，没设就是当前 git checkout 根下的 `.humanize/fleet.yaml`；`scripts/dispatch.py` 的 `fleet()` 读它，`board.dir`（board 的 checkout）、`board.aggregator` 和 `board.tunnel_port`（聚合 board 所在的主机和本机到它的隧道端口：不在那台上又没设 `CLAUDE_BOARD_URL` 就走隧道，隧道没开就退出并印出开它的 ssh 命令）、`dispatch.card_hosts`（能开新卡的主机，dispatch.py 拒绝别的）由代码用，其余键（不开卡的主机和原因、同账号的主机、用量命令、`gpu.plan`）每轮读一遍照做。台账、认领工具、门禁、推送规则照目标仓库的 `CLAUDE.md`、`CONTRIBUTING.md`。

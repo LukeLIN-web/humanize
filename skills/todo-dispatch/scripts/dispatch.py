@@ -6,8 +6,9 @@
 the board's own label spawns locally, a peer label spawns on that peer. Prints the new
 card's key and session name. The board is reached at $CLAUDE_BOARD_URL with
 $CLAUDE_BOARD_TOKEN; either one unset comes from the board checkout's own loader
-($CLAUDE_BOARD_DIR, else `board.dir` of the fleet config, scripts/env.sh). A fleet config
-with `dispatch.card_hosts` refuses any other host.
+($CLAUDE_BOARD_DIR, else `board.dir` of the fleet config, scripts/env.sh), except that on a
+host other than the fleet config's `board.aggregator` an unset URL is the ssh tunnel to it
+(see board_config). A fleet config with `dispatch.card_hosts` refuses any other host.
 
 The session name is the card's address (todo claims, issue start comments, SendMessage), and
 Claude Code derives it as `<project dir>-<2 hex>`: 256 values, so two cards on one board do come
@@ -22,6 +23,7 @@ more than one new card could be ours (nothing typed); 3 the prompt did not land;
 import json
 import os
 import random
+import socket
 import subprocess
 import sys
 import time
@@ -48,15 +50,33 @@ FLEET = fleet()
 
 
 def board_config() -> tuple[str, str]:
-    root = os.environ.get("CLAUDE_BOARD_DIR") or FLEET.get("board", {}).get("dir")
+    """The board's URL and token. Only the board on `board.aggregator` (a `hostname -s` name)
+    sees every host; any other host reaches it through an ssh tunnel at 127.0.0.1:`board.tunnel_port`,
+    so there an unset $CLAUDE_BOARD_URL means that tunnel, and a closed tunnel exits with the command
+    that opens it. Without `board.aggregator`, or on that host, it is this host's own board."""
+    board = FLEET.get("board", {})
+    root = os.environ.get("CLAUDE_BOARD_DIR") or board.get("dir")
     if not root:
         sys.exit("no board checkout: set CLAUDE_BOARD_DIR or board.dir in the fleet config (.humanize/fleet.yaml)")
     root = os.path.expanduser(root)
     port, token = subprocess.run(
         ["bash", "-c", 'cd "$1" && source scripts/env.sh && printf "%s\\0%s" "$PORT" "${FLEET_API_TOKEN-}"', "_", root],
         capture_output=True, text=True, check=True).stdout.split("\0")
-    return (os.environ.get("CLAUDE_BOARD_URL") or f"http://127.0.0.1:{port}",
-            os.environ.get("CLAUDE_BOARD_TOKEN") or token)
+    token = os.environ.get("CLAUDE_BOARD_TOKEN") or token
+    if os.environ.get("CLAUDE_BOARD_URL"):
+        return os.environ["CLAUDE_BOARD_URL"], token
+    aggregator = board.get("aggregator")
+    if not aggregator or socket.gethostname().split(".")[0] == str(aggregator):
+        return f"http://127.0.0.1:{port}", token
+    tunnel = board["tunnel_port"]
+    try:
+        socket.create_connection(("127.0.0.1", tunnel), timeout=5).close()
+    except OSError as e:
+        sys.exit(f"the fleet's board is on {aggregator}; from this host it is the ssh tunnel at 127.0.0.1:{tunnel}, "
+                 f"which is not open ({e}). Open it and keep it running (e.g. in tmux):\n"
+                 f"    ssh -N -L {tunnel}:127.0.0.1:{port} {aggregator}\n"
+                 f"or set CLAUDE_BOARD_URL.")
+    return f"http://127.0.0.1:{tunnel}", token
 
 
 URL, TOKEN = board_config()
