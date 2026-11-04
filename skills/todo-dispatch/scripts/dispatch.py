@@ -7,8 +7,9 @@ the board's own label spawns locally, a peer label spawns on that peer. Prints t
 card's key and session name. The board is reached at $CLAUDE_BOARD_URL with
 $CLAUDE_BOARD_TOKEN; either one unset comes from the board checkout's own loader
 ($CLAUDE_BOARD_DIR, else `board.dir` of the fleet config, scripts/env.sh), except that on a
-host other than the fleet config's `board.aggregator` an unset URL is the ssh tunnel to it
-(see board_config). A fleet config with `dispatch.card_hosts` refuses any other host.
+host whose own board has no peers, with `board.tunnel_port` set, an unset URL is the ssh
+tunnel to the fleet's board (see board_config). A fleet config with `dispatch.card_hosts`
+refuses any other host.
 
 The session name is the card's address (todo claims, issue start comments, SendMessage), and
 Claude Code derives it as `<project dir>-<2 hex>`: 256 values, so two cards on one board do come
@@ -50,31 +51,32 @@ FLEET = fleet()
 
 
 def board_config() -> tuple[str, str]:
-    """The board's URL and token. Only the board on `board.aggregator` (a `hostname -s` name)
-    sees every host; any other host reaches it through an ssh tunnel at 127.0.0.1:`board.tunnel_port`,
-    so there an unset $CLAUDE_BOARD_URL means that tunnel, and a closed tunnel exits with the command
-    that opens it. Without `board.aggregator`, or on that host, it is this host's own board."""
+    """The board's URL and token. Only a board with peers (FLEET_PEERS in its env.sh) sees every
+    host; from a host whose board has none, `board.tunnel_port` means the fleet's board is the ssh
+    tunnel at 127.0.0.1:<tunnel_port>, and a closed tunnel exits with the command that opens it
+    (ssh target `board.aggregator`; it assumes the aggregator's board port equals this host's PORT)."""
     board = FLEET.get("board", {})
     root = os.environ.get("CLAUDE_BOARD_DIR") or board.get("dir")
     if not root:
         sys.exit("no board checkout: set CLAUDE_BOARD_DIR or board.dir in the fleet config (.humanize/fleet.yaml)")
     root = os.path.expanduser(root)
-    port, token = subprocess.run(
-        ["bash", "-c", 'cd "$1" && source scripts/env.sh && printf "%s\\0%s" "$PORT" "${FLEET_API_TOKEN-}"', "_", root],
+    # FLEET_PEERS unset first: a tmux server can carry a stale one from the board that spawned it
+    port, token, peers = subprocess.run(
+        ["bash", "-c", 'unset FLEET_PEERS; cd "$1" && source scripts/env.sh && '
+                       'printf "%s\\0%s\\0%s" "$PORT" "${FLEET_API_TOKEN-}" "${FLEET_PEERS-}"', "_", root],
         capture_output=True, text=True, check=True).stdout.split("\0")
     token = os.environ.get("CLAUDE_BOARD_TOKEN") or token
     if os.environ.get("CLAUDE_BOARD_URL"):
         return os.environ["CLAUDE_BOARD_URL"], token
-    aggregator = board.get("aggregator")
-    if not aggregator or socket.gethostname().split(".")[0] == str(aggregator):
+    tunnel = board.get("tunnel_port")
+    if peers or not tunnel:
         return f"http://127.0.0.1:{port}", token
-    tunnel = board["tunnel_port"]
     try:
         socket.create_connection(("127.0.0.1", tunnel), timeout=5).close()
     except OSError as e:
-        sys.exit(f"the fleet's board is on {aggregator}; from this host it is the ssh tunnel at 127.0.0.1:{tunnel}, "
+        sys.exit(f"this host's board has no peers, so the fleet's board is the ssh tunnel at 127.0.0.1:{tunnel}, "
                  f"which is not open ({e}). Open it and keep it running (e.g. in tmux):\n"
-                 f"    ssh -N -L {tunnel}:127.0.0.1:{port} {aggregator}\n"
+                 f"    ssh -N -L {tunnel}:127.0.0.1:{port} {board.get('aggregator') or '<aggregator host>'}\n"
                  f"or set CLAUDE_BOARD_URL.")
     return f"http://127.0.0.1:{tunnel}", token
 

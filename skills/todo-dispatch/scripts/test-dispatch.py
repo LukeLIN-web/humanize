@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Offline tests for dispatch.py against a fake claude-board served over HTTP, and for which
-board URL board_config() picks on which host (fake hostnames; the fake board stands in for the tunnel).
+board URL board_config() picks from a board checkout with or without peers (the fake board
+stands in for the tunnel).
 
 The fake board answers GET /api/windows, POST /api/windows/create (a new card appears at once,
 under the name the test picks) and POST /api/windows/<key>/prompt (recorded; `/rename <name>`
@@ -85,9 +86,10 @@ class FakeBoard:
 TMP = tempfile.mkdtemp()
 atexit.register(shutil.rmtree, TMP, True)
 BOARD = FakeBoard()
-os.makedirs(os.path.join(TMP, "board", "scripts"))
-with open(os.path.join(TMP, "board", "scripts", "env.sh"), "w") as f:
-    f.write("PORT=1\nFLEET_API_TOKEN=t\n")
+for name, extra in (("board", ""), ("aggregating-board", "FLEET_PEERS=b=http://127.0.0.1:7880\n")):
+    os.makedirs(os.path.join(TMP, name, "scripts"))
+    with open(os.path.join(TMP, name, "scripts", "env.sh"), "w") as f:
+        f.write("PORT=1\nFLEET_API_TOKEN=t\n" + extra)
 os.environ.update(HUMANIZE_FLEET_CONFIG=os.path.join(TMP, "no-fleet.yaml"),
                   CLAUDE_BOARD_DIR=os.path.join(TMP, "board"), CLAUDE_BOARD_URL=BOARD.url)
 os.environ.pop("CLAUDE_BOARD_TOKEN", None)
@@ -188,38 +190,41 @@ class DispatchNames(unittest.TestCase):
         self.assertEqual(BOARD.prompts[-1], ("h2:999", "do the item"))
 
 
-AGGREGATOR = {"board": {"aggregator": "agg-host", "tunnel_port": BOARD.server.server_address[1]}}
+TUNNEL = {"board": {"aggregator": "agg-host", "tunnel_port": BOARD.server.server_address[1]}}
 
 
-def board_url(hostname: str, fleet: dict, env_url: str | None = None) -> str:
-    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_BOARD_URL"}
-    if env_url:
-        env["CLAUDE_BOARD_URL"] = env_url
-    with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(dispatch, "FLEET", fleet), \
-            mock.patch.object(socket, "gethostname", return_value=hostname):
+def board_url(fleet: dict, board_dir: str = "board", **env: str) -> str:
+    """board_config()'s URL for the fake checkout `board_dir`, with CLAUDE_BOARD_URL unset unless in `env`."""
+    with mock.patch.dict(os.environ, CLAUDE_BOARD_DIR=os.path.join(TMP, board_dir), **env), \
+            mock.patch.object(dispatch, "FLEET", fleet):
+        if "CLAUDE_BOARD_URL" not in env:
+            del os.environ["CLAUDE_BOARD_URL"]
         return dispatch.board_config()[0]
 
 
 class BoardUrl(unittest.TestCase):
     def test_env_url_wins(self):
-        self.assertEqual(board_url("worker-a", AGGREGATOR, "http://board.example:9"), "http://board.example:9")
+        self.assertEqual(board_url(TUNNEL, CLAUDE_BOARD_URL="http://board.example:9"), "http://board.example:9")
 
-    def test_other_host_uses_the_tunnel_port(self):
-        self.assertEqual(board_url("worker-a.example.org", AGGREGATOR), BOARD.url)
+    def test_board_without_peers_uses_the_tunnel_port(self):
+        self.assertEqual(board_url(TUNNEL), BOARD.url)
 
-    def test_aggregator_host_uses_the_local_port(self):
-        self.assertEqual(board_url("agg-host.example.org", AGGREGATOR), "http://127.0.0.1:1")
+    def test_board_with_peers_uses_the_local_port(self):
+        self.assertEqual(board_url(TUNNEL, "aggregating-board"), "http://127.0.0.1:1")
 
-    def test_no_aggregator_uses_the_local_port(self):
-        self.assertEqual(board_url("worker-a", {"board": {"tunnel_port": 2}}), "http://127.0.0.1:1")
+    def test_no_tunnel_port_uses_the_local_port(self):
+        self.assertEqual(board_url({"board": {"aggregator": "agg-host"}}), "http://127.0.0.1:1")
 
     def test_closed_tunnel_exits_with_the_ssh_command(self):
         with socket.socket() as s:
             s.bind(("127.0.0.1", 0))
             closed = s.getsockname()[1]
         with self.assertRaises(SystemExit) as e:
-            board_url("worker-a", {"board": {"aggregator": "agg-host", "tunnel_port": closed}})
+            board_url({"board": {"aggregator": "agg-host", "tunnel_port": closed}})
         self.assertIn(f"ssh -N -L {closed}:127.0.0.1:1 agg-host", str(e.exception.code))
+
+    def test_peers_in_the_callers_environment_do_not_count(self):
+        self.assertEqual(board_url(TUNNEL, FLEET_PEERS="b=http://127.0.0.1:7880"), BOARD.url)
 
 
 if __name__ == "__main__":
