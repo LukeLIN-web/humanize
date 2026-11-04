@@ -125,4 +125,4 @@ user 已经裁定过的事不再问。不用 AskUserQuestion。
 台账、认领工具在根目录 CLAUDE.md 第 9 节，门禁、推送、分支保护在 CONTRIBUTING §2，体检结果在 `docs/collab-friction.md` 开头；这里只记它们没写的：
 
 - board 跑在 <host>，派单员也在 <host> 上跑；它同时汇总各台的卡和 GPU。别的机器上的 board 不汇总，聚合的 board 只听 127.0.0.1：别处跑先在私有 tmux（`tmux -L <socket>`，memory `remote-access-and-retired-boxes`）里开 `ssh -L <port>:127.0.0.1:<port> <host>`，再给 `dispatch.py`、`board_gpus.py` 设 `CLAUDE_BOARD_URL=http://127.0.0.1:<port>`（token 照常从 board 的 env.sh 读）。
-- 各机的 Claude 账号看那台 `~/.claude.json` 的 `oauthAccount.emailAddress`；部分机器的 Claude 不登录，不在那几台开卡（用量为 0 的机器多半是登录过期，开了卡只回「Login expired」）；用量一台一跑 `python3 scripts/cc_token_usage.py --days 0.21 /shared/user<NN>/.claude/projects`（5 小时），现有卡片数按 `/api/windows` 的 `host` 计。RoboLab / Isaac 的作业跑在 61–65 的 L40S 上，RoboCasa（MuJoCo）跑在 71 的 H100 上，会话从哪台都经 ssh 发过去。
+- 各机的 Claude 账号看那台 `~/.claude.json` 的 `oauthAccount.emailAddress`；部分机器的 Claude 不登录、不开卡；用量为 0 的机器多半是登录过期，开了卡只回「Login expired」；用量一台一跑 `python3 scripts/cc_token_usage.py --days 0.21 /shared/user<NN>/.claude/projects`（5 小时），现有卡片数按 `/api/windows` 的 `host` 计。RoboLab / Isaac 的作业跑在 61–65 的 L40S 上，RoboCasa（MuJoCo）跑在 71 的 H100 上，会话从哪台都经 ssh 发过去。
