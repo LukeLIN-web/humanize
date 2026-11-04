@@ -13,7 +13,6 @@ import importlib.util
 import io
 import json
 import os
-import re
 import shutil
 import sys
 import tempfile
@@ -33,6 +32,8 @@ class FakeBoard:
         self.prompts: list[tuple[str, str]] = []
         self.new_name: str | None = None
         self.honor_rename = True
+        self.refuse_rename = False
+        self.get_fails_after_rename = False
         board = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -48,6 +49,11 @@ class FakeBoard:
                 self.wfile.write(body)
 
             def do_GET(self):
+                if board.get_fails_after_rename and any(t.startswith("/rename ") for _, t in board.prompts):
+                    self.send_response(503)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
                 self._reply({"host": "h1", "peers": [{"host": "h2", "online": True}],
                              "windows": list(board.windows.values())})
 
@@ -60,6 +66,8 @@ class FakeBoard:
                     return self._reply({"ok": True, "pane_id": "%9"})
                 key = self.path.split("/")[3]
                 board.prompts.append((key, body["text"]))
+                if body["text"].startswith("/rename ") and board.refuse_rename:
+                    return self._reply({"ok": False, "error": "send blocked: a picker is open"})
                 if body["text"].startswith("/rename ") and board.honor_rename:
                     board.windows[key]["name"] = body["text"].split(" ", 1)[1]
                 self._reply({"ok": True})
@@ -68,9 +76,8 @@ class FakeBoard:
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
 
-    def add(self, key: str, name: str, cwd: str = "/elsewhere"):
-        host = key.split(":")[0] if ":" in key else "h1"
-        self.windows[key] = {"key": key, "host": host, "cwd": cwd, "started_at": 0, "name": name}
+    def add(self, key: str, name: str):
+        self.windows[key] = {"key": key, "host": key.split(":")[0], "cwd": "/elsewhere", "started_at": 0, "name": name}
 
 
 TMP = tempfile.mkdtemp()
@@ -110,6 +117,8 @@ class DispatchNames(unittest.TestCase):
         BOARD.windows.clear()
         BOARD.prompts.clear()
         BOARD.honor_rename = True
+        BOARD.refuse_rename = False
+        BOARD.get_fails_after_rename = False
         BOARD.add("h1:1", "proj-cc")          # the dispatcher's own card, on another host
         BOARD.add("h2:2", "other-cc")
 
@@ -157,7 +166,23 @@ class DispatchNames(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(out["name"], "proj-cc")
         self.assertIn("proj-cc", out["warning"])
-        self.assertTrue(re.search(r"/rename proj-[0-9a-f]{2}", out["warning"]))
+        self.assertRegex(out["warning"], r"/rename proj-[0-9a-f]{2}")
+        self.assertEqual(BOARD.prompts[-1], ("h2:999", "do the item"))
+
+    def test_rename_refused_warns_and_still_sends_the_prompt(self):
+        BOARD.new_name = "proj-cc"
+        BOARD.refuse_rename = True
+        rc, out = run()
+        self.assertEqual(rc, 0)
+        self.assertIn("was not typed", out["warning"])
+        self.assertEqual(BOARD.prompts[-1], ("h2:999", "do the item"))
+
+    def test_board_unreachable_during_rename_warns_and_still_sends_the_prompt(self):
+        BOARD.new_name = "proj-cc"
+        BOARD.get_fails_after_rename = True
+        rc, out = run()
+        self.assertEqual(rc, 0)
+        self.assertIn("not checked", out["warning"])
         self.assertEqual(BOARD.prompts[-1], ("h2:999", "do the item"))
 
 

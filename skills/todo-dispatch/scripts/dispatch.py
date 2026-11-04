@@ -82,7 +82,7 @@ def claim_unique_name(key: str, cwd: str) -> tuple[str | None, str | None]:
     else `/rename` to a free `<basename of cwd>-<2 hex>`. Returns (name, warning); the warning
     says the name is still shared because the board never showed the new one."""
     now = cards()
-    name = now[key].get("name")
+    name = now.get(key, {}).get("name")
     taken = {w.get("name") for k, w in now.items() if k != key}
     if name and name not in taken:
         return name, None
@@ -139,7 +139,10 @@ def main() -> int:
         return 2
     key = new[0]
     time.sleep(8)
-    name, warning = claim_unique_name(key, cwd)
+    try:
+        name, warning = claim_unique_name(key, cwd)
+    except OSError as e:
+        name, warning = None, f"session name not checked ({e}): claims and messages by name can reach the wrong card"
     r = call("POST", f"/api/windows/{key}/prompt", {"text": text})
     try:
         name = cards().get(key, {}).get("name", name)
