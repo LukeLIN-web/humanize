@@ -11,6 +11,15 @@ user 的原话（2026-10-14）：「你的任务就是看 todo，然后把没人
 
 定时跑：`/loop 30m /todo-dispatch`（插件装法下叫 `/humanize:todo-dispatch`）。每轮按下面七步走完再停，不在两轮之间常驻。
 
+**派单员的会话名要手起**：会话名是别的会话找你的地址（派单里的「我是…」、issue 评论、SendMessage）。Claude Code 自动起的名是 `<目录名>-<2 位十六进制>`，只有 256 个，而且自动名不查重，同目录的会话会撞（2026-11-04 派单员 `agent-harness-cc` 和一个派出去的会话同名，发给派单员的消息进了那个会话的收件箱）。手起的名会查重，撞了会自己让位改名。所以起循环的会话用 `claude -n <目录名>-dispatcher` 开，已经在跑的由 user 打 `/rename <目录名>-dispatcher`。每轮开头查一次自己的名：
+
+```bash
+p=$$; while [ "$p" -gt 1 ] && [ ! -f ~/.claude/sessions/$p.json ]; do p=$(ps -o ppid= -p "$p" | tr -d ' '); done
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("name"), d.get("nameSource"))' ~/.claude/sessions/$p.json
+```
+
+`nameSource` 是 `derived` 的，这一轮照做，汇报第一句请 user 打 `/rename <目录名>-dispatcher`。
+
 ## 角色
 
 你是派单员和流程维护者，**不做条目本身的活**。五件事：派活、看摩擦、修流程、推共享默认分支、照 GPU 排程转达和核对。
