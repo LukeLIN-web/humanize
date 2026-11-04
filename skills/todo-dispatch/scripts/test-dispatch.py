@@ -126,42 +126,33 @@ class DispatchNames(unittest.TestCase):
         BOARD.add("h1:1", "proj-cc")          # the dispatcher's own card, on another host
         BOARD.add("h2:2", "other-cc")
 
-    def test_free_name_is_kept_and_only_the_prompt_is_typed(self):
+    def test_free_derived_name_is_still_renamed_out_of_the_derived_shape(self):
         BOARD.new_name = "proj-3b"
-        rc, out = run()
-        self.assertEqual(rc, 0)
-        self.assertEqual(out["name"], "proj-3b")
-        self.assertNotIn("warning", out)
-        self.assertEqual(BOARD.prompts, [("h2:999", "do the item")])
-
-    def test_taken_name_is_renamed_before_the_prompt(self):
-        BOARD.new_name = "proj-cc"
         rc, out = run()
         self.assertEqual(rc, 0)
         self.assertNotIn("warning", out)
         (k1, rename), (k2, prompt) = BOARD.prompts
         self.assertEqual((k1, k2, prompt), ("h2:999", "h2:999", "do the item"))
         new = rename.removeprefix("/rename ")
-        self.assertRegex(new, r"^proj-[0-9a-f]{2}$")
-        self.assertNotIn(new, {"proj-cc", "other-cc"})
+        self.assertRegex(new, r"^proj-w[0-9a-f]{2}$")
         self.assertEqual(out["name"], new)
 
     def test_missing_name_is_given_one(self):
         BOARD.new_name = None
         rc, out = run()
         self.assertEqual(rc, 0)
-        self.assertRegex(out["name"], r"^proj-[0-9a-f]{2}$")
+        self.assertRegex(out["name"], r"^proj-w[0-9a-f]{2}$")
         self.assertEqual(len(BOARD.prompts), 2)
 
     def test_rename_picks_the_one_free_name(self):
         for i in range(256):
             if i != 0x5e:
-                BOARD.add(f"h1:{1000 + i}", f"proj-{i:02x}")
+                BOARD.add(f"h1:{1000 + i}", f"proj-w{i:02x}")
         BOARD.new_name = "proj-00"
         rc, out = run()
         self.assertEqual(rc, 0)
-        self.assertEqual(BOARD.prompts[0], ("h2:999", "/rename proj-5e"))
-        self.assertEqual(out["name"], "proj-5e")
+        self.assertEqual(BOARD.prompts[0], ("h2:999", "/rename proj-w5e"))
+        self.assertEqual(out["name"], "proj-w5e")
 
     def test_rename_that_never_shows_warns_and_still_sends_the_prompt(self):
         BOARD.new_name = "proj-cc"
@@ -170,7 +161,7 @@ class DispatchNames(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(out["name"], "proj-cc")
         self.assertIn("proj-cc", out["warning"])
-        self.assertRegex(out["warning"], r"/rename proj-[0-9a-f]{2}")
+        self.assertRegex(out["warning"], r"/rename proj-w[0-9a-f]{2}")
         self.assertEqual(BOARD.prompts[-1], ("h2:999", "do the item"))
 
     def test_rename_refused_warns_and_still_sends_the_prompt(self):

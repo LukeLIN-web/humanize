@@ -12,10 +12,11 @@ tunnel to the fleet's board (see board_config). A fleet config with `dispatch.ca
 refuses any other host.
 
 The session name is the card's address (todo claims, issue start comments, SendMessage), and
-Claude Code derives it as `<project dir>-<2 hex>`: 256 values, so two cards on one board do come
-up with the same one. A new card whose name another card on the board already has is renamed
-(`/rename`) to a free name of that shape before the prompt goes in. If the board never shows the
-new name, the prompt still goes in and the printed JSON carries a `warning`.
+Claude Code derives it as `<project dir>-<2 hex>`: 256 values, never checked for clashes, so any
+session started later in the same dir can come up with the card's name. Every new card is renamed
+(`/rename`) before the prompt goes in, to a name no other card on the board has and Claude Code
+never derives: `<project dir>-w<2 hex>`. If the board never shows the new name, the prompt still
+goes in and the printed JSON carries a `warning`.
 
 Exit codes: 0 sent; 1 create failed or unknown host; 2 our card did not show up, or
 more than one new card could be ours (nothing typed); 3 the prompt did not land;
@@ -100,23 +101,21 @@ def cards() -> dict:
 
 
 def claim_unique_name(key: str, cwd: str) -> tuple[str | None, str | None]:
-    """Give card `key` a session name no other card on the board has: its own if that is free,
-    else `/rename` to a free `<basename of cwd>-<2 hex>`. Returns (name, warning); the warning
-    says the name is still shared because the board never showed the new one."""
+    """`/rename` card `key` to a `<basename of cwd>-w<2 hex>` no other card on the board has.
+    Returns (name, warning); the warning says the card still has its derived name because the
+    board never showed the new one."""
     now = cards()
     name = now.get(key, {}).get("name")
     taken = {w.get("name") for k, w in now.items() if k != key}
-    if name and name not in taken:
-        return name, None
     base = os.path.basename(cwd)
-    want = random.choice([n for n in (f"{base}-{i:02x}" for i in range(256)) if n not in taken])
+    want = random.choice([n for n in (f"{base}-w{i:02x}" for i in range(256)) if n not in taken])
     r = call("POST", f"/api/windows/{key}/prompt", {"text": f"/rename {want}"})
     if r.get("ok"):
         for _ in range(15):
             time.sleep(2)
             if cards().get(key, {}).get("name") == want:
                 return want, None
-    why = f"session name {name!r} is also on another card" if name else "the card has no session name"
+    why = f"session name {name!r} is derived, so a later session can take it" if name else "the card has no session name"
     how = "did not show on the board within 30 s" if r.get("ok") else f"was not typed ({r})"
     return name, f"{why}, and `/rename {want}` {how}: claims and messages by name can reach the wrong card"
 
