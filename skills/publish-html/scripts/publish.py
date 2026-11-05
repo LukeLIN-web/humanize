@@ -60,8 +60,11 @@ def files_of(page, globs):
 def problems(cfg, page, files, public):
     src = read(page)
     out = []
-    if not src.startswith('<meta charset="utf-8">'):
-        out.append('第一行不是 <meta charset="utf-8">')
+    # the Artifact server takes only files that begin with a doctype; the charset in the file keeps a local open readable
+    if not re.match(r"(?i)<!doctype html>", src):
+        out.append("不以 <!DOCTYPE html> 开头：Artifact 服务器不收")
+    if '<meta charset="utf-8">' not in src[:1024]:
+        out.append('开头 1 KB 里没有 <meta charset="utf-8">')
     if f"<title>{cfg['title_prefix']}" not in src:
         out.append(f"<title> 不以 {cfg['title_prefix']} 开头")
     # an update keeps the artifact's other files, so a reference missing here is fine if the live page already has it
