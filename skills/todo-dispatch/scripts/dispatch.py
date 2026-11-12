@@ -18,6 +18,10 @@ session started later in the same dir can come up with the card's name. Every ne
 never derives: `<project dir>-w<2 hex>`. If the board never shows the new name, the prompt still
 goes in and the printed JSON carries a `warning`.
 
+Each new card then switches, for that session only, to Fable while the host's Claude account
+has Fable weekly quota left, else to Opus (user 2026-11-11), and the JSON prints the `model` it
+switched to; a failed switch leaves the card on its default model, `model` null and a `warning`.
+
 Exit codes: 0 sent; 1 create failed or unknown host; 2 our card did not show up, or
 more than one new card could be ours (nothing typed); 3 the prompt did not land;
 4 a `/goal` prompt too long to stay a command (nothing created).
@@ -120,6 +124,14 @@ def claim_unique_name(key: str, cwd: str) -> tuple[str | None, str | None]:
     return name, f"{why}, and `/rename {want}` {how}: claims and messages by name can reach the wrong card"
 
 
+def pick_model(host: str) -> str:
+    """Model for a new card on `host`: Fable while that host's Claude account still has Fable weekly
+    quota, else Opus (user 2026-11-11). An account whose usage has no Fable row gets Fable too."""
+    limits = call("POST", "/api/usage", {"host": host, "cli": "claude"}).get("limits", [])
+    fable = next((x for x in limits if x.get("label") == "Current week (Fable)"), {})
+    return "opus" if fable.get("used", 0) >= 100 else "fable"
+
+
 def main() -> int:
     host, cwd, prompt_file = sys.argv[1:4]
     with open(prompt_file, encoding="utf-8") as f:
@@ -164,12 +176,20 @@ def main() -> int:
         name, warning = claim_unique_name(key, cwd)
     except OSError as e:
         name, warning = None, f"session name not checked ({e}): claims and messages by name can reach the wrong card"
+    try:
+        model = pick_model(host)
+        m = call("POST", f"/api/windows/{key}/model", {"model": model})
+    except OSError as e:
+        model, m = None, {"ok": False, "error": str(e)}
+    if not m.get("ok"):
+        why = f"switch to {model} failed" if model else "Fable quota not read"
+        warning = "; ".join(filter(None, [warning, f"{why} ({m.get('error')}): the card runs its default model"]))
     r = call("POST", f"/api/windows/{key}/prompt", {"text": text})
     try:
         name = cards().get(key, {}).get("name", name)
     except OSError:
         pass
-    out = {"key": key, "name": name, "prompt": r}
+    out = {"key": key, "name": name, "model": model if m.get("ok") else None, "prompt": r}
     if warning:
         out["warning"] = warning
     print(json.dumps(out, ensure_ascii=False))

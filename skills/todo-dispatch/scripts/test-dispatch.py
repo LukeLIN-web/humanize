@@ -4,8 +4,9 @@ board URL board_config() picks from a board checkout with or without peers (the 
 stands in for the tunnel).
 
 The fake board answers GET /api/windows, POST /api/windows/create (a new card appears at once,
-under the name the test picks) and POST /api/windows/<key>/prompt (recorded; `/rename <name>`
-renames the card unless the test turns that off). Waits are patched out.
+under the name the test picks), POST /api/windows/<key>/prompt (recorded; `/rename <name>`
+renames the card unless the test turns that off), POST /api/usage (Fable weekly use as the test
+sets it) and POST /api/windows/<key>/model (recorded). Waits are patched out.
 
 Run:  python3 skills/todo-dispatch/scripts/test-dispatch.py   (exit 0 = all pass)
 """
@@ -37,6 +38,9 @@ class FakeBoard:
         self.honor_rename = True
         self.refuse_rename = False
         self.get_fails_after_rename = False
+        self.fable_used = 0
+        self.models: list[tuple[str, str]] = []
+        self.refuse_model = False
         board = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -67,6 +71,14 @@ class FakeBoard:
                     board.windows[key] = {"key": key, "host": body["host"], "cwd": body["cwd"],
                                           "started_at": time.time() * 1000, "name": board.new_name}
                     return self._reply({"ok": True, "pane_id": "%9"})
+                if self.path == "/api/usage":
+                    return self._reply({"ok": True, "limits": [
+                        {"label": "Current week (all models)", "used": 40, "resets": "Nov 14"},
+                        {"label": "Current week (Fable)", "used": board.fable_used, "resets": "Nov 14"}]})
+                if self.path.endswith("/model"):
+                    board.models.append((self.path.split("/")[3], body["model"]))
+                    return self._reply({"ok": False, "error": "the /model dialog never opened"}
+                                       if board.refuse_model else {"ok": True})
                 key = self.path.split("/")[3]
                 board.prompts.append((key, body["text"]))
                 if body["text"].startswith("/rename ") and board.refuse_rename:
@@ -123,6 +135,9 @@ class DispatchNames(unittest.TestCase):
         BOARD.honor_rename = True
         BOARD.refuse_rename = False
         BOARD.get_fails_after_rename = False
+        BOARD.fable_used = 0
+        BOARD.models.clear()
+        BOARD.refuse_model = False
         BOARD.add("h1:1", "proj-cc")          # the dispatcher's own card, on another host
         BOARD.add("h2:2", "other-cc")
 
@@ -178,6 +193,38 @@ class DispatchNames(unittest.TestCase):
         rc, out = run()
         self.assertEqual(rc, 0)
         self.assertIn("not checked", out["warning"])
+        self.assertEqual(BOARD.prompts[-1], ("h2:999", "do the item"))
+
+
+class DispatchModel(unittest.TestCase):
+    def setUp(self):
+        BOARD.windows.clear()
+        BOARD.prompts.clear()
+        BOARD.models.clear()
+        BOARD.honor_rename = True
+        BOARD.refuse_rename = False
+        BOARD.get_fails_after_rename = False
+        BOARD.refuse_model = False
+        BOARD.new_name = "proj-3b"
+
+    def test_fable_while_its_weekly_quota_lasts(self):
+        BOARD.fable_used = 99
+        rc, out = run()
+        self.assertEqual((rc, out["model"], BOARD.models), (0, "fable", [("h2:999", "fable")]))
+        self.assertNotIn("warning", out)
+
+    def test_opus_once_fable_is_used_up(self):
+        BOARD.fable_used = 100
+        rc, out = run()
+        self.assertEqual((rc, out["model"], BOARD.models), (0, "opus", [("h2:999", "opus")]))
+
+    def test_failed_switch_warns_and_still_sends_the_prompt(self):
+        BOARD.fable_used = 0
+        BOARD.refuse_model = True
+        rc, out = run()
+        self.assertEqual(rc, 0)
+        self.assertIsNone(out["model"])
+        self.assertIn("switch to fable failed", out["warning"])
         self.assertEqual(BOARD.prompts[-1], ("h2:999", "do the item"))
 
 

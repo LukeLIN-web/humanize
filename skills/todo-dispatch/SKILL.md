@@ -55,7 +55,7 @@ python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("name")
 
 - **选机器**（user 2026-10-26：别都往一台派卡，看 Claude 会话用量、均衡负载）：卡开在哪台，定的是会话花哪个 Claude 账号的用量、占哪台的 CPU 和内存；GPU 作业照常经 ssh 发到要的盒，不因为要那台的卡就把会话开在那台。开在 board 在线的机器里：5 小时那窗快撞满的账号先跳过（额度按 5 小时一窗算，撞满了同账号的卡一起停；同一个账号的几台合算，派单员自己那台也算）；剩下的挑周额度最早重置的账号（user 2026-11-06「你要考虑 reset 时间, 比如 62 明天 reset, 就应该先用完 62」：周额度到重置时没用掉的就作废，先花快重置的），重置时刻相近再挑周额度用得少的，再挑现有卡片少的。周额度（撞满了同账号的卡一起停到重置）看 board 的 `POST /api/usage`（body `{"host": "<NN>", "cli": "claude"}`）返回里「Current week (all models)」那行的 `used`（百分比）和 `resets`，同账号的几台读一台；没有这一行的账号（Enterprise）没有周上限、也没有会作废的额度，排在有周上限且还有余量的账号后面。那行到 100% 就是周额度已满：到它的 `resets` 时刻前不在那个账号的机器上开卡，也不往那个账号的现成卡打派单（打进去只回「You've hit your weekly limit」，不会做）。要 GPU 的先看 gpu-priority 的排程文件（plan.md）：卡已经排给别的活的主机不开；排程里没有它的位置，就照常经 gpu_wait 排队，第 6 步会把它提出来等 user 排。
 - **开卡**：把派单写进 scratchpad 的一个文件，跑 `python3 <本 skill>/scripts/dispatch.py <host> <仓库路径> <派单文件>`，
-  它在 board 上开卡、等卡出现、把派单打进输入框，打印卡的 key 和会话名。新开的卡一条一卡。新卡先 `/rename` 成 board 上没人用、Claude Code 也不会自动起的 `<目录名>-w<2 位十六进制>` 再打派单；输出里带 `warning` 就是改名没生效，卡还顶着自动名，认领和 SendMessage 会认错卡，汇报里报出来。
+  它在 board 上开卡、等卡出现、把派单打进输入框，打印卡的 key 和会话名。新开的卡一条一卡。新卡先 `/rename` 成 board 上没人用、Claude Code 也不会自动起的 `<目录名>-w<2 位十六进制>` 再打派单；输出里带 `warning` 就是改名没生效，卡还顶着自动名，认领和 SendMessage 会认错卡，汇报里报出来。改完名脚本再把这张卡（只限这个会话）切成 Fable，那台机账号的 Fable 周额度（`/api/usage` 的「Current week (Fable)」）到 100% 就切 Opus（user 2026-11-11「你开卡优先用 fable, fable 用完了再用 opus」）；输出的 `model` 是切成的模型，切换失败时为 null 并带 `warning`，卡停在默认模型，汇报里报出来。
 - **派单**（自包含、单段，不带换行；措辞照下面的骨架填，不另加「回我」：跨机的 SendMessage 送不到，做没做完你从台账、`git log` 和那张卡的 timeline 读）：
   「我是 <你的会话名>（<主机>），按 user 的 /loop 把 todo 上没人认领的条目派给新会话。派给你的是「<条目标题>」那一条（<在哪一节>）。
   ① 先按根目录 CLAUDE.md 的认领规则用 <认领工具> 认领；那条已经有认领就别做，直接停。
