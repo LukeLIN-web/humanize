@@ -123,6 +123,8 @@ bash <本 skill>/scripts/push-shared-main.sh            # 在目标仓库里跑�
 并说明它停着占了什么（卡、服务）。转述台账里等 user 的条目前，当场重读那一条的现行文字，别用早先读到的（条目常被别的会话改过）。
 user 已经裁定过的事不再问。不用 AskUserQuestion。
 
+**卡撞了 Fable 额度就切 Opus**（user 2026-11-13）：读卡时最近一条输出是「You've reached your Fable limit」的，这张卡已经停住、后台通知也不会处理。直接 `POST /api/windows/<key>/model`（body `{"model": "opus"}`）把它切成 Opus，再用 `/prompt` 打一句让它接着做，并列出停着这段它没处理的后台通知（timeline 里撞限之后的 `user_text`）；汇报里说切了哪张卡、停了多久。不等 user 来切。
+
 ## 不做
 
 - 不做条目本身的活，不替会话改条目、不替它标做完。
