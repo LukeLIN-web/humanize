@@ -4,6 +4,7 @@
     python3 memsync.py [--graph G] status
     python3 memsync.py [--graph G] apply
     python3 memsync.py [--graph G] promote <repo> <file.md> <topic>
+    python3 memsync.py [--graph G] due [--days N]
 
 The graph ($HUMANIZE_REPO_GRAPH, else graph.yaml at the top of the current git checkout) names
 each repo's memory store and the topic stores it subscribes to. Two invariants:
@@ -22,10 +23,14 @@ status marks each finding `!` (needs judgment: merge content, write an index lin
 fixes it) or `~` (advice). Exit 0 clean, 1 any `!`, 2 only `+` left.
 apply does every `+` and prints the paths it changed per git checkout, for a pathspec commit.
 promote moves a memory file and its index line from a repo's store into a topic, then applies.
+due is a SessionStart hook: when the last round in the hub's log.md (its last `- YYYY-MM-DD` line) is
+N days old (default 14) or there is none, it puts a reminder into the session's context, at most once a
+day across every session that runs it (the day goes in the hub's .sync-nagged).
 """
 import argparse
 import datetime
 import filecmp
+import json
 import os
 import re
 import shutil
@@ -33,7 +38,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import yaml
 
 ENTRY = re.compile(r"^\s*-\s*\[[^\]]*\]\(([^)\s]+\.md)\)")
 WIKILINK = re.compile(r"\[\[([^\]|#]+)")
@@ -62,6 +66,7 @@ def same(a: Path, b: Path) -> bool:
 
 class Graph:
     def __init__(self, path: str):
+        import yaml  # only the graph needs it; `due` runs as a hook under whatever python3 is first on PATH
         with open(path, encoding="utf-8") as f:
             g = yaml.safe_load(f)
         self.root = Path(g["root"])
@@ -425,6 +430,25 @@ def promote(g: Graph, repo: str, f: str, topic: str):
     print(f"moved {src} -> {tdir / f}")
 
 
+def due(graph: str, days: int):
+    hub = Path(graph).resolve().parent
+    log = hub / "log.md"
+    stamps = re.findall(r"^- (\d{4}-\d{2}-\d{2})", log.read_text(encoding="utf-8"), re.M) if log.exists() else []
+    today = datetime.date.today()
+    age = (today - datetime.date.fromisoformat(stamps[-1])).days if stamps else None
+    if age is not None and age < days:
+        return
+    nag = hub / ".sync-nagged"
+    if nag.exists() and nag.read_text().strip() == today.isoformat():
+        return
+    nag.write_text(today.isoformat() + "\n")
+    when = f"上次 {stamps[-1]}，已 {age} 天" if stamps else "还没跑过"
+    msg = (f"跨仓库 memory 同步超期（{when}，间隔 {days} 天）。空闲时开一个会话在 {hub} 里跑一轮 "
+           f"cross-repo-sync skill（插件装法下 /humanize:cross-repo-sync），跑完记进 log.md。手上有活就先干活，别打断。")
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": msg}},
+                     ensure_ascii=False))
+
+
 def graph_path(arg):
     if arg:
         return arg
@@ -444,7 +468,11 @@ def main():
     p.add_argument("repo")
     p.add_argument("file")
     p.add_argument("topic")
+    d = sub.add_parser("due")
+    d.add_argument("--days", type=int, default=14)
     a = ap.parse_args()
+    if a.cmd == "due":
+        return due(graph_path(a.graph), a.days)
     g = Graph(graph_path(a.graph))
     if a.cmd == "promote":
         promote(g, a.repo, a.file, a.topic)

@@ -140,6 +140,24 @@ repos:
         self.assertFalse((self.b / "s.md").is_symlink())
         self.assertNotIn("(s.md)", (self.b / "MEMORY.md").read_text())
 
+    def test_due_reminds_once_a_day_after_the_interval(self):
+        log = self.tmp / "log.md"
+        graph = str(self.tmp / "graph.yaml")
+        def run():
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                memsync.due(graph, 14)
+            return out.getvalue()
+        self.assertIn("还没跑过", run())
+        self.assertEqual(run(), "")  # same day: once only
+        (self.tmp / ".sync-nagged").unlink()
+        import datetime
+        log.write_text(f"- {datetime.date.today().isoformat()} round\n")
+        self.assertEqual(run(), "")
+        old = (datetime.date.today() - datetime.timedelta(days=15)).isoformat()
+        log.write_text(f"- 2026-01-01 a\n- {old} b\n")
+        self.assertIn("已 15 天", run())
+
 
 if __name__ == "__main__":
     unittest.main()

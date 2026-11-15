@@ -1,12 +1,12 @@
 ---
 name: cross-repo-sync
-description: 跨仓库 memory 同步与 repo 关系图的 watcher，一轮一跑（`/loop 2h /cross-repo-sync`）——按关系图让每个仓库只有一个 memory store、各机各 cwd 的 project 键都链到它；几个仓库共有的 memory 只在一个 topic store 里有正本，订阅它的仓库放软链、索引里有它一节；碎片和分叉的副本合并回正本；顺着图的 uses 边把上游的接口变化带进下游的 memory。Triggers: 跨仓库同步 memory、mem sync、memory 分叉、各机 memory 不一样、通用 memory 合并、repo 关系图、cross-repo watcher.
+description: 跨仓库 memory 同步，按 repo 关系图做的跨仓库操作，约 14 天一轮（SessionStart 钩子到期提醒）——按关系图让每个仓库只有一个 memory store、各机各 cwd 的 project 键都链到它；几个仓库共有的 memory 只在一个 topic store 里有正本，订阅它的仓库放软链、索引里有它一节；碎片和分叉的副本合并回正本；顺着图的 uses 边把上游的接口变化带进下游的 memory。Triggers: 跨仓库同步 memory、mem sync、memory 分叉、各机 memory 不一样、通用 memory 合并、repo 关系图、cross-repo watcher.
 argument-hint: "[可选：只看哪个仓库或 topic]"
 ---
 
 # 跨仓库 memory 同步（一轮）
 
-定时跑：watcher 会话开在 hub（关系图所在的 git 仓库）里，`claude -n <hub 目录名>-watcher`，`/loop 2h /cross-repo-sync`（插件装法下 `/humanize:cross-repo-sync`）。每轮按下面六步走完再停。
+**约 14 天一轮，不常驻**（user 2026-11-14：「不用启动监视器。就和 memory 一样定期提醒开一次就行，比如 14 天」）。到期提醒来自 `memsync.py due`：把它挂成某个常用仓库的 SessionStart 钩子，上一轮（hub `log.md` 最后一行的日期）满 14 天就往会话里塞一句提醒，全机队一天最多一次。收到提醒或 user 叫跑时，在 hub（关系图所在的 git 仓库）里开一个会话跑 `/cross-repo-sync`（插件装法下 `/humanize:cross-repo-sync`），按下面六步走完就关。
 
 ## 模型
 
@@ -55,7 +55,7 @@ python3 <本 skill>/scripts/memsync.py apply
 
 ### 6. 记账和汇报
 
-hub 的 `log.md` 追加一行：时间、合并了哪些、promote 了哪些、uses 边上改了哪些、留给 user 的。汇报就是这一行加上要 user 定的事，不用 AskUserQuestion。
+hub 的 `log.md` 追加一行，以 `- YYYY-MM-DD` 开头（`due` 按它算下一次到期）：时间、合并了哪些、promote 了哪些、uses 边上改了哪些、留给 user 的。汇报就是这一行加上要 user 定的事，不用 AskUserQuestion。
 
 ## 合并规则
 
