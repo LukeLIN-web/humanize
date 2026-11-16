@@ -92,6 +92,11 @@
 #                             the target's checkout; none = off; set empty to turn it off
 #                             everywhere. A Codex overseer never does: it already is Codex)
 #   GOAL_MONITOR_CODEX_REVIEW_MODEL (default gpt-6.1-sol:high — MODEL:EFFORT)
+#   GOAL_MONITOR_CODEX_HOSTS  (space-separated short hostnames a Codex overseer moves to,
+#                             in order, when its Codex hits the usage limit — one per
+#                             Codex login; each must reach this host by ssh and see the
+#                             target's cwd at the same path. Default goal_monitor.codex_hosts
+#                             of the fleet config; none = it stays and waits for the reset)
 #   GOAL_MONITOR_DRYRUN       (1 = print what would be spawned/killed, act on nothing)
 #
 # SSOT: this file lives in the humanize repo (hooks/). A consuming repo that wires
@@ -110,23 +115,28 @@ if [ -n "${TMUX:-}" ]; then
   TM_STR="tmux -S '$sock'"
 fi
 
-# The tick driver of a Codex overseer: `goal-monitor-spawn.sh --drive MON SECONDS DIR`,
+# The tick driver of a Codex overseer: `goal-monitor-spawn.sh --drive MON SECONDS DIR HOSTS`,
 # which spawn() starts in window 1 of the overseer's tmux session MON. Every SECONDS it
 # types DIR/MON.tick — one `--no-schedule` tick, written by spawn() — into window 0 and
 # checks that a turn started. A tick never lands on a turn still running: it waits up
-# to one more period for that turn to end, then skips. It lives and dies with the
-# session (the overseer's self-teardown kills both windows) and leaves by itself once
-# window 0 is back at a shell. Every send is logged to DIR/MON.drive.log.
+# to one more period for that turn to end, then skips. When Codex ends a turn on its
+# usage limit, the driver moves the overseer to the first of HOSTS it has not run on
+# yet (another host is another Codex login, so another quota): it names that host in
+# DIR/MON.move and stops Codex, and the pane's wrapper (DIR/MON.run) starts it again
+# there. It lives and dies with the session (the overseer's self-teardown kills both
+# windows) and leaves by itself once window 0 is back at a shell. Every send and move
+# is logged to DIR/MON.drive.log.
 drive() {
-  local mon="$1" every="$2" dir="$3" pane waited
+  local mon="$1" every="$2" dir="$3" hosts="$4" pane step due waited cur tried="" stuck=""
   pane="$("${TM[@]}" display-message -p -t "=$mon:0.0" '#{pane_id}' 2>/dev/null)" || exit 1
   say() { printf '%s %s\n' "$(date '+%F %T %Z')" "$*" >> "$dir/$mon.drive.log"; }
-  # Codex shows "esc to interrupt" in its status line for as long as a turn runs. The
-  # capture is padded with blank rows to the pane's height, so they go first.
-  busy() {
-    [[ "$("${TM[@]}" capture-pane -p -t "$pane" 2>/dev/null | grep -v '^[[:space:]]*$' | tail -n 12)" \
-       == *"esc to interrupt"* ]]
-  }
+  # The capture is padded with blank rows to the pane's height, so they go first.
+  bottom() { "${TM[@]}" capture-pane -p -t "$pane" 2>/dev/null | grep -v '^[[:space:]]*$' | tail -n 12; }
+  # Codex shows "esc to interrupt" in its status line for as long as a turn runs.
+  busy() { [[ "$(bottom)" == *"esc to interrupt"* ]]; }
+  # A turn that ran out of quota ends on "You've hit your usage limit … try again at
+  # <T>". Codex wraps that line itself, so the rows are joined before matching.
+  limited() { ! busy && bottom | tr -s '[:space:]' ' ' | grep -q "hit your usage limit"; }
   # Polled each second: a turn can show its status line only briefly.
   started() {
     for _ in $(seq 15); do busy && return 0; sleep 1; done
@@ -137,11 +147,36 @@ drive() {
       ""|bash|sh|zsh|dash) return 1 ;;
     esac
   }
-  say "driver up: pane $pane, a tick every ${every}s"
-  while sleep "$every"; do
-    waited=0
-    while up && busy && [ "$waited" -lt "$every" ]; do sleep 60; waited=$((waited + 60)); done
+  move() {
+    local h next="" pg
+    tried="$tried $cur"
+    for h in $hosts; do
+      case " $tried " in *" $h "*) ;; *) next="$h"; break ;; esac
+    done
+    if [ -z "$next" ]; then
+      say "usage limit on $cur, no host left to move to (tried:$tried); staying"
+      stuck=1; return 1
+    fi
+    printf '%s\n' "$next" > "$dir/$mon.move"
+    # Codex is the pane's foreground job: the wrapper runs it under `set -m`.
+    pg="$(ps -o tpgid= -p "$("${TM[@]}" display-message -p -t "$pane" '#{pane_pid}')" | tr -d ' ')"
+    if ! kill -TERM -- "-$pg" 2>/dev/null; then
+      rm -f "$dir/$mon.move"; say "usage limit on $cur, but Codex could not be stopped"; stuck=1; return 1
+    fi
+    say "usage limit on $cur: overseer moved to $next"
+    cur="$next"
+  }
+  cur="$(hostname -s 2>/dev/null)"
+  step=$(( every < 60 ? every : 60 ))
+  due=$(( SECONDS + every ))
+  say "driver up: pane $pane, a tick every ${every}s${hosts:+, on a usage limit moves to: $hosts}"
+  while sleep "$step"; do
     up || { say "overseer exited, driver stops"; exit 0; }
+    # A moved overseer starts with a tick of its own: its prompt says to run one now.
+    if [ -z "$stuck" ] && limited && move; then due=$(( SECONDS + every )); continue; fi
+    [ "$SECONDS" -ge "$due" ] || continue
+    if busy && [ "$SECONDS" -lt $(( due + every )) ]; then continue; fi
+    waited=$(( SECONDS - due )); due=$(( SECONDS + every ))
     if busy; then say "overseer still busy after ${waited}s, tick skipped"; continue; fi
     if ! { "${TM[@]}" load-buffer -b "$mon-tick" "$dir/$mon.tick" \
            && "${TM[@]}" paste-buffer -p -d -b "$mon-tick" -t "$pane"; }; then
@@ -158,7 +193,7 @@ drive() {
   done
 }
 if [ "${1:-}" = "--drive" ]; then
-  drive "$2" "$3" "$4"
+  drive "$2" "$3" "$4" "${5:-}"
   exit 0
 fi
 
@@ -205,6 +240,9 @@ pfile="$state_dir/$mon.prompt"
 tfile="$state_dir/$mon.tick"
 # Present while the overseer watches a `/goal`, which then decides when it goes.
 native="$state_dir/$mon.native"
+# What window 0 runs (written by spawn()), and the host the driver moves it to.
+rfile="$state_dir/$mon.run"
+mfile="$state_dir/$mon.move"
 
 # The one teardown path. $1 = why (for the log line and the human-visible message).
 teardown() {
@@ -214,7 +252,7 @@ teardown() {
   fi
   rm -f "$native" 2>/dev/null
   "${TM[@]}" kill-session -t "=$mon" 2>/dev/null || return 0
-  rm -f "$pfile" "$tfile" 2>/dev/null
+  rm -f "$pfile" "$tfile" "$rfile" "$mfile" 2>/dev/null
   printf '%s\t%s\t%s\tteardown: %s\n' "$(date -Is 2>/dev/null)" "$mon" "$sid" "$1" \
     >> "$state_dir/spawn.log" 2>/dev/null
   echo "[goal-monitor] overseer '$mon' stopped ($1)."
@@ -235,19 +273,21 @@ spawn() {
     '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null)"
   [ -n "$target" ] || skill_args="$skill_args --notify-only"
 
+  # Host lists: goal_monitor.KEY of the fleet config, unless the env var is set — `-`
+  # rather than `:-`, so an explicitly empty one means none, everywhere.
+  local fleet
+  fleet="${HUMANIZE_FLEET_CONFIG:-$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)/.humanize/fleet.yaml}"
+  fleet_hosts() {
+    python3 -c 'import sys, yaml
+d = yaml.safe_load(open(sys.argv[1])) or {}
+print(" ".join(map(str, (d.get("goal_monitor") or {}).get(sys.argv[2]) or [])))' "$fleet" "$1" 2>/dev/null
+  }
+
   # The Codex review leg spends Codex quota every tick, so it runs only on the hosts
   # chosen for it, and only for a Claude overseer: a Codex one already is Codex.
-  # `-` rather than `:-`: an explicitly empty list means off everywhere.
-  local host hosts fleet
+  local host hosts
   host="$(hostname -s 2>/dev/null)"
-  if [ -n "${GOAL_MONITOR_CODEX_REVIEW_HOSTS+x}" ]; then
-    hosts="$GOAL_MONITOR_CODEX_REVIEW_HOSTS"
-  else
-    fleet="${HUMANIZE_FLEET_CONFIG:-$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)/.humanize/fleet.yaml}"
-    hosts="$(python3 -c 'import sys, yaml
-d = yaml.safe_load(open(sys.argv[1])) or {}
-print(" ".join(map(str, (d.get("goal_monitor") or {}).get("codex_review_hosts") or [])))' "$fleet" 2>/dev/null)"
-  fi
+  hosts="${GOAL_MONITOR_CODEX_REVIEW_HOSTS-$(fleet_hosts codex_review_hosts)}"
   if [ "$OVERSEER" = claude ] && [ -n "$host" ]; then
     case " $hosts " in
       *" $host "*) skill_args="$skill_args --codex-review ${GOAL_MONITOR_CODEX_REVIEW_MODEL:-gpt-6.1-sol:high}" ;;
@@ -360,38 +400,95 @@ SELF-TEARDOWN (§7 true terminal, required): when — and only when — you reac
 which closes YOUR OWN tmux session ($closes). That is self-teardown of the watcher, not an action against the target — it is the one exception to "never kill a process", and it is what stops a finished run from leaving a dead overseer session behind. Never do it while the run is merely stalled, wedged, blocked, rate-limited, or idle-but-unfinished (§5.1–§5.6): those are all resumable and need you alive.
 EOF
 
-  # On a clean exit (the human quit the overseer) the cron is dead anyway, so the pane
-  # is closed too. On a crash (rc≠0) the pane is kept: the exit code and scrollback
-  # stay inspectable instead of the tmux session vanishing.
+  # What window 0 runs, written to $rfile: the overseer, started again on the host the
+  # tick driver names in $mfile. On a clean exit (the human quit the overseer) the
+  # cron is dead anyway, so the pane is closed too. On a crash (rc≠0) the pane is
+  # kept: the exit code and scrollback stay inspectable instead of the tmux session
+  # vanishing.
   #
   # `set -m` is load-bearing, not cosmetic: without job control this wrapper leaves
   # claude in the wrapper's own process group, so tmux reports pane_current_command
   # as the shell and every tool that gates on it (claude-board's prompt and /model
   # send, any capture-then-type driver) refuses the pane as "at a shell prompt —
   # TUI not running". With job control the TUI owns the terminal's foreground
-  # group and the overseer is a first-class pane the human can drive like any other.
+  # group and the overseer is a first-class pane the human can drive like any other;
+  # it is also how the driver stops Codex for a move.
   # CLAUDE_GOAL_MONITOR keeps this hook out of the overseer; CODEX_GOAL_MONITOR keeps
   # Codex's own goal hook out of a Codex one.
-  local launch who driver=""
+  local bin who driver="" opts=() extra=()
   if [ "$OVERSEER" = codex ]; then
-    launch="PATH='$path_pre':\"\$PATH\" CODEX_GOAL_MONITOR=1 CLAUDE_GOAL_MONITOR=$sid '$codex_bin' -m '$model'${effort:+ -c model_reasoning_effort=$effort} -c check_for_update_on_startup=false -c 'projects={$trust}' $CODEX_ARGS \"\$(cat '$pfile')\""
+    bin="$codex_bin"
+    opts=(-m "$model")
+    [ -n "$effort" ] && opts+=(-c "model_reasoning_effort=$effort")
+    opts+=(-c check_for_update_on_startup=false -c "projects={$trust}")
+    read -ra extra <<< "$CODEX_ARGS"
+    opts+=("${extra[@]}")
     who="Codex $model${effort:+ $effort}"
-    driver="bash '$HERE/$(basename "${BASH_SOURCE[0]}")' --drive '$mon' $secs '$state_dir'"
+    driver="bash '$HERE/$(basename "${BASH_SOURCE[0]}")' --drive '$mon' $secs '$state_dir' '${GOAL_MONITOR_CODEX_HOSTS-$(fleet_hosts codex_hosts)}'"
   else
-    launch="CLAUDE_GOAL_MONITOR=$sid $claude_bin $CLAUDE_ARGS \"\$(cat '$pfile')\""
+    bin="$claude_bin"
+    path_pre=""
+    read -ra opts <<< "$CLAUDE_ARGS"
     who="Claude Code"
   fi
-  local cmd="set -m
-$launch
-rc=\$?
-rm -f '$pfile' '$tfile' '$native'
-[ \"\$rc\" = 0 ] && $TM_STR kill-session -t '=$mon'
-printf '\n[goal-monitor] $OVERSEER exited rc=%s — pane kept for inspection\n' \"\$rc\"
-exec ${SHELL:-/bin/bash} -i"
+  sq() { local s out=""; for s in "$@"; do out+="'${s//\'/\'\\\'\'}' "; done; printf '%s' "${out% }"; }
+  {
+    printf 'overseer=%s sid=%s cwd=%s origin=%s mon=%s\n' \
+      "$(sq "$OVERSEER")" "$(sq "$sid")" "$(sq "$cwd")" "$(sq "$host")" "$(sq "$mon")"
+    printf 'pfile=%s tfile=%s native=%s move=%s\n' "$(sq "$pfile")" "$(sq "$tfile")" "$(sq "$native")" "$(sq "$mfile")"
+    printf 'tm=(%s)\nbin=%s\npath_pre=%s\nopts=(%s)\n' \
+      "$(sq "${TM[@]}")" "$(sq "$bin")" "$(sq "$path_pre")" "$(sq "${opts[@]}")"
+    cat <<'RUN'
+set -m
+# What a moved Codex reads after its prompt: where it runs now, where the target is.
+moved() {
+  cat <<NOTE
+
+
+MOVED: the Codex that ran this overseer hit its usage limit, so the tick driver restarted it on $1, with its own login and quota, and the prompt above. You run on $1; the target session and everything you inspect or act on are on $origin: its ~/.claude transcript and session files, its tmux pane (the tmux server named above), its processes and GPUs, and the findings log under /tmp. Run every shell command there, the self-teardown kill-session included:
+
+    ssh -o BatchMode=yes $origin bash -s <<'EOF'
+    <commands>
+    EOF
+
+Start from the last checkpoint in the findings log, and record the move in it.
+NOTE
+}
+# Codex on another host, in the same working tree when that path exists there.
+remote='cd "$1" 2>/dev/null; c=$2; sid=$3; shift 3
+[ -x "$c" ] || c=$(command -v codex) || c=$HOME/.local/bin/codex
+PATH=$(dirname "$(readlink -f "$c")"):$HOME/.local/bin:$PATH CODEX_GOAL_MONITOR=1 CLAUDE_GOAL_MONITOR=$sid exec "$c" "$@"'
+launch() {
+  if [ "$overseer" = claude ]; then
+    CLAUDE_GOAL_MONITOR=$sid "$bin" "${opts[@]}" "$(cat "$pfile")"
+  elif [ -z "$1" ]; then
+    PATH="$path_pre:$PATH" CODEX_GOAL_MONITOR=1 CLAUDE_GOAL_MONITOR=$sid "$bin" "${opts[@]}" "$(cat "$pfile")"
+  else
+    ssh -t -o BatchMode=yes -o ConnectTimeout=15 "$1" \
+      "$(printf '%q ' bash -c "$remote" _ "$cwd" "$bin" "$sid" "${opts[@]}" "$(cat "$pfile")$(moved "$1")")"
+  fi
+}
+host=
+while :; do
+  launch "$host"
+  rc=$?
+  [ -s "$move" ] || break
+  host=$(cat "$move"); rm -f "$move"
+  # The old usage-limit line must not be read off the next Codex's screen.
+  stty sane 2>/dev/null; printf '\033[H\033[2J\033[3J'
+done
+rm -f "$pfile" "$tfile" "$native" "$move" "$0"
+[ "$rc" = 0 ] && "${tm[@]}" kill-session -t "=$mon"
+printf '\n[goal-monitor] %s exited rc=%s — pane kept for inspection\n' "$overseer" "$rc"
+exec "${SHELL:-/bin/bash}" -i
+RUN
+  } > "$rfile" || die "cannot write $rfile"
 
   if [ "${GOAL_MONITOR_DRYRUN:-0}" = "1" ]; then
-    printf '[goal-monitor] DRYRUN tmux session=%s kind=%s overseer=%s cwd=%s target=%s\n--- cmd ---\n%s\n--- prompt (%s) ---\n' \
-      "$mon" "$kind" "$OVERSEER" "$cwd" "${target:-<none>}" "$cmd" "$pfile"
+    printf '[goal-monitor] DRYRUN tmux session=%s kind=%s overseer=%s cwd=%s target=%s\n--- run (%s) ---\n' \
+      "$mon" "$kind" "$OVERSEER" "$cwd" "${target:-<none>}" "$rfile"
+    cat "$rfile"
+    printf -- '--- prompt (%s) ---\n' "$pfile"
     cat "$pfile"
     if [ -n "$driver" ]; then
       printf -- '--- tick driver (window 1) ---\n%s\n--- tick (%s) ---\n' "$driver" "$tfile"
@@ -400,7 +497,7 @@ exec ${SHELL:-/bin/bash} -i"
     return 0
   fi
 
-  if ! "${TM[@]}" new-session -d -s "$mon" -c "$cwd" "$cmd"; then
+  if ! "${TM[@]}" new-session -d -s "$mon" -c "$cwd" "exec bash '$rfile'"; then
     # Two events can race to spawn (a queued "Goal set: …" and a Stop); the loser
     # finds the winner's session.
     "${TM[@]}" has-session -t "=$mon" 2>/dev/null && return 0

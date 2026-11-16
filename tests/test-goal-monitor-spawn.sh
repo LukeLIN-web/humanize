@@ -142,16 +142,16 @@ echo "== the overseer"
 reset
 out="$(hook UserPromptSubmit --arg prompt 'goal 跑一下 plan')"
 expect "Codex is the default overseer" "$out" "kind=goal overseer=codex "
-expect "it runs gpt-6-astra at high effort" "$out" "'/bin/true' -m 'gpt-6-astra' -c model_reasoning_effort=high "
+expect "it runs gpt-6-astra at high effort" "$out" "^opts=\('-m' 'gpt-6-astra' '-c' 'model_reasoning_effort=high' "
 expect "no trust or update prompt holds it at the first frame" "$out" \
-  "-c check_for_update_on_startup=false -c 'projects=\{\"$TEST_DIR\"=\{trust_level=\"trusted\"\}\}'"
+  "'-c' 'check_for_update_on_startup=false' '-c' 'projects=\{\"$TEST_DIR\"=\{trust_level=\"trusted\"\}\}'"
 expect "it is pointed at the skill's SKILL.md" "$out" "^Read /.*/skills/monitor-claude-goal/SKILL.md "
 expect "its recurrence is the tick driver in window 1" "$out" "goal-monitor-spawn.sh' --drive '$MON' 3600 "
 expect "it is told to create none of its own" "$out" "create no recurrence yourself"
 expect "each tick it is typed runs unscheduled" "$out" "^Tick from the driver .* --no-schedule, "
 expect "its teardown takes the driver with it" "$out" "and the tick driver in window 1 with it"
 out="$(GOAL_MONITOR_CODEX_MODEL=gpt-6.1-sol:xhigh GOAL_MONITOR_CADENCE=30m hook UserPromptSubmit --arg prompt 'goal x')"
-expect "model, effort and cadence are tunable" "$out" "-m 'gpt-6.1-sol' -c model_reasoning_effort=xhigh .*"
+expect "model, effort and cadence are tunable" "$out" "'-m' 'gpt-6.1-sol' '-c' 'model_reasoning_effort=xhigh'"
 expect "the driver ticks at the cadence" "$out" "--drive '$MON' 1800 "
 expect "a cadence the driver can't keep is refused" \
   "$(GOAL_MONITOR_CADENCE=1h30m hook UserPromptSubmit --arg prompt 'goal x')" "wants Ns, Nm or Nh"
@@ -159,7 +159,8 @@ expect "an unknown overseer is refused" \
   "$(GOAL_MONITOR_OVERSEER=gemini hook UserPromptSubmit --arg prompt 'goal x')" "want codex or claude"
 
 out="$(GOAL_MONITOR_OVERSEER=claude hook UserPromptSubmit --arg prompt 'goal 跑一下 plan')"
-expect "GOAL_MONITOR_OVERSEER=claude brings Claude Code back" "$out" "^CLAUDE_GOAL_MONITOR=$SID /bin/true --permission-mode"
+expect "GOAL_MONITOR_OVERSEER=claude brings Claude Code back" "$out" "^bin='/bin/true'$"
+expect "  with its own arguments" "$out" "^opts=\('--permission-mode' 'bypassPermissions'\)$"
 expect "a Claude overseer invokes the skill" "$out" "^Invoke the monitor-claude-goal skill \(Skill tool"
 expect "a Claude overseer schedules its own cron" "$out" "self-schedule the recurring cron per §6"
 if printf '%s' "$out" | grep -q -- '--drive'; then fail "a Claude overseer gets no tick driver"; else pass "a Claude overseer gets no tick driver"; fi
@@ -189,12 +190,80 @@ else
   pass "no override and no fleet config: no review leg"
 fi
 
+expect "the driver is handed the hosts to move to" \
+  "$(GOAL_MONITOR_CODEX_HOSTS="h1 h2" hook UserPromptSubmit --arg prompt 'goal x')" "--drive '$MON' 3600 '[^']*' 'h1 h2'$"
+printf 'goal_monitor:\n  codex_hosts: [h3, h4]\n' > "$TEST_DIR/fleet.yaml"
+expect "with no override the fleet config names them" \
+  "$(FLEET="$TEST_DIR/fleet.yaml" hook UserPromptSubmit --arg prompt 'goal x')" "--drive '$MON' 3600 '[^']*' 'h3 h4'$"
+
 echo "== lifecycle edges"
 expect "SessionEnd tears down" "$(hook SessionEnd --arg reason clear)" "would kill .*target session ended: clear"
 transcript "$SET"
 out="$(printf '{"hook_event_name":"Stop","session_id":"%s","transcript_path":"%s"}' "$SID" "$TRANSCRIPT" \
   | CLAUDE_GOAL_MONITOR=x TMPDIR="$TEST_DIR" GOAL_MONITOR_DRYRUN=1 "$HOOK" 2>&1)"
 expect "an overseer's own session never spawns one" "$out" ""
+
+echo "== a usage limit moves the overseer (a real tmux server; codex and ssh are fakes)"
+# ssh [-opts] HOST CMD: runs CMD here, as if on HOST. codex: records the host it ran
+# on and its prompt, and is out of quota on the hosts in $FAKE_LIMITED.
+FAKE="$TEST_DIR/fake"
+mkdir -p "$FAKE"
+cat > "$FAKE/ssh" <<'EOF'
+#!/usr/bin/env bash
+while [ "${1#-}" != "$1" ]; do case "$1" in -o) shift 2 ;; *) shift ;; esac; done
+FAKE_HOST="$1" exec bash -c "$2"
+EOF
+cat > "$FAKE/codex" <<'EOF'
+#!/usr/bin/env bash
+h="${FAKE_HOST:-origin}"
+printf '%s\n' "${@: -1}" > "$FAKE_DIR/prompt.$h"
+case " $FAKE_LIMITED " in
+  *" $h "*) echo "■ You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Nov 20th, 2026 11:15 AM." ;;
+esac
+exec sleep 300
+EOF
+chmod +x "$FAKE/ssh" "$FAKE/codex"
+SOCK="$TEST_DIR/tmux/live.sock"
+TMX=(tmux -S "$SOCK" -f /dev/null)
+# live SID HOSTS — spawn a real overseer for SID on the test server (2 s cadence) and
+# print its tmux session name. tmux gives a new pane the PATH of the client that made
+# it, so the fakes go on the hook's.
+live() {
+  jq -n --arg sid "$1" --arg cwd "$TEST_DIR" \
+    '{hook_event_name: "UserPromptSubmit", session_id: $sid, cwd: $cwd, prompt: "goal x"}' \
+  | env -u CLAUDE_GOAL_MONITOR -u HUMANIZE_FLEET_CONFIG TMUX="$SOCK,0,0" TMUX_PANE="$TPANE" \
+      TMPDIR="$TEST_DIR" GOAL_MONITOR_CODEX_BIN="$FAKE/codex" GOAL_MONITOR_CADENCE=2s \
+      GOAL_MONITOR_CODEX_HOSTS="$2" PATH="$FAKE:$PATH" "$HOOK" >/dev/null 2>&1
+  echo "mon-${1:0:8}"
+}
+# settle LOG PATTERN — wait up to 30 s for the drive log to match.
+settle() { for _ in $(seq 30); do grep -Eq "$2" "$1" 2>/dev/null && return 0; sleep 1; done; return 1; }
+if command -v tmux >/dev/null 2>&1; then
+  ORIGIN="$(hostname -s)"
+  env FAKE_DIR="$TEST_DIR" FAKE_LIMITED="origin h1" "${TMX[@]}" new-session -d -s target "sleep 300"
+  TPANE="$("${TMX[@]}" display-message -p -t target '#{pane_id}')"
+
+  m="$(live 7e57bee1-0000-4000-8000-000000000001 "h1 h2 h3")"
+  log="$STATE_DIR/$m.drive.log"
+  settle "$log" "moved to h2" || true
+  sleep 6   # three more polls: h2 has quota, so it must stay there
+  expect "out of quota here: moved to the first host" "$(cat "$log")" "usage limit on $ORIGIN: overseer moved to h1$"
+  expect "out of quota there too: moved to the next" "$(cat "$log")" "usage limit on h1: overseer moved to h2$"
+  if grep -q "moved to h3" "$log"; then fail "a host with quota keeps the overseer"; else pass "a host with quota keeps the overseer"; fi
+  expect "the moved Codex is told where the target is" "$(cat "$TEST_DIR/prompt.h2" 2>/dev/null)" \
+    "ssh -o BatchMode=yes $ORIGIN bash -s <<'EOF'"
+  expect "  after the same prompt" "$(cat "$TEST_DIR/prompt.h2" 2>/dev/null)" "^You are the read-only third-party overseer"
+  expect "the moved overseer is still up in window 0" \
+    "$("${TMX[@]}" display-message -p -t "=$m:0.0" '#{pane_current_command}')" "^sleep$"
+
+  m="$(live 7e57bee2-0000-4000-8000-000000000001 "")"
+  log="$STATE_DIR/$m.drive.log"
+  settle "$log" "no host left" || true
+  expect "with no host to move to it stays" "$(cat "$log")" "usage limit on $ORIGIN, no host left to move to"
+  "${TMX[@]}" kill-server 2>/dev/null
+else
+  skip "tmux not installed"
+fi
 
 print_test_summary "goal-monitor-spawn.sh"
 [ "$TESTS_FAILED" -eq 0 ]
