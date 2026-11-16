@@ -23,6 +23,14 @@ argument-hint: "[可选：只看哪个仓库或 topic]"
 python3 <本 skill>/scripts/memsync.py status     # 在 hub 里跑；! 要判断，+ apply 会修，~ 建议
 ```
 
+共享文件和共享规则文字（graph 里的 `kits`）同一轮查：
+
+```bash
+python3 <本 skill>/scripts/kitsync.py status     # ! 副本和正本不一样，+ 还没拷，~ 仓库里没有带标记的段
+```
+
+kit 的正本在 hub 的 `kits/<名>/`：`files/` 下的文件按同样的相对路径拷进订阅的仓库，`blocks/` 下的文字写进仓库里 `kit:<kit>/<名>` 到 `/kit:<kit>/<名>` 两行标记之间。仓库里的是生成的副本，不是软链：Claude Code 不加载解析到检出之外的规则文件和 `@import`，CI 的检出里也没有 hub。`!` 逐个看差在哪：副本那边的改动该留，就 `kitsync.py adopt <仓库> <kit> <路径或段名>` 收回正本；该丢就不管它。然后 `kitsync.py apply` 下发，按它打印的路径在各仓库 pathspec 提交。新仓库要订阅：在 graph 里加 `kits: [...]`；规则段先在它的文件里手工放好两行标记。钩子和 CI 步骤怎么接进各仓库的 settings.json 和 workflow 不归 kit 管，各仓库自己写。
+
 ### 2. 处理 `!`（要判断的）
 
 | 现象 | 做法 |
