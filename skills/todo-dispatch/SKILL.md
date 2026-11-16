@@ -123,7 +123,7 @@ bash <本 skill>/scripts/push-shared-main.sh            # 在目标仓库里跑�
 并说明它停着占了什么（卡、服务）。转述台账里等 user 的条目前，当场重读那一条的现行文字，别用早先读到的（条目常被别的会话改过）。
 user 已经裁定过的事不再问。不用 AskUserQuestion。
 
-**Fable 周额度满了的账号，卡切成 Opus**（user 2026-11-13；2026-11-16「dispatch skill 还要负责一个事情, 就是把 fable 满了的切换到 opus.」）：每轮对 board 上有卡的每个账号读一次 `POST /api/usage`（同账号的几台读一台）。「Current week (Fable)」到 100% 的账号，把它各台上 `model` 还是 Fable 的卡都用 `POST /api/windows/<key>/model`（body `{"model": "opus"}`）切成 Opus，不等它撞限：全 board 的卡都切，不只这个仓库的、不只你派的；派单员自己那张不切，自己那个账号满了就在汇报第一句请 user 切。已经撞限的卡（timeline 最近的输出里有「Fable limit」：见过「You've hit your Fable limit」「You've reached your Fable limit」两种写法，按「Fable limit」匹配，任何 `kind` 的事件都算）已经停住、后台通知也不会处理：切完再用 `/prompt` 打一句让它接着做，并列出停着这段它没处理的后台通知（timeline 里撞限之后的 `user_text`）。汇报里说切了哪几张、哪个账号、撞限的停了多久。不等 user 来切；到那个账号的 `resets` 之前不切回 Fable。
+**Fable 周额度满了的账号，卡切成 Opus**（user 2026-11-13；2026-11-16「dispatch skill 还要负责一个事情, 就是把 fable 满了的切换到 opus.」）：每轮对 board 上有卡的每个账号读一次 `POST /api/usage`（同账号的几台读一台）。「Current week (Fable)」到 100% 的账号，把它各台上 `model` 还是 Fable 的卡都用 `POST /api/windows/<key>/model`（body `{"model": "opus"}`）切成 Opus，不等它撞限：全 board 的卡都切，不只这个仓库的、不只你派的；派单员自己那张也切（user 2026-11-16「让我到 100% 时自己切成 Opus 接着跑」）：撞限之后自己就停住、切不了，所以自己那个账号的 Fable 读数到 95% 的那一轮就把自己的卡切成 Opus，汇报里说一句。已经撞限的卡（timeline 最近的输出里有「Fable limit」：见过「You've hit your Fable limit」「You've reached your Fable limit」两种写法，按「Fable limit」匹配，任何 `kind` 的事件都算）已经停住、后台通知也不会处理：切完再用 `/prompt` 打一句让它接着做，并列出停着这段它没处理的后台通知（timeline 里撞限之后的 `user_text`）。汇报里说切了哪几张、哪个账号、撞限的停了多久。不等 user 来切；到那个账号的 `resets` 之前不切回 Fable。
 
 ## 不做
 
