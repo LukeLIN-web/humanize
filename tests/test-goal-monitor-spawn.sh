@@ -211,12 +211,13 @@ mkdir -p "$FAKE"
 cat > "$FAKE/ssh" <<'EOF'
 #!/usr/bin/env bash
 while [ "${1#-}" != "$1" ]; do case "$1" in -o) shift 2 ;; *) shift ;; esac; done
-FAKE_HOST="$1" exec bash -c "$2"
+FAKE_HOST="$1" exec env -u FLEET_PASSIVE bash -c "$2"   # ssh carries no environment
 EOF
 cat > "$FAKE/codex" <<'EOF'
 #!/usr/bin/env bash
 h="${FAKE_HOST:-origin}"
 printf '%s\n' "${@: -1}" > "$FAKE_DIR/prompt.$h"
+printf '%s\n' "${FLEET_PASSIVE-unset}" > "$FAKE_DIR/passive.$h"
 case " $FAKE_LIMITED " in
   *" $h "*) echo "■ You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Nov 20th, 2026 11:15 AM." ;;
 esac
@@ -253,6 +254,8 @@ if command -v tmux >/dev/null 2>&1; then
   expect "the moved Codex is told where the target is" "$(cat "$TEST_DIR/prompt.h2" 2>/dev/null)" \
     "ssh -o BatchMode=yes $ORIGIN bash -s <<'EOF'"
   expect "  after the same prompt" "$(cat "$TEST_DIR/prompt.h2" 2>/dev/null)" "^You are the read-only third-party overseer"
+  expect "the overseer gets no board card here" "$(cat "$TEST_DIR/passive.origin" 2>/dev/null)" "^1$"
+  expect "  nor on the host it moved to" "$(cat "$TEST_DIR/passive.h2" 2>/dev/null)" "^1$"
   expect "the moved overseer is still up in window 0" \
     "$("${TMX[@]}" display-message -p -t "=$m:0.0" '#{pane_current_command}')" "^sleep$"
 

@@ -163,7 +163,9 @@ EOF
 # `set -m` is load-bearing: without job control the TUI stays in this wrapper's
 # process group, tmux reports the pane as the shell, and prompt/model senders
 # refuse it as "at a shell prompt". See goal-monitor-spawn.sh for the full note.
+# FLEET_PASSIVE=1: an overseer is a helper, and no board shows a card for it.
 cmd="set -m
+export FLEET_PASSIVE=1
 CODEX_GOAL_MONITOR='$sid' $claude_bin $CLAUDE_ARGS \"\$(cat '$pfile')\"
 rc=\$?
 rm -f '$pfile'
@@ -179,9 +181,6 @@ if [ "${GOAL_MONITOR_DRYRUN:-0}" = "1" ]; then
 fi
 
 "${TM[@]}" new-session -d -s "$mon" -c "$cwd" "$cmd" || die "tmux new-session failed for '$mon'"
-# An overseer is a helper, not a session the user drives: the board keeps a
-# pane marked @fleet-passive off its cards. A failed mark only shows a card.
-"${TM[@]}" set-option -p -t "=$mon:" @fleet-passive 1 2>/dev/null || :
 printf '%s\t%s\t%s\t%s\n' "$(date -Is 2>/dev/null)" "$mon" "$sid" "${target:-no-tmux}" \
   >> "$state_dir/spawn.log" 2>/dev/null
 

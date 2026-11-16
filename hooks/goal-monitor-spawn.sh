@@ -440,6 +440,9 @@ EOF
       "$(sq "${TM[@]}")" "$(sq "$bin")" "$(sq "$path_pre")" "$(sq "${opts[@]}")"
     cat <<'RUN'
 set -m
+# An overseer is a helper, not a session the user drives: no board shows a card for
+# a process started with FLEET_PASSIVE=1, here or on a host it is moved to.
+export FLEET_PASSIVE=1
 # What a moved Codex reads after its prompt: where it runs now, where the target is.
 moved() {
   cat <<NOTE
@@ -457,7 +460,7 @@ NOTE
 # Codex on another host, in the same working tree when that path exists there.
 remote='cd "$1" 2>/dev/null; c=$2; sid=$3; shift 3
 [ -x "$c" ] || c=$(command -v codex) || c=$HOME/.local/bin/codex
-PATH=$(dirname "$(readlink -f "$c")"):$HOME/.local/bin:$PATH CODEX_GOAL_MONITOR=1 CLAUDE_GOAL_MONITOR=$sid exec "$c" "$@"'
+PATH=$(dirname "$(readlink -f "$c")"):$HOME/.local/bin:$PATH FLEET_PASSIVE=1 CODEX_GOAL_MONITOR=1 CLAUDE_GOAL_MONITOR=$sid exec "$c" "$@"'
 launch() {
   if [ "$overseer" = claude ]; then
     CLAUDE_GOAL_MONITOR=$sid "$bin" "${opts[@]}" "$(cat "$pfile")"
@@ -503,9 +506,6 @@ RUN
     "${TM[@]}" has-session -t "=$mon" 2>/dev/null && return 0
     die "tmux new-session failed for '$mon'"
   fi
-  # An overseer is a helper, not a session the user drives: the board keeps a
-  # pane marked @fleet-passive off its cards. A failed mark only shows a card.
-  "${TM[@]}" set-option -p -t "=$mon:" @fleet-passive 1 2>/dev/null || :
   # An overseer that can't be ticked would audit once and then watch nothing.
   if [ -n "$driver" ] && ! "${TM[@]}" new-window -d -t "=$mon:1" -n tick -c "$cwd" "$driver"; then
     "${TM[@]}" kill-session -t "=$mon" 2>/dev/null
