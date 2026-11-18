@@ -143,6 +143,11 @@
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/goal-monitor-spawn.sh",
             "timeout": 20
+          },
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/skills/todo-dispatch/scripts/runs.py hook",
+            "timeout": 20
           }
         ]
       }

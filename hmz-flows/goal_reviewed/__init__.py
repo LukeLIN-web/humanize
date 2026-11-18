@@ -112,10 +112,14 @@ reading. For every finding give the fix itself -- the replacement sentence, the 
 number, the exact command -- so that it can be applied as written.
 """
 
+# The condition must be one the actor can meet when a finding is the user's to settle: with "and
+# the earlier goal still holds" in it, a goal whose own requirements conflict sent the actor back
+# on every stop, saying the same thing each time.
 FIX = (
-    "/goal Every finding in the review at {path} is fixed, answered with evidence where the "
-    "review is wrong, or named in your final message as needing the user's decision, and the "
-    "goal you were working on still holds. Read that file first."
+    "/goal For every finding in the review at {path}, one of these is true: it is fixed; it is "
+    "answered with evidence where the review is wrong; or your final message names it as "
+    "needing the user's decision and says what the choices are. Nothing the work already "
+    "achieved is undone. Read that file first."
 )
 
 
