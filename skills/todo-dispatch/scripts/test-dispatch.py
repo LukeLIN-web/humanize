@@ -42,6 +42,7 @@ class FakeBoard:
         self.models: list[tuple[str, str]] = []
         self.refuse_model = False
         self.session: dict = {}  # what the board knows of a new card's session
+        self.platforms: list[str] = []
         board = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -68,6 +69,7 @@ class FakeBoard:
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 if self.path == "/api/windows/create":
+                    board.platforms.append(body["platform"])
                     key = f"{body['host']}:999"
                     board.windows[key] = {"key": key, "host": body["host"], "cwd": body["cwd"],
                                           "started_at": time.time() * 1000, "name": board.new_name,
@@ -123,11 +125,11 @@ with open(PROMPT, "w") as f:
     f.write("do the item\n")
 
 
-def run() -> tuple[int, dict]:
+def run(*more: str) -> tuple[int, dict]:
     out = io.StringIO()
-    with mock.patch.object(sys, "argv", ["dispatch.py", "h2", PROJ, PROMPT]), \
+    with mock.patch.object(sys, "argv", ["dispatch.py", "h2", PROJ, PROMPT, *more]), \
             mock.patch.object(dispatch.time, "sleep"), contextlib.redirect_stdout(out), \
-            mock.patch.object(dispatch.runs, "runs_dir", lambda: RUNS):
+            mock.patch.object(dispatch.runs, "runs_dir", lambda *a: RUNS):
         rc = dispatch.main()
     return rc, json.loads(out.getvalue())
 
@@ -241,6 +243,7 @@ class DispatchRun(unittest.TestCase):
         BOARD.new_name = "proj-3b"
         BOARD.fable_used = 0
         BOARD.refuse_model = False
+        BOARD.models.clear()
         BOARD.session = {}
         self.addCleanup(setattr, BOARD, "session", {})
         shutil.rmtree(RUNS, ignore_errors=True)
@@ -271,13 +274,75 @@ class DispatchRun(unittest.TestCase):
 
     def test_session_added_and_run_closed_by_name(self):
         rc, out = run()
-        for argv in (["session", out["name"], "overseer", "codex", "sid-2"], ["close", out["name"], "done", "--pr", "7"]):
-            with mock.patch.object(sys, "argv", ["runs.py", *argv]), contextlib.redirect_stdout(io.StringIO()), \
-                    mock.patch.object(dispatch.runs, "runs_dir", lambda: RUNS):
-                self.assertEqual(dispatch.runs.main(), 0)
+        self.runs("session", out["name"], "reviewer", "codex", "sid-2")
+        self.runs("close", out["name"], "done", "--pr", "7")
         _, opened, ended = self.events(out["run"])
         self.assertEqual((opened["agent"], opened["backend"], opened["session"], ended["how"], ended["pr"]),
-                         ("overseer", "codex", "sid-2", "done", "7"))
+                         ("reviewer", "codex", "sid-2", "done", "7"))
+
+    def runs(self, *argv, stdin=""):
+        with mock.patch.object(sys, "argv", ["runs.py", *argv]), contextlib.redirect_stdout(io.StringIO()), \
+                mock.patch.object(sys, "stdin", io.StringIO(stdin)), \
+                mock.patch.object(dispatch.runs, "runs_dir", lambda *a: RUNS):
+            self.assertEqual(dispatch.runs.main(), 0)
+
+    def card_with_logs(self):
+        """A card whose log holds two API requests, one written twice, and whose host has an overseer's log."""
+        home = os.path.join(TMP, "homes", "h2")
+        shutil.rmtree(home, ignore_errors=True)
+        log = os.path.join(home, ".claude", "projects", "-proj", "sid-1.jsonl")
+        watch = os.path.join(home, ".codex", "sessions", time.strftime("%Y/%m/%d"), "rollout-w.jsonl")
+        os.makedirs(os.path.dirname(log)), os.makedirs(os.path.dirname(watch))
+        said = lambda request, out: json.dumps({"type": "assistant", "requestId": request, "message": {
+            "model": "m", "usage": {"input_tokens": 10, "output_tokens": out, "cache_read_input_tokens": 100}}})
+        with open(log, "w") as f:
+            f.write("\n".join([said("r1", 1), said("r1", 5), said("r2", 7)]) + "\n")
+        BOARD.session = {"session_id": "sid-1", "transcript_path": "/home/u/.claude/projects/-proj/sid-1.jsonl"}
+        with mock.patch.object(dispatch, "FLEET", {"dispatch": {"homes": os.path.join(TMP, "homes", "<NN>")}}):
+            out = run()[1]
+        with open(watch, "w") as f:  # the overseer starts once the card has its goal
+            f.write(json.dumps({"type": "session_meta", "payload": {"id": "watch-1"}}) + "\n"
+                    + json.dumps({"text": "Target session id: sid-1. Target cwd: /proj"}) + "\n")
+        return out, log
+
+    def test_session_end_closes_the_record_with_its_overseer_and_its_usage(self):
+        out, _ = self.card_with_logs()
+        prices = os.path.join(TMP, "hmz-home")
+        os.makedirs(prices, exist_ok=True)
+        with open(os.path.join(prices, "prices.json"), "w") as f:
+            json.dump({"models": {"m": {"per_million": {"input": 1e6, "output": 2e6, "cache_read": 1e4, "cache_write": 0}}}}, f)
+        with mock.patch.dict(os.environ, HUMANIZE_HOME=prices):
+            self.runs("ended", stdin=json.dumps({"session_id": "sid-1", "cwd": PROJ, "reason": "other"}))
+        _, _, watcher, used, ended = self.events(out["run"])
+        self.assertEqual((watcher["agent"], watcher["backend"], watcher["session"]), ("overseer", "codex", "watch-1"))
+        self.assertEqual((used["input_tokens"], used["output_tokens"], used["cache_read_tokens"], used["cost"]),
+                         (20, 12, 200, 20 + 24 + 2))
+        self.assertEqual((ended["how"], ended["note"]), ("closed", "other"))
+
+    def test_clear_and_other_sessions_leave_the_record_open(self):
+        out, _ = self.card_with_logs()
+        self.runs("ended", stdin=json.dumps({"session_id": "sid-1", "cwd": PROJ, "reason": "clear"}))
+        self.runs("ended", stdin=json.dumps({"session_id": "watch-1", "cwd": PROJ, "reason": "other"}))
+        self.runs("ended", stdin="not json")
+        self.assertEqual([e["event"] for e in self.events(out["run"])], ["began", "opened"])
+
+    def test_usage_after_the_first_count_is_only_what_was_added(self):
+        out, log = self.card_with_logs()
+        self.runs("ended", stdin=json.dumps({"session_id": "sid-1", "cwd": PROJ}))
+        with open(log, "a") as f:
+            f.write(json.dumps({"type": "assistant", "requestId": "r3", "message": {
+                "model": "m", "usage": {"input_tokens": 1, "output_tokens": 30}}}) + "\n")
+        self.runs("close", out["name"], "done")
+        used = [e for e in self.events(out["run"]) if e["event"] == "usage"]
+        self.assertEqual([(e["input_tokens"], e["output_tokens"]) for e in used], [(20, 12), (1, 30)])
+        self.assertEqual(sum(e["event"] == "opened" for e in self.events(out["run"])), 2)
+
+    def test_hmz_card_gets_the_flow_and_the_task_and_keeps_its_own_record(self):
+        BOARD.session = {"transcript_path": "/h/.hmz/epics/-proj/2026/epic.jsonl"}
+        rc, out = run("--hmz", "goal_reviewed")
+        self.assertEqual((rc, out["flow"], out["run"]), (0, "goal_reviewed", "/h/.hmz/epics/-proj/2026"))
+        self.assertEqual(BOARD.prompts, [("h2:999", "$goal_reviewed do the item")])
+        self.assertEqual((BOARD.models, BOARD.platforms[-1], os.path.isdir(RUNS)), ([], "hmz", False))
 
     def test_record_that_cannot_be_written_warns_and_still_sends_the_prompt(self):
         with mock.patch.object(dispatch.runs, "open_run", side_effect=OSError("disk full")):

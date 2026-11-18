@@ -34,6 +34,11 @@
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/sweep-inuse.sh",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/skills/todo-dispatch/scripts/runs.py ended",
+            "timeout": 60
           }
         ]
       }

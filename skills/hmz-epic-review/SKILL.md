@@ -23,7 +23,7 @@ PY=$(head -1 "$(command -v hmz)" | sed 's/^#!//')
 cd /tmp && $PY -I <skill-dir>/scripts/epic_digest.py <epic-dir>
 ```
 
-- A dispatched card: pass its run record, `<checkout>/.humanize/runs/<UTC time>-<card name>/` (`python3 <todo-dispatch>/scripts/runs.py list` names them). It has no `usage` line and no review files; everything read from the session logs is the same.
+- A dispatched card: pass its run record, `<checkout>/.humanize/runs/<UTC time>-<card name>/` (`python3 <todo-dispatch>/scripts/runs.py list` names them). Its `usage` line is written when the card's session ends (tokens; cost only where hmz's price list has the model) and it has no review files; everything read from the session logs is the same.
 - No `<epic-dir>`: the newest epic of the current directory, under `$HUMANIZE_HOME/epics/<cwd with every non-alphanumeric char replaced by '-'>/` (`HUMANIZE_HOME` defaults to `~/.hmz`). Then run it from the workspace instead of `/tmp`.
 - `--top N` rows in the top tables (default 10); `--repeat-min N` how often a command must recur to be listed (default 3); `--stretch-min N` how many send-backs make a stretch (default 3); `--no-trace` skips `hmz.runtime.tracing` (the time split, tool tables and repeated commands then say "Unavailable").
 

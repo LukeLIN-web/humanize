@@ -139,6 +139,7 @@ def pick_model(host: str) -> str:
 
 def main() -> int:
     host, cwd, prompt_file = sys.argv[1:4]
+    flow = sys.argv[5] if sys.argv[4:5] == ["--hmz"] else None
     with open(prompt_file, encoding="utf-8") as f:
         text = f.read().strip()
     if text.startswith("/goal ") and len(text) >= GOAL_MAX_CHARS:
@@ -157,7 +158,7 @@ def main() -> int:
     cwd = os.path.realpath(os.path.expanduser(cwd))
     before = {w["key"] for w in snap["windows"]}
     since = time.time() * 1000 - 5000
-    r = call("POST", "/api/windows/create", {"cwd": cwd, "platform": "claude", "host": host})
+    r = call("POST", "/api/windows/create", {"cwd": cwd, "platform": "hmz" if flow else "claude", "host": host})
     if not r.get("ok"):
         print(f"create failed: {r}", file=sys.stderr)
         return 1
@@ -177,6 +178,20 @@ def main() -> int:
         return 2
     key = new[0]
     time.sleep(8)
+    if flow:
+        # hmz names its own sessions, takes its agents' models from its settings and keeps the run's
+        # record itself (an epic), which the board reports as the card's transcript once the flow starts.
+        r = call("POST", f"/api/windows/{key}/prompt", {"text": f"${flow} {' '.join(text.split())}"})
+        card: dict = {}
+        for _ in range(15 if r.get("ok") else 0):
+            time.sleep(2)
+            card = cards().get(key, {})
+            if card.get("transcript_path"):
+                break
+        epic = card.get("transcript_path")
+        print(json.dumps({"key": key, "name": card.get("name"), "flow": flow, "prompt": r,
+                          "run": os.path.dirname(epic) if epic else None}, ensure_ascii=False))
+        return 0 if r.get("ok") else 3
     try:
         name, warning = claim_unique_name(key, cwd)
     except OSError as e:

@@ -9,10 +9,19 @@ under `sessions/`), so one reader serves both: skills/hmz-epic-review/scripts/ep
     python3 runs.py list
     python3 runs.py session <run> <role> <claude|codex> <session-id> [--host <label>] [--log <path>]
     python3 runs.py close <run> <done|stopped|failed> [--pr <n>] [--note <text>]
+    python3 runs.py ended          (the SessionEnd hook: the hook's JSON on stdin)
+
+A record ends by itself: when the card's session goes, the SessionEnd hook writes `ended` with how
+`closed` -- a session ending says nothing of whether the task was done. `close` is for saying
+more: the outcome, the PR. Both first add the overseers that watched the card (sessions on the
+card's host whose first prompt names one of the run's sessions as their `Target session id`) and
+write what the run used since the last count: a `usage` event of tokens summed over the linked
+Claude logs, one count per API request, and their cost at list price where
+`$HUMANIZE_HOME/prices.json` prices every model used.
 
 <run> is the card's session name (the newest run of that name) or a run directory. dispatch.py
 opens the record itself. Records live in `.humanize/runs/<UTC time>-<card name>/` at the top of
-the current checkout, untracked.
+the checkout the card works in, untracked; the commands look in the current checkout.
 
 A session's log stays where its CLI wrote it; the record links to it. A log on another machine is
 reached through `dispatch.homes` of the fleet config: the path that machine's home directory has
@@ -28,15 +37,18 @@ import sys
 
 JOURNAL = "epic.jsonl"
 PROJECTS = "/.claude/projects/"
+ROLLOUTS = "/.codex/sessions/"
+TOKENS = {"input": "input_tokens", "output": "output_tokens", "cache_read": "cache_read_input_tokens",
+          "cache_write": "cache_creation_input_tokens"}
 
 
 def now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
-def runs_dir() -> str:
-    top = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip()
-    return os.path.join(top or ".", ".humanize", "runs")
+def runs_dir(cwd: str = ".") -> str:
+    top = subprocess.run(["git", "-C", cwd, "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout
+    return os.path.join(top.strip() or cwd, ".humanize", "runs")
 
 
 def append(run: str, event: dict) -> None:
@@ -73,11 +85,109 @@ def opened(run: str, agent: str, backend: str, session: str, host: str, transcri
                  "log": transcript, "where": "sessions/claude" if linked else ""})
 
 
+def home_of(began: dict, held: list[dict]) -> str:
+    """The card host's home directory as this machine reaches it."""
+    if began.get("homes"):
+        return began["homes"].replace("<NN>", began.get("host", ""))
+    log = next((e.get("log", "") for e in held if e["event"] == "opened" and PROJECTS in e.get("log", "")), "")
+    return log.split(PROJECTS, 1)[0] if log else os.path.expanduser("~")
+
+
+def head(path: str, lines: int = 30) -> list[str]:
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return [line for _, line in zip(range(lines), f)]
+    except OSError:
+        return []
+
+
+def add_overseers(run: str) -> None:
+    """Records the sessions that watched this run's sessions and are not in it yet."""
+    held = events(run)
+    began = held[0]
+    known = {e["session"] for e in held if e["event"] == "opened"}
+    marks = [f"Target session id: {sid}" for sid in known]
+    home, since = home_of(began, held), datetime.datetime.fromisoformat(began["at"].replace("Z", "+00:00"))
+    found: list[tuple[str, str]] = []  # (backend, log)
+    day = since.astimezone().date()  # Codex files its logs by local date
+    while day <= datetime.date.today():
+        folder = home + ROLLOUTS + day.strftime("%Y/%m/%d")
+        found += [("codex", os.path.join(folder, f)) for f in sorted(os.listdir(folder))] if os.path.isdir(folder) else []
+        day += datetime.timedelta(days=1)
+    for e in held:
+        if e["event"] == "opened" and PROJECTS in e.get("log", ""):
+            folder = home + PROJECTS + os.path.dirname(e["log"].split(PROJECTS, 1)[1])
+            found += [("claude", os.path.join(folder, f)) for f in sorted(os.listdir(folder))] if os.path.isdir(folder) else []
+    for backend, log in dict.fromkeys(found):
+        if not log.endswith(".jsonl") or os.path.getmtime(log) < since.timestamp() - 60:
+            continue
+        first = head(log)
+        if not any(mark in line for mark in marks for line in first):
+            continue
+        if backend == "codex":
+            session = json.loads(first[0]).get("payload", {}).get("id", "")
+            into = os.path.join(run, "sessions", "codex", "sessions", os.path.relpath(os.path.dirname(log), home + ROLLOUTS))
+            os.makedirs(into, exist_ok=True)
+            if session not in known and not os.path.lexists(os.path.join(into, os.path.basename(log))):
+                os.symlink(log, os.path.join(into, os.path.basename(log)))
+            where = "sessions/codex"
+        else:
+            session = os.path.basename(log).removesuffix(".jsonl")
+            where = "sessions/claude" if session not in known and link_claude_log(run, None, "", log) else ""
+        if session and session not in known:
+            known.add(session)
+            append(run, {"event": "opened", "agent": "overseer", "backend": backend, "session": session,
+                         "host": began.get("host", ""), "log": log, "where": where})
+
+
+def usage(run: str) -> dict:
+    """Tokens of the run's linked Claude logs, subagents included, and their list-price cost."""
+    per_model: dict[str, dict[str, int]] = {}
+    for folder, _, files in os.walk(os.path.join(run, "sessions", "claude"), followlinks=True):
+        for name in files:
+            requests: dict[str, tuple[str, dict]] = {}
+            if not name.endswith(".jsonl"):
+                continue
+            with open(os.path.join(folder, name), encoding="utf-8", errors="replace") as f:
+                for n, line in enumerate(f):
+                    if '"usage"' not in line:
+                        continue
+                    record = json.loads(line)
+                    message = record.get("message") if isinstance(record.get("message"), dict) else {}
+                    if record.get("type") == "assistant" and isinstance(message.get("usage"), dict):
+                        # One API request is written as several lines; the last carries its final count.
+                        requests[record.get("requestId") or message.get("id") or str(n)] = (
+                            message.get("model", ""), message["usage"])
+            for model, used in requests.values():
+                total = per_model.setdefault(model, dict.fromkeys(TOKENS, 0))
+                for key, field in TOKENS.items():
+                    total[key] += int(used.get(field) or 0)
+    out: dict = {f"{key}_tokens": sum(m[key] for m in per_model.values()) for key in TOKENS}
+    try:
+        with open(os.path.join(os.environ.get("HUMANIZE_HOME") or os.path.expanduser("~/.hmz"), "prices.json")) as f:
+            prices = json.load(f)["models"]
+        if per_model and all(model in prices for model in per_model):
+            out["cost"] = round(sum(count * prices[model]["per_million"][key] / 1e6
+                                    for model, total in per_model.items() for key, count in total.items()), 4)
+    except (OSError, KeyError, ValueError):
+        pass
+    return out
+
+
+def end(run: str, how: str, **extra: str) -> None:
+    add_overseers(run)
+    counted = [e for e in events(run) if e["event"] == "usage"]
+    new = {key: round(value - sum(e.get(key, 0) for e in counted), 4) for key, value in usage(run).items()}
+    if any(new.values()):
+        append(run, {"event": "usage", **new})
+    append(run, {"event": "ended", "how": how, **{k: v for k, v in extra.items() if v}})
+
+
 def open_run(task: str, cwd: str, host: str, card: dict, model: str | None, homes: str | None) -> str:
     """Starts the record of a card just opened. `card` is the board's row for it."""
     name = card.get("name") or card["key"]
     stamp = now().replace("-", "").replace(":", "")
-    run = os.path.join(runs_dir(), f"{stamp}-{name}")
+    run = os.path.join(runs_dir(cwd), f"{stamp}-{name}")
     os.makedirs(run)
     append(run, {"event": "began", "flow": "card", "task": task, "workspace": cwd, "host": host,
                  "card": card["key"], "homes": homes, "agents": [{"agent": "worker", "name": name, "backend": "claude",
@@ -107,7 +217,21 @@ def main() -> int:
     c = sub.add_parser("close")
     c.add_argument("run"), c.add_argument("how", choices=("done", "stopped", "failed"))
     c.add_argument("--pr"), c.add_argument("--note")
+    sub.add_parser("ended")
     args = parser.parse_args()
+    if args.do == "ended":
+        try:  # a hook: whatever is wrong with a record, the session still ends quietly
+            hook = json.load(sys.stdin)
+            root = runs_dir(hook.get("cwd") or ".")
+            # `/clear` ends the session and keeps the card: the run goes on under a new session.
+            for d in sorted(os.listdir(root)) if os.path.isdir(root) and hook.get("reason") != "clear" else []:
+                held = events(os.path.join(root, d))
+                if held[-1]["event"] != "ended" and any(x["event"] == "opened" and x["agent"] != "overseer"
+                                                        and x["session"] == hook.get("session_id") for x in held):
+                    end(os.path.join(root, d), "closed", note=hook.get("reason"))
+        except (OSError, ValueError, KeyError):
+            pass
+        return 0
     if args.do == "list":
         root = runs_dir()
         for d in sorted(os.listdir(root)) if os.path.isdir(root) else []:
@@ -121,8 +245,7 @@ def main() -> int:
         opened(run, args.role, args.backend, args.session, args.host or began.get("host", ""), args.log,
                began.get("homes"))
     else:
-        extra = {k: v for k, v in (("pr", args.pr), ("note", args.note)) if v}
-        append(run, {"event": "ended", "how": args.how, **extra})
+        end(run, args.how, pr=args.pr, note=args.note)
     print(run)
     return 0
 
