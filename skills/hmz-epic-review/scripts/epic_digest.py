@@ -29,8 +29,9 @@ Where every number comes from (so it can be recomputed from the epic's own files
   from the first slice's start to the last slice's end minus both. Idle is the agent not
   running: waiting for the next prompt, for hooks, for the other role.
 - Send-back (Claude): a `type == "user"` record whose text starts with
-  "Stop hook feedback:". A stretch is a run of consecutive send-backs where the agent made no
-  tool call (no `tool_use` block) after any of them. Its seconds run from the first
+  "Stop hook feedback:". A stretch is a run of consecutive send-backs of one prompt where the
+  agent made no tool call (no `tool_use` block) after any of them before the next send-back or
+  the next prompt (a user record with a new `promptId`). Its seconds run from the first
   send-back to the record that ends it; its output tokens are the `usage.output_tokens` of
   the model requests inside it (the last value seen per request). Line numbers are 1-based
   physical lines of the log.
@@ -274,7 +275,11 @@ def claude_raw(path: Path) -> dict[str, Any]:
     sendbacks: list[dict[str, Any]] = []
     cap_notes: list[dict[str, Any]] = []
     tools_after: list[int] = []  # tool_use count after each send-back
-    events: list[dict[str, Any]] = []  # timeline of turns, tools, send-backs
+    events: list[dict[str, Any]] = []  # timeline of turns, tools, send-backs, prompts
+    # Tool calls are credited to the last send-back only until a new prompt arrives: a tool
+    # call made for the next prompt is no answer to the previous prompt's goal check.
+    attributing = False
+    last_prompt = ""
     for line, record in jsonl(path):
         kind = record.get("type")
         at = parse_at(record.get("timestamp"))
@@ -290,10 +295,19 @@ def claude_raw(path: Path) -> dict[str, Any]:
             blocks = message.get("content") if isinstance(message.get("content"), list) else []
             n_tools = sum(1 for b in blocks if isinstance(b, dict) and b.get("type") == "tool_use")
             events.append({"kind": "model", "turn": turn, "line": line, "at": at, "tools": n_tools})
-            if n_tools and tools_after:
+            if n_tools and tools_after and attributing:
                 tools_after[-1] += n_tools
         elif kind == "user":
             body = text_of(message.get("content"))
+            blocks = message.get("content") if isinstance(message.get("content"), list) else []
+            answered = any(isinstance(b, dict) and b.get("type") == "tool_result" for b in blocks)
+            prompt_id = str(record.get("promptId") or "")
+            if prompt_id and prompt_id != last_prompt and not answered and not SEND_BACK.match(body):
+                # A new prompt: whatever follows belongs to it, not to an earlier stretch.
+                attributing = False
+                events.append({"kind": "prompt", "line": line, "at": at})
+            if prompt_id:
+                last_prompt = prompt_id
             if SEND_BACK.match(body):
                 bracket = re.match(r"\s*Stop hook feedback:\s*\[(.*?)\]:\s*(.*)", body, re.S)
                 sendbacks.append(
@@ -307,6 +321,7 @@ def claude_raw(path: Path) -> dict[str, Any]:
                     }
                 )
                 tools_after.append(0)
+                attributing = True
                 events.append({"kind": "sendback", "line": line, "at": at})
         elif kind == "system":
             content = record.get("content")
@@ -325,6 +340,7 @@ def claude_raw(path: Path) -> dict[str, Any]:
         first, last = sendbacks[upto[0]], sendbacks[upto[-1]]
         # Where the stretch stopped: the next send-back, a tool call, a cap, or the log's end.
         end_line, end_at, how = None, None, "log ended"
+        stop_line = None
         for e in events:
             if e["line"] <= last["line"]:
                 continue
@@ -334,12 +350,23 @@ def claude_raw(path: Path) -> dict[str, Any]:
             if e["kind"] == "cap":
                 end_line, end_at, how = e["line"], e["at"], "stop-hook block cap"
                 break
+            if e["kind"] == "prompt":
+                stop_line, how = e["line"], "a new prompt" if end_line is None else how
+                break
             if e["kind"] == "sendback":
+                stop_line = e["line"]
                 break
             if e["kind"] == "model":
                 end_line, end_at = e["line"], e["at"]
                 how = "turn ended without another send-back"
-        limit = end_line if end_line is not None else float("inf")
+        # Turns after the last send-back count only up to where the stretch stopped; with no
+        # model turn before the stop, none of them do.
+        if end_line is not None:
+            limit = end_line
+        elif stop_line is not None:
+            limit = stop_line
+        else:
+            limit = float("inf")
         turns = sorted(
             {e["turn"] for e in events if e["kind"] == "model" and first["line"] < e["line"] <= limit}
         )
