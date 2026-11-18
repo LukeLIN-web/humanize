@@ -4,8 +4,7 @@
         -a reviewer=codex/gpt-5.6-sol:high -p budget.duration=12h "the goal"
 
 The actor takes the task as its CLI's own goal, so it keeps taking turns (waiting on jobs,
-dispatching subagents) until it judges the goal met. A reviewer in a new session, which may
-write nothing, then reads the result against the task and the project's own rules. Its review
+dispatching subagents) until it judges the goal met. A reviewer in a new session then reads the result against the task and the project's own rules. Its review
 is written to `.hmz/reviews/<run>/review-<n>.md` and becomes the actor's next goal.
 
 Unlike rlar, the reviews are bounded: after `max_reviews` of them the actor applies the last
@@ -40,11 +39,8 @@ class Actor(Agent, GoalCommandAgentMixin):
 
 
 class Reviewer(Agent):
-    """Reads and runs checks; writes nothing."""
-
-    _permission = Permission(
-        local=PermissionKind.READ, user=PermissionKind.READ, system=PermissionKind.READ
-    )
+    """Reads and runs checks. Told to write nothing, not fenced from the workdir: a Codex
+    role granted no write cannot start its own sandbox inside hmz's and runs no command."""
 
 
 class Agents(AgentCollection):
