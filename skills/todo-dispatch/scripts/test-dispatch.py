@@ -41,6 +41,7 @@ class FakeBoard:
         self.fable_used = 0
         self.models: list[tuple[str, str]] = []
         self.refuse_model = False
+        self.session: dict = {}  # what the board knows of a new card's session
         board = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -69,7 +70,8 @@ class FakeBoard:
                 if self.path == "/api/windows/create":
                     key = f"{body['host']}:999"
                     board.windows[key] = {"key": key, "host": body["host"], "cwd": body["cwd"],
-                                          "started_at": time.time() * 1000, "name": board.new_name}
+                                          "started_at": time.time() * 1000, "name": board.new_name,
+                                          **board.session}
                     return self._reply({"ok": True, "pane_id": "%9"})
                 if self.path == "/api/usage":
                     return self._reply({"ok": True, "limits": [
@@ -115,6 +117,7 @@ spec.loader.exec_module(dispatch)
 
 PROJ = os.path.realpath(os.path.join(TMP, "proj"))
 os.makedirs(PROJ)
+RUNS = os.path.join(TMP, "runs")
 PROMPT = os.path.join(TMP, "prompt.txt")
 with open(PROMPT, "w") as f:
     f.write("do the item\n")
@@ -123,7 +126,8 @@ with open(PROMPT, "w") as f:
 def run() -> tuple[int, dict]:
     out = io.StringIO()
     with mock.patch.object(sys, "argv", ["dispatch.py", "h2", PROJ, PROMPT]), \
-            mock.patch.object(dispatch.time, "sleep"), contextlib.redirect_stdout(out):
+            mock.patch.object(dispatch.time, "sleep"), contextlib.redirect_stdout(out), \
+            mock.patch.object(dispatch.runs, "runs_dir", lambda: RUNS):
         rc = dispatch.main()
     return rc, json.loads(out.getvalue())
 
@@ -225,6 +229,61 @@ class DispatchModel(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIsNone(out["model"])
         self.assertIn("switch to fable failed", out["warning"])
+        self.assertEqual(BOARD.prompts[-1], ("h2:999", "do the item"))
+
+
+class DispatchRun(unittest.TestCase):
+    """The run record: the card's task bound to its session, in the shape of an hmz epic."""
+
+    def setUp(self):
+        BOARD.windows.clear()
+        BOARD.prompts.clear()
+        BOARD.new_name = "proj-3b"
+        BOARD.fable_used = 0
+        BOARD.refuse_model = False
+        BOARD.session = {}
+        self.addCleanup(setattr, BOARD, "session", {})
+        shutil.rmtree(RUNS, ignore_errors=True)
+
+    def events(self, run):
+        with open(os.path.join(run, "epic.jsonl")) as f:
+            return [json.loads(line) for line in f]
+
+    def test_record_binds_the_task_to_the_session_and_links_its_log(self):
+        # The card's host keeps its home elsewhere; here it is reached under TMP/homes/<host>.
+        log = os.path.join(TMP, "homes", "h2", ".claude", "projects", "-proj", "sid-1.jsonl")
+        os.makedirs(os.path.dirname(log), exist_ok=True)
+        open(log, "w").close()
+        BOARD.session = {"session_id": "sid-1", "transcript_path": "/home/u/.claude/projects/-proj/sid-1.jsonl"}
+        with mock.patch.object(dispatch, "FLEET", {"dispatch": {"homes": os.path.join(TMP, "homes", "<NN>")}}):
+            rc, out = run()
+        began, opened = self.events(out["run"])
+        self.assertEqual((rc, began["event"], began["task"], began["host"], began["card"]),
+                         (0, "began", "do the item", "h2", "h2:999"))
+        self.assertEqual((opened["event"], opened["session"], opened["agent"], began["agents"][0]["name"]),
+                         ("opened", "sid-1", out["name"], out["name"]))
+        linked = os.path.join(out["run"], opened["where"], "projects", "-proj", "sid-1.jsonl")
+        self.assertEqual(os.path.realpath(linked), os.path.realpath(log))
+
+    def test_card_with_no_session_yet_still_gets_a_record(self):
+        rc, out = run()
+        self.assertEqual([e["event"] for e in self.events(out["run"])], ["began"])
+
+    def test_session_added_and_run_closed_by_name(self):
+        rc, out = run()
+        for argv in (["session", out["name"], "overseer", "codex", "sid-2"], ["close", out["name"], "done", "--pr", "7"]):
+            with mock.patch.object(sys, "argv", ["runs.py", *argv]), contextlib.redirect_stdout(io.StringIO()), \
+                    mock.patch.object(dispatch.runs, "runs_dir", lambda: RUNS):
+                self.assertEqual(dispatch.runs.main(), 0)
+        _, opened, ended = self.events(out["run"])
+        self.assertEqual((opened["agent"], opened["backend"], opened["session"], ended["how"], ended["pr"]),
+                         ("overseer", "codex", "sid-2", "done", "7"))
+
+    def test_record_that_cannot_be_written_warns_and_still_sends_the_prompt(self):
+        with mock.patch.object(dispatch.runs, "open_run", side_effect=OSError("disk full")):
+            rc, out = run()
+        self.assertEqual(rc, 0)
+        self.assertIn("run record not written", out["warning"])
         self.assertEqual(BOARD.prompts[-1], ("h2:999", "do the item"))
 
 

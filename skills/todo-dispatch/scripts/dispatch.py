@@ -22,6 +22,9 @@ Each new card then switches, for that session only, to Fable while the host's Cl
 has Fable weekly quota left, else to Opus (user 2026-11-11), and the JSON prints the `model` it
 switched to; a failed switch leaves the card on its default model, `model` null and a `warning`.
 
+The card's run record (runs.py) is opened once the prompt is in, and the JSON prints its
+directory as `run`; a record that could not be written is a `warning`, never a failed dispatch.
+
 Exit codes: 0 sent; 1 create failed or unknown host; 2 our card did not show up, or
 more than one new card could be ours (nothing typed); 3 the prompt did not land;
 4 a `/goal` prompt too long to stay a command (nothing created).
@@ -36,6 +39,8 @@ import time
 import urllib.request
 
 import yaml
+
+import runs
 
 
 def fleet() -> dict:
@@ -190,6 +195,17 @@ def main() -> int:
     except OSError:
         pass
     out = {"key": key, "name": name, "model": model if m.get("ok") else None, "prompt": r}
+    try:
+        # The transcript, and with it the session id, exists once the first prompt is taken.
+        card = {"key": key, "name": name}
+        for _ in range(10):
+            card = {**card, **cards().get(key, {})}
+            if card.get("session_id") and card.get("transcript_path"):
+                break
+            time.sleep(2)
+        out["run"] = runs.open_run(text, cwd, host, card, out["model"], FLEET.get("dispatch", {}).get("homes"))
+    except OSError as e:
+        warning = "; ".join(filter(None, [warning, f"run record not written ({e})"]))
     if warning:
         out["warning"] = warning
     print(json.dumps(out, ensure_ascii=False))

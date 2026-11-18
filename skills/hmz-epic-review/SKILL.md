@@ -1,6 +1,6 @@
 ---
 name: hmz-epic-review
-description: After a run of an hmz flow has ended, read that run's own record (its epic) and say what to improve, each item backed by a session and turn of the run. Use when the user says review the hmz run, what went wrong in that run, epic review, retro on the flow, why did that run cost so much / take so long, or after a goal_reviewed / rlar / chat run they want to learn from. Not for watching a run that is still going (monitor-hmz).
+description: After a run of an hmz flow has ended, read that run's own record (its epic) and say what to improve, each item backed by a session and turn of the run. Use when the user says review the hmz run, what went wrong in that run, epic review, retro on the flow, why did that run cost so much / take so long, or after a goal_reviewed / rlar / chat run they want to learn from. Also reads the run record todo-dispatch keeps for a dispatched card (.humanize/runs/<run>/), which has the same shape. Not for watching a run that is still going (monitor-hmz).
 argument-hint: "[epic directory; default: the newest epic of the current directory]"
 ---
 
@@ -23,6 +23,7 @@ PY=$(head -1 "$(command -v hmz)" | sed 's/^#!//')
 cd /tmp && $PY -I <skill-dir>/scripts/epic_digest.py <epic-dir>
 ```
 
+- A dispatched card: pass its run record, `<checkout>/.humanize/runs/<UTC time>-<card name>/` (`python3 <todo-dispatch>/scripts/runs.py list` names them). It has no `usage` line and no review files; everything read from the session logs is the same.
 - No `<epic-dir>`: the newest epic of the current directory, under `$HUMANIZE_HOME/epics/<cwd with every non-alphanumeric char replaced by '-'>/` (`HUMANIZE_HOME` defaults to `~/.hmz`). Then run it from the workspace instead of `/tmp`.
 - `--top N` rows in the top tables (default 10); `--repeat-min N` how often a command must recur to be listed (default 3); `--stretch-min N` how many send-backs make a stretch (default 3); `--no-trace` skips `hmz.runtime.tracing` (the time split, tool tables and repeated commands then say "Unavailable").
 
