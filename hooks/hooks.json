@@ -37,7 +37,7 @@
           },
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/skills/todo-dispatch/scripts/runs.py ended",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/skills/todo-dispatch/scripts/runs.py hook",
             "timeout": 60
           }
         ]

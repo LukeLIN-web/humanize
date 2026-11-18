@@ -211,9 +211,10 @@ def main() -> int:
         time.sleep(2)
         now = cards()
         new = [k for k, w in now.items() if k not in before and w["host"] == host
-               and os.path.realpath(w["cwd"]) == cwd and w["started_at"] >= since
-               # hmz starts its agents' CLIs to ask what they are; the board shows one as a card for a moment.
-               and (not flow or w.get("platform") == "hmz")]
+               and os.path.realpath(w["cwd"]) == cwd and w["started_at"] >= since]
+        if flow:
+            # A board older than claude-board 291dd36 also shows the helpers hmz starts as cards.
+            new = sorted(new, key=lambda k: now[k]["started_at"])[:1]
         if new:
             break
     else:
@@ -239,6 +240,9 @@ def main() -> int:
             if card.get("transcript_path"):
                 break
         epic = card.get("transcript_path")
+        homes = FLEET.get("dispatch", {}).get("homes")
+        if epic and homes and "/.hmz/" in epic:  # the card host's path, as this machine reaches it
+            epic = homes.replace("<NN>", host) + "/.hmz/" + epic.split("/.hmz/", 1)[1]
         out = {"key": key, "name": card.get("name"), "flow": flow, "prompt": r,
                "run": os.path.dirname(epic) if epic else None}
         if epic and not r.get("ok"):

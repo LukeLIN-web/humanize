@@ -311,7 +311,7 @@ class DispatchRun(unittest.TestCase):
         out, _ = self.card_with_logs()
         listed = {"m": {"per_million": {"input": 1e6, "output": 2e6, "cache_read": 1e4, "cache_write": 0}}}
         with mock.patch.object(dispatch.runs, "price_list", lambda refresh=False: listed):
-            self.runs("ended", stdin=json.dumps({"session_id": "sid-1", "cwd": PROJ, "reason": "other"}))
+            self.runs("hook", stdin=json.dumps({"hook_event_name": "SessionEnd", "session_id": "sid-1", "cwd": PROJ, "reason": "other"}))
         _, _, watcher, used, ended = self.events(out["run"])
         self.assertEqual((watcher["agent"], watcher["backend"], watcher["session"]), ("overseer", "codex", "watch-1"))
         self.assertEqual((used["input_tokens"], used["output_tokens"], used["cache_read_tokens"], used["cost"]),
@@ -322,20 +322,39 @@ class DispatchRun(unittest.TestCase):
         out, _ = self.card_with_logs()
         asked = []
         with mock.patch.object(dispatch.runs, "price_list", lambda refresh=False: asked.append(refresh) or {}):
-            self.runs("ended", stdin=json.dumps({"session_id": "sid-1", "cwd": PROJ}))
+            self.runs("hook", stdin=json.dumps({"hook_event_name": "SessionEnd", "session_id": "sid-1", "cwd": PROJ}))
         used = next(e for e in self.events(out["run"]) if e["event"] == "usage")
         self.assertEqual((asked, "cost" in used, used["output_tokens"]), ([False, True], False, 12))
 
-    def test_clear_and_other_sessions_leave_the_record_open(self):
+    def test_other_sessions_and_a_broken_hook_leave_the_record_as_it_was(self):
         out, _ = self.card_with_logs()
-        self.runs("ended", stdin=json.dumps({"session_id": "sid-1", "cwd": PROJ, "reason": "clear"}))
-        self.runs("ended", stdin=json.dumps({"session_id": "watch-1", "cwd": PROJ, "reason": "other"}))
-        self.runs("ended", stdin="not json")
+        self.runs("hook", stdin=json.dumps({"hook_event_name": "SessionEnd", "session_id": "watch-1", "cwd": PROJ}))
+        self.runs("hook", stdin=json.dumps({"hook_event_name": "SessionStart", "source": "clear",
+                                            "session_id": "sid-9", "cwd": PROJ}))
+        self.runs("hook", stdin="not json")
         self.assertEqual([e["event"] for e in self.events(out["run"])], ["began", "opened"])
+
+    def test_the_session_a_clear_opens_in_the_cards_pane_joins_the_record(self):
+        out, _ = self.card_with_logs()
+        end = {"hook_event_name": "SessionEnd", "session_id": "sid-1", "cwd": PROJ, "reason": "clear"}
+        start = {"hook_event_name": "SessionStart", "source": "clear", "cwd": PROJ}
+        with mock.patch.dict(os.environ, TMUX_PANE="%5"):
+            self.runs("hook", stdin=json.dumps(end))
+        with mock.patch.dict(os.environ, TMUX_PANE="%6"):  # another card of this checkout, cleared too
+            self.runs("hook", stdin=json.dumps({**start, "session_id": "sid-other"}))
+        with mock.patch.dict(os.environ, TMUX_PANE="%5"), \
+                mock.patch.object(dispatch, "FLEET", {}):
+            self.runs("hook", stdin=json.dumps({**start, "session_id": "sid-2",
+                                                "transcript_path": "/home/u/.claude/projects/-proj/sid-2.jsonl"}))
+            self.runs("hook", stdin=json.dumps({**end, "session_id": "sid-2", "reason": "other"}))
+        held = self.events(out["run"])
+        self.assertEqual([e["event"] for e in held], ["began", "opened", "cleared", "opened", "opened", "usage", "ended"])
+        self.assertEqual((held[3]["session"], held[3]["agent"], held[3]["where"]), ("sid-2", out["name"], "sessions/claude"))
+        self.assertTrue(os.path.islink(os.path.join(out["run"], "sessions", "claude", "projects", "-proj", "sid-2.jsonl")))
 
     def test_usage_after_the_first_count_is_only_what_was_added(self):
         out, log = self.card_with_logs()
-        self.runs("ended", stdin=json.dumps({"session_id": "sid-1", "cwd": PROJ}))
+        self.runs("hook", stdin=json.dumps({"hook_event_name": "SessionEnd", "session_id": "sid-1", "cwd": PROJ}))
         with open(log, "a") as f:
             f.write(json.dumps({"type": "assistant", "requestId": "r3", "message": {
                 "model": "m", "usage": {"input_tokens": 1, "output_tokens": 30}}}) + "\n")
@@ -350,6 +369,9 @@ class DispatchRun(unittest.TestCase):
         self.assertEqual((rc, out["flow"], out["run"]), (0, "goal_reviewed", "/h/.hmz/epics/-proj/2026"))
         self.assertEqual(BOARD.prompts, [("h2:999", "$goal_reviewed do the item")])
         self.assertEqual((BOARD.models, BOARD.platforms[-1], os.path.isdir(RUNS)), ([], "hmz", False))
+        BOARD.windows.clear()
+        with mock.patch.object(dispatch, "FLEET", {"dispatch": {"homes": "/mnt/<NN>"}}):
+            self.assertEqual(run("--hmz", "goal_reviewed")[1]["run"], "/mnt/h2/.hmz/epics/-proj/2026")
 
     def test_hmz_roles_and_budget_go_into_the_hosts_settings_and_keep_the_rest(self):
         settings = os.path.join(TMP, "homes", "h2", ".hmz", "settings.yaml")

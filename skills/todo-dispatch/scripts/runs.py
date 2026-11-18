@@ -9,11 +9,13 @@ under `sessions/`), so one reader serves both: skills/hmz-epic-review/scripts/ep
     python3 runs.py list
     python3 runs.py session <run> <role> <claude|codex> <session-id> [--host <label>] [--log <path>]
     python3 runs.py close <run> <done|stopped|failed> [--pr <n>] [--note <text>]
-    python3 runs.py ended          (the SessionEnd hook: the hook's JSON on stdin)
+    python3 runs.py hook           (the SessionEnd and SessionStart hooks: the hook's JSON on stdin)
 
-A record ends by itself: when the card's session goes, the SessionEnd hook writes `ended` with how
-`closed` -- a session ending says nothing of whether the task was done. `close` is for saying
-more: the outcome, the PR. Both first add the overseers that watched the card (sessions on the
+A record keeps itself: when the card's session goes, the SessionEnd hook writes `ended` with how
+`closed` -- a session ending says nothing of whether the task was done. `/clear` ends the session
+and keeps the card, so there the hook writes `cleared` with the card's tmux pane instead, and the
+SessionStart hook of the session `/clear` opens in that pane adds it to the record. `close` is
+for saying more: the outcome, the PR. Both first add the overseers that watched the card (sessions on the
 card's host whose first prompt names one of the run's sessions as their `Target session id`) and
 write what the run used since the last count: a `usage` event of tokens summed over the linked
 Claude logs, one count per API request, and their cost at list price where hmz's price list on the card's
@@ -33,6 +35,7 @@ import datetime
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -70,7 +73,7 @@ def link_claude_log(run: str, homes: str | None, host: str, transcript: str) -> 
     home, rest = transcript.split(PROJECTS, 1)
     here = homes.replace("<NN>", host) if homes else home
     log = here + PROJECTS + rest
-    if not os.path.isfile(log):
+    if not os.path.isdir(os.path.dirname(log)):  # the log itself may not be written yet
         return False
     into = os.path.join(run, "sessions", "claude", "projects", os.path.dirname(rest))  # as hmz keeps it
     os.makedirs(into, exist_ok=True)
@@ -148,8 +151,8 @@ def usage(run: str) -> dict:
     for folder, _, files in os.walk(os.path.join(run, "sessions", "claude"), followlinks=True):
         for name in files:
             requests: dict[str, tuple[str, dict]] = {}
-            if not name.endswith(".jsonl"):
-                continue
+            if not name.endswith(".jsonl") or not os.path.isfile(os.path.join(folder, name)):
+                continue  # a session that never wrote its log is a link to nothing
             with open(os.path.join(folder, name), encoding="utf-8", errors="replace") as f:
                 for n, line in enumerate(f):
                     if '"usage"' not in line:
@@ -239,18 +242,31 @@ def main() -> int:
     c = sub.add_parser("close")
     c.add_argument("run"), c.add_argument("how", choices=("done", "stopped", "failed"))
     c.add_argument("--pr"), c.add_argument("--note")
-    sub.add_parser("ended")
+    sub.add_parser("hook")
     args = parser.parse_args()
-    if args.do == "ended":
-        try:  # a hook: whatever is wrong with a record, the session still ends quietly
+    if args.do == "hook":
+        try:  # a hook: whatever is wrong with a record, the session goes on quietly
             hook = json.load(sys.stdin)
             root = runs_dir(hook.get("cwd") or ".")
-            # `/clear` ends the session and keeps the card: the run goes on under a new session.
-            for d in sorted(os.listdir(root)) if os.path.isdir(root) and hook.get("reason") != "clear" else []:
-                held = events(os.path.join(root, d))
-                if held[-1]["event"] != "ended" and any(x["event"] == "opened" and x["agent"] != "overseer"
-                                                        and x["session"] == hook.get("session_id") for x in held):
-                    end(os.path.join(root, d), "closed", note=hook.get("reason"))
+            session, event = hook.get("session_id"), hook.get("hook_event_name")
+            here = {"pane": os.environ.get("TMUX_PANE", ""), "node": socket.gethostname()}
+            for d in sorted(os.listdir(root)) if os.path.isdir(root) else []:
+                run = os.path.join(root, d)
+                held = events(run)
+                last = held[-1]
+                if last["event"] == "ended":
+                    continue
+                if event == "SessionEnd" and any(e["event"] == "opened" and e["agent"] != "overseer"
+                                                 and e["session"] == session for e in held):
+                    if hook.get("reason") == "clear":
+                        append(run, {"event": "cleared", "session": session, **here})
+                    else:
+                        end(run, "closed", note=hook.get("reason"))
+                elif (event == "SessionStart" and hook.get("source") == "clear" and here["pane"]
+                      and last["event"] == "cleared" and {k: last.get(k) for k in here} == here):
+                    began = held[0]
+                    opened(run, began["agents"][0]["name"], "claude", session, began.get("host", ""),
+                           hook.get("transcript_path") or "", began.get("homes"))
         except (OSError, ValueError, KeyError):
             pass
         return 0
