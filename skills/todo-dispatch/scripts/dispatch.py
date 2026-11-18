@@ -25,6 +25,15 @@ switched to; a failed switch leaves the card on its default model, `model` null 
 The card's run record (runs.py) is opened once the prompt is in, and the JSON prints its
 directory as `run`; a record that could not be written is a `warning`, never a failed dispatch.
 
+    python3 dispatch.py <host> <cwd> <prompt-file> --hmz <flow> [<role>=<cli>/<model>:<effort> ...] [budget.<what>=<value> ...]
+
+opens an hmz card instead and gives it the prompt as that flow's task (a flow of your own is
+`@user/<name>` there). hmz names its sessions and keeps the run's record itself, so there is no
+rename, no model switch and no run record of ours; `run` is its epic directory, null while hmz
+has not started the flow. The roles and budget, when given, are written into the host's hmz
+settings first (see hmz_setup); without them the flow runs as it was last set up in <cwd> on that
+host, and hmz stops at its menu where it never was.
+
 Exit codes: 0 sent; 1 create failed or unknown host; 2 our card did not show up, or
 more than one new card could be ours (nothing typed); 3 the prompt did not land;
 4 a `/goal` prompt too long to stay a command (nothing created).
@@ -137,6 +146,39 @@ def pick_model(host: str) -> str:
     return "opus" if fable.get("used", 0) >= 100 else "fable"
 
 
+def hmz_setup(host: str, cwd: str, flow: str, said: list[str]) -> str | None:
+    """Writes how `flow` runs in `cwd` into the host's hmz settings; returns why it could not.
+
+    hmz asks, in a menu on the card, about a flow it has not been set up for in a directory. `said`
+    answers it beforehand: `<role>=<cli>/<model>:<effort>` per agent role and `budget.<what>=<value>`
+    (`budget.duration=PT12H`, `budget.cost=40`), which replace whatever was kept for this flow there.
+    """
+    homes = FLEET.get("dispatch", {}).get("homes")
+    home = homes.replace("<NN>", host) if homes else os.path.expanduser("~")
+    if not os.path.isdir(home):
+        return f"the home of {host!r} is not reachable at {home}"
+    agents, budget = {}, {}
+    for one in said:
+        key, _, value = one.partition("=")
+        if key.startswith("budget."):
+            budget[key[7:]] = value if key == "budget.duration" else float(value)
+        else:
+            agents[key] = value
+    path = os.path.join(home, ".hmz", "settings.yaml")
+    try:
+        with open(path, encoding="utf-8") as f:
+            held = yaml.safe_load(f) or {}
+    except FileNotFoundError:
+        held = {}
+    held.setdefault("workspaces", {}).setdefault(cwd, {}).setdefault("flows", {})[flow] = {
+        "agents": agents, **({"budget": budget} if budget else {})}
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path + ".new", "w", encoding="utf-8") as f:
+        yaml.safe_dump(held, f, sort_keys=False, allow_unicode=True)
+    os.replace(path + ".new", path)
+    return None
+
+
 def main() -> int:
     host, cwd, prompt_file = sys.argv[1:4]
     flow = sys.argv[5] if sys.argv[4:5] == ["--hmz"] else None
@@ -156,6 +198,9 @@ def main() -> int:
         print(f"host {host!r} is not in dispatch.card_hosts {allowed} of the fleet config", file=sys.stderr)
         return 1
     cwd = os.path.realpath(os.path.expanduser(cwd))
+    if flow and sys.argv[6:] and (why := hmz_setup(host, cwd, flow, sys.argv[6:])):
+        print(f"hmz not set up: {why}", file=sys.stderr)
+        return 1
     before = {w["key"] for w in snap["windows"]}
     since = time.time() * 1000 - 5000
     r = call("POST", "/api/windows/create", {"cwd": cwd, "platform": "hmz" if flow else "claude", "host": host})
@@ -166,7 +211,9 @@ def main() -> int:
         time.sleep(2)
         now = cards()
         new = [k for k, w in now.items() if k not in before and w["host"] == host
-               and os.path.realpath(w["cwd"]) == cwd and w["started_at"] >= since]
+               and os.path.realpath(w["cwd"]) == cwd and w["started_at"] >= since
+               # hmz starts its agents' CLIs to ask what they are; the board shows one as a card for a moment.
+               and (not flow or w.get("platform") == "hmz")]
         if new:
             break
     else:
@@ -183,15 +230,21 @@ def main() -> int:
         # record itself (an epic), which the board reports as the card's transcript once the flow starts.
         r = call("POST", f"/api/windows/{key}/prompt", {"text": f"${flow} {' '.join(text.split())}"})
         card: dict = {}
-        for _ in range(15 if r.get("ok") else 0):
+        # Polled even when the board says the line did not land: its second paste of a line hmz was
+        # slow to start on is refused ("cannot choose a flow while one is running") by the run the
+        # first one started. The epic is what says a run began.
+        for _ in range(15):
             time.sleep(2)
             card = cards().get(key, {})
             if card.get("transcript_path"):
                 break
         epic = card.get("transcript_path")
-        print(json.dumps({"key": key, "name": card.get("name"), "flow": flow, "prompt": r,
-                          "run": os.path.dirname(epic) if epic else None}, ensure_ascii=False))
-        return 0 if r.get("ok") else 3
+        out = {"key": key, "name": card.get("name"), "flow": flow, "prompt": r,
+               "run": os.path.dirname(epic) if epic else None}
+        if epic and not r.get("ok"):
+            out["warning"] = "the board reported the prompt as not sent, but hmz started the run"
+        print(json.dumps(out, ensure_ascii=False))
+        return 0 if r.get("ok") or epic else 3
     try:
         name, warning = claim_unique_name(key, cwd)
     except OSError as e:

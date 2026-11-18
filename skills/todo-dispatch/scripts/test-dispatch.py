@@ -73,6 +73,7 @@ class FakeBoard:
                     key = f"{body['host']}:999"
                     board.windows[key] = {"key": key, "host": body["host"], "cwd": body["cwd"],
                                           "started_at": time.time() * 1000, "name": board.new_name,
+                                          "platform": body["platform"],
                                           **board.session}
                     return self._reply({"ok": True, "pane_id": "%9"})
                 if self.path == "/api/usage":
@@ -244,6 +245,7 @@ class DispatchRun(unittest.TestCase):
         BOARD.fable_used = 0
         BOARD.refuse_model = False
         BOARD.models.clear()
+        BOARD.platforms.clear()
         BOARD.session = {}
         self.addCleanup(setattr, BOARD, "session", {})
         shutil.rmtree(RUNS, ignore_errors=True)
@@ -307,17 +309,22 @@ class DispatchRun(unittest.TestCase):
 
     def test_session_end_closes_the_record_with_its_overseer_and_its_usage(self):
         out, _ = self.card_with_logs()
-        prices = os.path.join(TMP, "hmz-home")
-        os.makedirs(prices, exist_ok=True)
-        with open(os.path.join(prices, "prices.json"), "w") as f:
-            json.dump({"models": {"m": {"per_million": {"input": 1e6, "output": 2e6, "cache_read": 1e4, "cache_write": 0}}}}, f)
-        with mock.patch.dict(os.environ, HUMANIZE_HOME=prices):
+        listed = {"m": {"per_million": {"input": 1e6, "output": 2e6, "cache_read": 1e4, "cache_write": 0}}}
+        with mock.patch.object(dispatch.runs, "price_list", lambda refresh=False: listed):
             self.runs("ended", stdin=json.dumps({"session_id": "sid-1", "cwd": PROJ, "reason": "other"}))
         _, _, watcher, used, ended = self.events(out["run"])
         self.assertEqual((watcher["agent"], watcher["backend"], watcher["session"]), ("overseer", "codex", "watch-1"))
         self.assertEqual((used["input_tokens"], used["output_tokens"], used["cache_read_tokens"], used["cost"]),
                          (20, 12, 200, 20 + 24 + 2))
         self.assertEqual((ended["how"], ended["note"]), ("closed", "other"))
+
+    def test_cost_is_left_out_while_a_model_has_no_price_and_the_list_is_fetched_anew_once(self):
+        out, _ = self.card_with_logs()
+        asked = []
+        with mock.patch.object(dispatch.runs, "price_list", lambda refresh=False: asked.append(refresh) or {}):
+            self.runs("ended", stdin=json.dumps({"session_id": "sid-1", "cwd": PROJ}))
+        used = next(e for e in self.events(out["run"]) if e["event"] == "usage")
+        self.assertEqual((asked, "cost" in used, used["output_tokens"]), ([False, True], False, 12))
 
     def test_clear_and_other_sessions_leave_the_record_open(self):
         out, _ = self.card_with_logs()
@@ -343,6 +350,26 @@ class DispatchRun(unittest.TestCase):
         self.assertEqual((rc, out["flow"], out["run"]), (0, "goal_reviewed", "/h/.hmz/epics/-proj/2026"))
         self.assertEqual(BOARD.prompts, [("h2:999", "$goal_reviewed do the item")])
         self.assertEqual((BOARD.models, BOARD.platforms[-1], os.path.isdir(RUNS)), ([], "hmz", False))
+
+    def test_hmz_roles_and_budget_go_into_the_hosts_settings_and_keep_the_rest(self):
+        settings = os.path.join(TMP, "homes", "h2", ".hmz", "settings.yaml")
+        os.makedirs(os.path.dirname(settings), exist_ok=True)
+        with open(settings, "w") as f:
+            yaml.safe_dump({"enable_sentry": False, "workspaces": {PROJ: {"flows": {"aot": {"agents": {"w": "x"}}}}}}, f)
+        with mock.patch.object(dispatch, "FLEET", {"dispatch": {"homes": os.path.join(TMP, "homes", "<NN>")}}):
+            rc, _ = run("--hmz", "@user/f", "actor=claude/m:high", "budget.duration=PT12H", "budget.cost=40")
+        with open(settings) as f:
+            held = yaml.safe_load(f)
+        self.assertEqual((rc, held["enable_sentry"], held["workspaces"][PROJ]["flows"]), (0, False, {
+            "aot": {"agents": {"w": "x"}},
+            "@user/f": {"agents": {"actor": "claude/m:high"}, "budget": {"duration": "PT12H", "cost": 40.0}}}))
+
+    def test_hmz_setup_for_a_host_whose_home_is_out_of_reach_opens_no_card(self):
+        with mock.patch.object(dispatch, "FLEET", {"dispatch": {"homes": os.path.join(TMP, "nowhere", "<NN>")}}), \
+                mock.patch.object(sys, "argv", ["dispatch.py", "h2", PROJ, PROMPT, "--hmz", "f", "actor=claude/m:high"]), \
+                contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(dispatch.main(), 1)
+        self.assertEqual(BOARD.platforms, [])
 
     def test_record_that_cannot_be_written_warns_and_still_sends_the_prompt(self):
         with mock.patch.object(dispatch.runs, "open_run", side_effect=OSError("disk full")):

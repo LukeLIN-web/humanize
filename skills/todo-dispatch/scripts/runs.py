@@ -16,8 +16,8 @@ A record ends by itself: when the card's session goes, the SessionEnd hook write
 more: the outcome, the PR. Both first add the overseers that watched the card (sessions on the
 card's host whose first prompt names one of the run's sessions as their `Target session id`) and
 write what the run used since the last count: a `usage` event of tokens summed over the linked
-Claude logs, one count per API request, and their cost at list price where
-`$HUMANIZE_HOME/prices.json` prices every model used.
+Claude logs, one count per API request, and their cost at list price where hmz's price list on the card's
+machine (fetched anew when it lacks a model) prices every model used.
 
 <run> is the card's session name (the newest run of that name) or a run directory. dispatch.py
 opens the record itself. Records live in `.humanize/runs/<UTC time>-<card name>/` at the top of
@@ -32,8 +32,10 @@ import argparse
 import datetime
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 
 JOURNAL = "epic.jsonl"
 PROJECTS = "/.claude/projects/"
@@ -163,15 +165,35 @@ def usage(run: str) -> dict:
                 for key, field in TOKENS.items():
                     total[key] += int(used.get(field) or 0)
     out: dict = {f"{key}_tokens": sum(m[key] for m in per_model.values()) for key in TOKENS}
+    prices = price_list()
+    if per_model and not all(model in prices for model in per_model):
+        prices = price_list(refresh=True)  # a model newer than the list this machine keeps
     try:
-        with open(os.path.join(os.environ.get("HUMANIZE_HOME") or os.path.expanduser("~/.hmz"), "prices.json")) as f:
-            prices = json.load(f)["models"]
         if per_model and all(model in prices for model in per_model):
             out["cost"] = round(sum(count * prices[model]["per_million"][key] / 1e6
                                     for model, total in per_model.items() for key, count in total.items()), 4)
-    except (OSError, KeyError, ValueError):
+    except (KeyError, TypeError):
         pass
     return out
+
+
+def price_list(refresh: bool = False) -> dict:
+    """hmz's price list on this machine, by model; `refresh` has hmz fetch it anew first."""
+    if refresh:
+        hmz = shutil.which("hmz", path=os.environ.get("PATH", "") + os.pathsep + os.path.expanduser("~/.local/bin"))
+        try:
+            with open(hmz or "") as f:
+                python = f.readline().removeprefix("#!").strip()
+            subprocess.run([python, "-I", "-c", "from hmz.coganchor import prices; prices.refresh(wait=True)"],
+                           capture_output=True, timeout=40, cwd="/")
+        except (OSError, subprocess.SubprocessError):
+            pass
+    try:
+        # Where hmz keeps it: per machine, not per home, as it is a copy of what anyone can fetch.
+        with open(os.path.join(tempfile.gettempdir(), f"humanize-{os.getuid()}", "prices.json")) as f:
+            return json.load(f)["models"]
+    except (OSError, KeyError, ValueError):
+        return {}
 
 
 def end(run: str, how: str, **extra: str) -> None:
