@@ -9,7 +9,7 @@ argument-hint: "[可选：只看 todo 的哪一节]"
 user 的原话（2026-10-14）：「你的任务就是看 todo，然后把没人做的，你新建 claude board card claude session 去做，没别的了，
 他们做完应该自己标注 todo done。你要研究的是观察协作摩擦、在流程上解决，考虑 merge queue、SemVer、CI/CD。」
 
-定时跑：`/loop 30m /todo-dispatch`（插件装法下叫 `/humanize:todo-dispatch`）。每轮按下面七步走完再停，不在两轮之间常驻。
+定时跑：`/loop 30m /todo-dispatch`（插件装法下叫 `/humanize:todo-dispatch`）。每轮按下面七步走完再停，不在两轮之间常驻。`/loop` 起的定时 7 天到期，末次触发后自己删掉、不报错，之后一轮都不跑（2026-11-19 一条 7 天前起的定时这样停了，漏了四轮才被 user 发现）：每天第一轮（本地 0 点那个小时）`CronList` 找到这条，`CronDelete` 掉再 `CronCreate` 一条同样的，7 天就到不了。
 
 **派单员的会话名要手起**：会话名是别的会话找你的地址（派单里的「我是…」、issue 评论、SendMessage）。Claude Code 自动起的名是 `<目录名>-<2 位十六进制>`，只有 256 个，而且自动名不查重，同目录的会话会撞（2026-11-04 派单员 `agent-harness-cc` 和一个派出去的会话同名，发给派单员的消息进了那个会话的收件箱）。手起的名会查重，撞了会自己让位改名。所以起循环的会话用 `claude -n <目录名>-dispatcher` 开，已经在跑的由 user 打 `/rename <目录名>-dispatcher`。每轮开头查一次自己的名：
 
