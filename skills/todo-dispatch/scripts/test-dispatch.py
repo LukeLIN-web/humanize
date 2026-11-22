@@ -18,6 +18,7 @@ import json
 import os
 import shutil
 import socket
+import subprocess
 import sys
 import tempfile
 import threading
@@ -273,6 +274,29 @@ class DispatchRun(unittest.TestCase):
     def test_card_with_no_session_yet_still_gets_a_record(self):
         rc, out = run()
         self.assertEqual([e["event"] for e in self.events(out["run"])], ["began"])
+
+    def test_record_keeps_the_commits_of_the_checkout_and_of_the_repos_its_skills_link_into(self):
+        def repo(path):
+            os.makedirs(path)
+            for args in (["init", "-q"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q",
+                                          "--allow-empty", "-m", "x"]):
+                subprocess.run(["git", "-C", path, *args], check=True)
+            return dispatch.runs.git(path, "rev-parse", "HEAD").stdout.strip()
+
+        base = os.path.realpath(tempfile.mkdtemp(dir=TMP))
+        proj, tools = os.path.join(base, "proj"), os.path.join(base, "tools")
+        at_proj, at_tools = repo(proj), repo(tools)
+        os.makedirs(os.path.join(tools, "skills", "a"))
+        with open(os.path.join(tools, "f"), "w") as f:
+            f.write("1")
+        subprocess.run(["git", "-C", tools, "add", "f"], check=True)  # staged, not committed: dirty
+        os.makedirs(os.path.join(proj, ".claude", "skills"))
+        for name in ("a", "b"):  # two skills from one repository count it once
+            os.symlink(os.path.join(tools, "skills", "a"), os.path.join(proj, ".claude", "skills", name))
+        self.assertEqual(dispatch.runs.code(proj), [
+            {"repo": proj, "commit": at_proj, "dirty": False},
+            {"repo": tools, "commit": at_tools, "dirty": True}])
+        self.assertEqual(dispatch.runs.code(os.path.join(base, "nowhere")), [])
 
     def test_session_added_and_run_closed_by_name(self):
         rc, out = run()

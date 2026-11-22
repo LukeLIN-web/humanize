@@ -208,6 +208,27 @@ def end(run: str, how: str, **extra: str) -> None:
     append(run, {"event": "ended", "how": how, **{k: v for k, v in extra.items() if v}})
 
 
+def git(path: str, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", "-C", path, *args], capture_output=True, text=True)
+
+
+def code(cwd: str) -> list[dict]:
+    """The commit of the checkout and of each repository the project's skills link into, and
+    whether tracked files there differ from it: skills are links to live working trees, so a
+    later edit changes what this card ran under, and this is what it ran under when it opened."""
+    skills = os.path.join(cwd, ".claude", "skills")
+    linked = [os.path.realpath(os.path.join(skills, s)) for s in sorted(os.listdir(skills))
+              if os.path.islink(os.path.join(skills, s))] if os.path.isdir(skills) else []
+    out, seen = [], set()
+    for path in [cwd, *linked]:
+        top = git(path, "rev-parse", "--show-toplevel").stdout.strip()
+        if top and top not in seen:
+            seen.add(top)
+            out.append({"repo": top, "commit": git(top, "rev-parse", "HEAD").stdout.strip(),
+                        "dirty": git(top, "diff", "--quiet", "HEAD").returncode != 0})
+    return out
+
+
 def open_run(task: str, cwd: str, host: str, card: dict, model: str | None, homes: str | None) -> str:
     """Starts the record of a card just opened. `card` is the board's row for it."""
     name = card.get("name") or card["key"]
@@ -215,7 +236,8 @@ def open_run(task: str, cwd: str, host: str, card: dict, model: str | None, home
     run = os.path.join(runs_dir(cwd), f"{stamp}-{name}")
     os.makedirs(run)
     append(run, {"event": "began", "flow": "card", "task": task, "workspace": cwd, "host": host,
-                 "card": card["key"], "homes": homes, "agents": [{"agent": "worker", "name": name, "backend": "claude",
+                 "card": card["key"], "homes": homes, "code": code(cwd),
+                 "agents": [{"agent": "worker", "name": name, "backend": "claude",
                                                    "model": model or card.get("model")}]})
     if card.get("session_id"):
         opened(run, name, "claude", card["session_id"], host, card.get("transcript_path") or "", homes)
