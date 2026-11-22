@@ -10,6 +10,11 @@ is written to `.hmz/reviews/<run>/review-<n>.md` and becomes the actor's next go
 Unlike rlar, the reviews are bounded: after `max_reviews` of them the actor applies the last
 one and the run ends without another reading. The last reviewer is told so, and asked for
 fixes the actor can apply as written.
+
+A choice only the user can make goes to the user, not back to the actor: the flow asks it and
+waits, spending nothing, and the answer goes into the actor's next goal. With nobody there (`hmz
+exec`, or the person marked away) it is written to `for-user.md` beside the reviews instead, and
+the actor is told to leave it.
 """
 
 import time
@@ -23,8 +28,9 @@ from hmz.flows import (
     FlowParams,
     GoalCommandAgentMixin,
     LocalEnv,
+    Markdown,
+    Outworlder,
     Permission,
-    PermissionKind,
     flow,
 )
 from pydantic import BaseModel, Field
@@ -33,9 +39,7 @@ from pydantic import BaseModel, Field
 class Actor(Agent, GoalCommandAgentMixin):
     """Does the work, anywhere on the machine a goal sends it: outputs, caches, other repos."""
 
-    _permission = Permission(
-        local=PermissionKind.ALL, user=PermissionKind.ALL, system=PermissionKind.ALL
-    )
+    _permission = Permission("danger-full-access")
 
 
 class Reviewer(Agent):
@@ -46,6 +50,7 @@ class Reviewer(Agent):
 class Agents(AgentCollection):
     actor: Actor
     reviewer: Reviewer
+    user: Outworlder
 
 
 class Workspace(LocalEnv, FilesEnvMixin):
@@ -77,6 +82,13 @@ class Review(BaseModel):
         "finding per problem: where it is (file and line, artifact path, issue or PR), what "
         "is wrong, the evidence, and what to do. When done is true: what was delivered and "
         "how you checked it."
+    )
+    for_user: list[str] = Field(
+        default=[],
+        description="Choices only the user can make: the goal and the decisions recorded in the "
+        "project leave them open, and no evidence in the repository settles them. One entry "
+        "each: the question, the options, and which you recommend and why. They go to the "
+        "user, not to the agent; do not list them in notes as well. Empty when there are none.",
     )
 
 
@@ -121,6 +133,14 @@ FIX = (
     "needing the user's decision and says what the choices are. Nothing the work already "
     "achieved is undone. Read that file first."
 )
+DECIDED = " The user answered the questions under 'For the user' there; carry out that answer."
+LEFT = " The questions under 'For the user' there are the user's: leave them as they are."
+
+ASK = "The reviewer found choices only you can make. Answer each by its number."
+
+
+def numbered(items: list[str]) -> str:
+    return "\n".join(f"{i}. {item}" for i, item in enumerate(items, 1))
 
 
 @flow(agents=Agents, envs=Envs, params=Params)
@@ -128,10 +148,11 @@ async def goal_reviewed(
     task: str, *, agents: Agents, envs: Envs, params: Params, ctx: FlowContext
 ) -> str:
     """One agent works a goal; a fresh read-only reviewer sends it back at most max_reviews times."""
-    actor, reviewer = agents["actor"], agents["reviewer"]
+    actor, reviewer, user = agents["actor"], agents["reviewer"], agents["user"]
     workspace = envs["workspace"]
     run = time.strftime("%Y%m%dT%H%M%S")
     working = await actor.spawn()
+    asking = await user.spawn()
     said = await actor.run(f"/goal {task}", session=working, env=workspace)
     for n in range(1, params.max_reviews + 1):
         review = await reviewer.run(
@@ -143,8 +164,24 @@ async def goal_reviewed(
             output_schema=Review,
         )
         path = f".hmz/reviews/{run}/review-{n}.md"
-        await workspace.write(path, review.notes.encode())
-        if review.done:
-            return review.notes
-        said = await actor.run(FIX.format(path=path), session=working, env=workspace)
+        text, answer = review.notes, ""
+        if review.for_user:
+            text += f"\n\n## For the user\n\n{numbered(review.for_user)}\n"
+            answer = await user.run(
+                ASK,
+                session=asking,
+                context=(
+                    Markdown(title="Questions", text=numbered(review.for_user)),
+                    Markdown(title="The review", text=review.notes),
+                ),
+            )
+            if answer:
+                text += f"\n## The user's answer\n\n{answer}\n"
+            else:
+                await workspace.write(f".hmz/reviews/{run}/for-user.md", text.encode())
+        await workspace.write(path, text.encode())
+        if review.done and not answer:
+            return text
+        goal = FIX.format(path=path) + (DECIDED if answer else LEFT if review.for_user else "")
+        said = await actor.run(goal, session=working, env=workspace)
     return said
