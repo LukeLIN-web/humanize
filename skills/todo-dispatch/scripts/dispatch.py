@@ -127,7 +127,7 @@ def claim_unique_name(key: str, cwd: str) -> tuple[str | None, str | None]:
     taken = {w.get("name") for k, w in now.items() if k != key}
     base = os.path.basename(cwd)
     want = random.choice([n for n in (f"{base}-w{i:02x}" for i in range(256)) if n not in taken])
-    r = call("POST", f"/api/windows/{key}/prompt", {"text": f"/rename {want}"})
+    r = call("POST", f"/api/windows/{key}/prompt", {"text": f"/rename {want}", "by": "dispatcher"})
     if r.get("ok"):
         for _ in range(15):
             time.sleep(2)
@@ -229,7 +229,7 @@ def main() -> int:
     if flow:
         # hmz names its own sessions, takes its agents' models from its settings and keeps the run's
         # record itself (an epic), which the board reports as the card's transcript once the flow starts.
-        r = call("POST", f"/api/windows/{key}/prompt", {"text": f"${flow} {' '.join(text.split())}"})
+        r = call("POST", f"/api/windows/{key}/prompt", {"text": f"${flow} {' '.join(text.split())}", "by": "dispatcher"})
         card: dict = {}
         # Polled even when the board says the line did not land: its second paste of a line hmz was
         # slow to start on is refused ("cannot choose a flow while one is running") by the run the
@@ -261,7 +261,7 @@ def main() -> int:
     if not m.get("ok"):
         why = f"switch to {model} failed" if model else "Fable quota not read"
         warning = "; ".join(filter(None, [warning, f"{why} ({m.get('error')}): the card runs its default model"]))
-    r = call("POST", f"/api/windows/{key}/prompt", {"text": text})
+    r = call("POST", f"/api/windows/{key}/prompt", {"text": text, "by": "dispatcher"})
     try:
         name = cards().get(key, {}).get("name", name)
     except OSError:
