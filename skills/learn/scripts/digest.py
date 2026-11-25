@@ -27,8 +27,12 @@ Where every number comes from (so it can be recomputed from the source's own fil
   gives flow, task, workspace, agents (role, backend, model, effort, name), params and budget;
   `opened` gives one session per line (`agent` is the agent's name or its role, `session` the
   backend's id, `where` the directory under the epic its logs were kept in); `usage` lines
-  are summed for cost, output_tokens and seconds; the last `ended` after the last `reopened`
-  gives how it ended. Wall time = ended.at - began.at.
+  are summed key by key (cost, tokens by kind, seconds); the last `ended` after the last
+  `reopened` gives how it ended. Wall time = ended.at - began.at.
+- Spend without a `usage` line (a session, a card still running): the Claude transcripts
+  and their sub-agents' (<log dir>/<session id>/subagents/*.jsonl), each model request
+  counted once with the last `usage` seen for its `message.id`, priced request by request
+  with hmz.coganchor.prices. "Not priced" when hmz lists no price for some model used.
 - Session logs are the files under <epic>/<where>/ (or the links under
   <epic>/sessions/<name>/ for older epics) whose path holds the session id.
 - Model turn = one model request: in a Claude log, one distinct `requestId` (else
@@ -37,9 +41,16 @@ Where every number comes from (so it can be recomputed from the source's own fil
 - Prompt = one `turn` slice of the trace: a user message, with the hook messages Claude
   sends under the same `promptId` merged into it.
 - Time split per session, from the trace slices: tool = length of the union of `tool`
-  slices; model = length of the union of `llm` and `tool` slices minus tool; idle = the span
-  from the first slice's start to the last slice's end minus both. Idle is the agent not
-  running: waiting for the next prompt, for hooks, for the other role.
+  slices; model = length of the union of `llm`, `message` and `tool` slices minus tool;
+  idle = the gaps between those, within the span from the first slice's start to the last
+  slice's end. Each gap is put under what ended it: the first prompt that starts in it,
+  read by its text (a `<task-notification>`: background task; a cross-session message:
+  another session; "usage limit has reset"; a continue prompt: stop hook; anything else:
+  typed prompt, which includes what another session typed into the terminal). A gap no
+  prompt ends is "inside a prompt" (hooks, retries), or "after the last activity" when it
+  runs to the span's end. A role's sub-agents are a row of their own.
+- Session's last record: the latest slice end in the trace (else the log's last timestamp).
+  Compactions: `system` records with subtype `compact_boundary`.
 - Send-back (Claude): a `type == "user"` record whose text starts with
   "Stop hook feedback:". A stretch is a run of consecutive send-backs of one prompt where the
   agent made no tool call (no `tool_use` block) after any of them before the next send-back or
@@ -50,9 +61,18 @@ Where every number comes from (so it can be recomputed from the source's own fil
 - What the user typed (Claude): `type == "user"` records with `origin.kind == "human"`, and
   `queued_command` attachments with that origin (typed while the agent was working); in logs
   older than the `origin` field, user records whose content is a string, not `isMeta`, not a
-  send-back, not a `<local-command-…>` echo. A typed one also says how long after the session's previous `assistant` record
-  it came. A line that looks like it holds a secret (password, token, key) is masked.
-  Interrupted: user records whose text starts with "[Request interrupted by user".
+  send-back, not a `<local-command-…>` echo; never a compaction summary (`isCompactSummary`).
+  A slash command is shown as typed (`/goal ...`). Records with `origin.kind == "peer"` are
+  messages another Claude session sent, shown with its name. A typed line whose first 24
+  characters are inside a tool call of another session of the run was typed by that session
+  (an overseer driving tmux). Each says how long after the session's previous `assistant`
+  record it came. Interrupted: user records whose text starts with "[Request interrupted by user".
+- Failed call: `is_error` on its result, or output starting with a non-zero exit code. Its
+  kind is the first of ERROR_KINDS found in the output, with the line it is on; "no error
+  text" (usually a grep or test that found nothing) shows the exit code and the last line.
+- Everything quoted from a log is masked where it looks like a secret: known key shapes,
+  runs of 32+ letters and digits, and the word after password/密码/口令 or after "token:"-style
+  labels.
 - Reviews: files under <workspace>/.hmz/reviews/<run>/ where <run> is either named in a
   session log or is a local-time stamp (%Y%m%dT%H%M%S) inside the run's window.
 """
@@ -79,10 +99,51 @@ CONTINUE = re.compile(
     re.I,
 )
 BLOCK_CAP = re.compile(r"blocked the turn from ending (\d+) consecutive times")
-SECRET = re.compile(r"(?i)passw|mima|密码|口令|token|secret|api[_-]?key|ghp_|sk-[a-z0-9]")
+# A secret is masked where it stands, not the line around it: a line that only mentions a token
+# is often the very correction the digest is read for.
+SECRET_AFTER = re.compile(
+    r"(?i)((?:passw(?:or)?d|passwd|mima|密码|口令)(?:\s*(?:是|为|:|：|=|is)\s*|\s+)"
+    r"|(?:token|secret|api[_-]?key|access[_-]?key)\s*(?:是|为|:|：|=)\s*)(\S+)"
+)
+SECRET_SHAPE = re.compile(
+    r"(?<![A-Za-z0-9])(?:sk[-_][\w-]{16,}|gh[pousr]_\w{20,}|github_pat_\w{20,}|hf_[A-Za-z0-9]{20,}"
+    r"|xox[abpr]-[\w-]{10,}|AKIA[0-9A-Z]{16}|[A-Za-z0-9]{32,})"
+)
 INTERRUPTED = "[Request interrupted by user"
+TOKEN_FIELDS = (
+    ("input", "input_tokens"),
+    ("cache_read", "cache_read_input_tokens"),
+    ("cache_write", "cache_creation_input_tokens"),
+    ("output", "output_tokens"),
+)
 REVIEW_REF = re.compile(r"\.hmz/reviews/([^/\s`'\"\\)\]]+)/([^\s`'\"\\)\]]+)")
 FAILED_OUTPUT = re.compile(r"^\s*(Exit code [1-9]\d*|Process exited with code [1-9]\d*)")
+# What a failed call's output says went wrong, most specific first; the first one found names it.
+ERROR_KINDS = tuple(
+    (kind, re.compile(pattern, re.I))
+    for kind, pattern in (
+        ("denied", r"\bdenied\b"),
+        ("no such file or directory", r"no such file or directory"),
+        ("command not found", r"command not found"),
+        ("module not found", r"no module named"),
+        ("not found", r"\bnot found\b"),
+        ("timed out", r"timed out|\btimeout\b"),
+        ("too large", r"exceeds maximum"),
+        ("exception", r"^traceback|\w(?:error|exception):"),
+        ("error", r"\berror\b"),
+        ("cannot", r"\bcannot\b|can't"),
+        ("fatal", r"\bfatal\b"),
+        ("failed", r"\bfailed\b"),
+        ("killed", r"\bkilled\b"),
+    )
+)
+# What ended a wait: the prompt that woke the agent, by its text; anything else was typed.
+WOKE_BY = (
+    ("background task", re.compile(r"<task-notification>")),
+    ("another session", re.compile(r"Another Claude session sent a message|<cross-session-message")),
+    ("usage limit reset", re.compile(r"usage limit has reset")),
+    ("stop hook", CONTINUE),
+)
 
 
 # ---------------------------------------------------------------- small helpers
@@ -116,10 +177,22 @@ def secs(value: float | None) -> str:
     return f"{value:.1f}s"
 
 
+def mask(text: str) -> str:
+    text = SECRET_AFTER.sub(lambda m: m.group(1) + "***", text)
+    return SECRET_SHAPE.sub("***", text)
+
+
 def one_line(text: Any, limit: int = 120) -> str:
-    line = " ".join(str(text or "").split())
+    """Log text as one masked table-safe line."""
+    line = mask(" ".join(str(text or "").split()))
     line = line.replace("|", "\\|")
     return line if len(line) <= limit else line[: limit - 3] + "..."
+
+
+def elided(text: str, limit: int = 110) -> str:
+    """One line keeping both ends: a command's head is often variable setup, its tail the work."""
+    line = one_line(text, 10**6)
+    return line if len(line) <= limit else line[: limit // 2 - 2] + " … " + line[-(limit // 2 - 2) :]
 
 
 def jsonl(path: Path) -> list[tuple[int, dict[str, Any]]]:
@@ -153,21 +226,21 @@ def text_of(content: Any) -> str:
     return ""
 
 
-def union(intervals: list[tuple[float, float]]) -> float:
-    total, end = 0.0, None
-    start = None
+def merged(intervals: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """The intervals' union, as disjoint intervals in order."""
+    out: list[tuple[float, float]] = []
     for a, b in sorted(intervals):
         if b < a:
             continue
-        if end is None or a > end:
-            if end is not None:
-                total += end - start
-            start, end = a, b
+        if out and a <= out[-1][1]:
+            out[-1] = (out[-1][0], max(out[-1][1], b))
         else:
-            end = max(end, b)
-    if end is not None:
-        total += end - start
-    return total
+            out.append((a, b))
+    return out
+
+
+def length(intervals: list[tuple[float, float]]) -> float:
+    return sum(b - a for a, b in merged(intervals))
 
 
 # ---------------------------------------------------------------- the epic's own record
@@ -200,11 +273,11 @@ def read_epic(epic: Path) -> dict[str, Any]:
         (e for e in reversed(events[last_reopen + 1 :]) if e.get("event") == "ended"), None
     )
     usage = [e for e in events if e.get("event") == "usage"]
-    spent = {
-        key: sum(float(e.get(key) or 0) for e in usage)
-        for key in ("cost", "output_tokens", "seconds")
-        if any(key in e for e in usage)
-    }
+    spent: dict[str, float] = {}
+    for e in usage:
+        for key, value in e.items():
+            if isinstance(value, int | float) and not isinstance(value, bool):
+                spent[key] = spent.get(key, 0.0) + float(value)
     roles = {}
     for agent in began.get("agents") or []:
         if isinstance(agent, dict):
@@ -255,6 +328,10 @@ def read_epic(epic: Path) -> dict[str, Any]:
     sessions.sort(key=lambda s: s["opened"])
     for s in sessions:
         s["logs"] = session_logs(epic, s)
+    spent_from = "sum of `usage` lines"
+    if not usage:
+        spent = transcript_spend([log for s in sessions if s["backend"] == "claude" for log in s["logs"]])
+        spent_from = "no `usage` line; read from the Claude transcripts, sub-agents included"
     return {
         "kind": "epic",
         "base": epic,
@@ -263,6 +340,7 @@ def read_epic(epic: Path) -> dict[str, Any]:
         "began": began,
         "ended": ended,
         "spent": spent,
+        "spent_from": spent_from,
         "sessions": sessions,
         "calls": calls,
         "roles": roles,
@@ -284,13 +362,56 @@ def read_session(log: Path) -> dict[str, Any]:
         "events": [],
         "began": {"flow": "session", "task": task, "workspace": workspace, "at": stamps[0] if stamps else ""},
         "ended": {"how": "the transcript's last record", "at": stamps[-1]} if stamps else None,
-        "spent": {},
+        "spent": transcript_spend([log]),
+        "spent_from": "read from the transcript, sub-agents included",
         "sessions": [{"id": sid, "role": "session", "backend": "claude", "name": "", "where": "",
                       "opened": stamps[0] if stamps else "", "flow": "session", "record": log.name,
                       "logs": [log]}],
         "calls": [],
         "roles": {},
     }
+
+
+def subagent_logs(log: Path) -> list[Path]:
+    """The sub-agent transcripts Claude Code keeps beside a session's own."""
+    return sorted((log.parent / log.stem / "subagents").glob("*.jsonl"))
+
+
+def transcript_spend(logs: list[Path]) -> dict[str, float]:
+    """Tokens, and cost where hmz prices every model used, of Claude transcripts and their sub-agents'."""
+    last: dict[str, tuple[str, dict[str, Any]]] = {}  # per model request, the last usage seen
+    for log in logs:
+        for path in [log, *subagent_logs(log)]:
+            for line, r in jsonl(path):
+                message = r.get("message") if isinstance(r.get("message"), dict) else {}
+                if r.get("type") == "assistant" and isinstance(message.get("usage"), dict):
+                    ident = str(message.get("id") or r.get("requestId") or f"{path}:{line}")
+                    last[ident] = (str(message.get("model") or ""), message["usage"])
+    if not last:
+        return {}
+    try:
+        from hmz.coganchor import prices
+    except Exception:  # noqa: BLE001  without hmz there are tokens and no price
+        prices = None
+    spent: dict[str, float] = {}
+    cost, priced = 0.0, prices is not None
+    for model, usage in last.values():
+        kinds = {kind: float(usage.get(field) or 0) for kind, field in TOKEN_FIELDS}
+        for kind, tokens in kinds.items():
+            spent[f"{kind}_tokens"] = spent.get(f"{kind}_tokens", 0.0) + tokens
+        if not priced or not any(kinds.values()):
+            continue
+        written = usage.get("cache_creation") if isinstance(usage.get("cache_creation"), dict) else {}
+        hour = float(written.get("ephemeral_1h_input_tokens") or 0)
+        try:
+            money = prices.cost(kinds, model, hour=hour, tiered=prices.tiered(kinds, model, hour=hour))
+        except Exception:  # noqa: BLE001  a price list hmz refuses prices nothing
+            money = None
+        priced = money is not None
+        cost += money or 0.0
+    if priced:
+        spent["cost"] = cost
+    return spent
 
 
 def session_logs(epic: Path, session: dict[str, Any]) -> list[Path]:
@@ -329,6 +450,8 @@ def claude_raw(path: Path) -> dict[str, Any]:
     # call made for the next prompt is no answer to the previous prompt's goal check.
     attributing = False
     last_prompt = ""
+    compactions: list[int] = []
+    last_at = None
     for line, record in jsonl(path):
         kind = record.get("type")
         at = parse_at(record.get("timestamp"))
@@ -378,6 +501,9 @@ def claude_raw(path: Path) -> dict[str, Any]:
             if hit:
                 cap_notes.append({"line": line, "at": at, "count": int(hit.group(1))})
                 events.append({"kind": "cap", "line": line, "at": at})
+            if record.get("subtype") == "compact_boundary":
+                compactions.append(line)
+        last_at = at or last_at
     # Stretches: consecutive send-backs (within one prompt) none of which was followed by a
     # tool call before the next send-back.
     stretches: list[dict[str, Any]] = []
@@ -454,36 +580,49 @@ def claude_raw(path: Path) -> dict[str, Any]:
         "sendbacks": sendbacks,
         "stretches": stretches,
         "caps": cap_notes,
+        "compactions": compactions,
+        "last_at": last_at,
     }
 
 
+def command_text(body: str) -> str:
+    """A slash command's echo as the line that was typed (`/goal ...`); other text as it is."""
+    name = re.search(r"<command-name>(.*?)</command-name>", body, re.S)
+    if not name:
+        return body
+    args = re.search(r"<command-args>(.*?)</command-args>", body, re.S)
+    return f"{name.group(1).strip()} {args.group(1).strip() if args else ''}".strip()
+
+
 def typed_prompts(held: list[tuple[int, dict[str, Any]]]) -> tuple[list[dict[str, Any]], list[int]]:
-    """What the user typed into one Claude transcript, and the lines where they interrupted."""
+    """What was typed into, or sent to, one Claude transcript, and the lines where the user interrupted."""
     typed: list[dict[str, Any]] = []
     interrupted: list[int] = []
     last_reply = None
     for line, record in held:
         kind = record.get("type")
         at = parse_at(record.get("timestamp"))
+        gap = at - last_reply if at and last_reply else None
         if kind == "assistant":
             last_reply = at or last_reply
         elif kind == "attachment":
             a = record.get("attachment") if isinstance(record.get("attachment"), dict) else {}
             if a.get("type") == "queued_command" and (a.get("origin") or {}).get("kind") == "human":
                 typed.append({"line": line, "at": at, "how": "queued", "text": str(a.get("prompt") or ""), "gap": None})
-        elif kind == "user":
+        elif kind == "user" and not record.get("isCompactSummary"):
             content = (record.get("message") or {}).get("content") if isinstance(record.get("message"), dict) else None
             body = text_of(content)
+            origin = record.get("origin") if isinstance(record.get("origin"), dict) else {}
             if body.startswith(INTERRUPTED):
                 interrupted.append(line)
-            elif "origin" in record:
-                if (record.get("origin") or {}).get("kind") == "human":
-                    gap = at - last_reply if at and last_reply else None
-                    typed.append({"line": line, "at": at, "how": "typed", "text": body, "gap": gap})
-            elif (isinstance(content, str) and not record.get("isMeta") and not SEND_BACK.match(body)
-                  and not body.startswith("<local-command-")):
-                gap = at - last_reply if at and last_reply else None
-                typed.append({"line": line, "at": at, "how": "typed", "text": body, "gap": gap})
+            elif origin.get("kind") == "human":
+                typed.append({"line": line, "at": at, "how": "typed", "text": command_text(body), "gap": gap})
+            elif origin.get("kind") == "peer":
+                sender = f"sent by session {origin.get('name') or origin.get('from') or '?'}"
+                typed.append({"line": line, "at": at, "how": sender, "text": str(origin.get("body") or body), "gap": gap})
+            elif ("origin" not in record and isinstance(content, str) and not record.get("isMeta")
+                  and not SEND_BACK.match(body) and not body.startswith("<local-command-")):
+                typed.append({"line": line, "at": at, "how": "typed", "text": command_text(body), "gap": gap})
     return typed, interrupted
 
 
@@ -538,6 +677,10 @@ def is_failed(action: Any) -> bool:
 
 def command_of(action: Any) -> str:
     given = action.args.get("input")
+    if isinstance(given, str):
+        # Codex in code mode: a program; the shell commands are its `cmd:"..."` strings.
+        found = re.findall(r'cmd:\s*"((?:[^"\\]|\\.)*)"', given)
+        return " ; ".join(found) if found else given
     if isinstance(given, dict):
         value = given.get("command") or given.get("cmd")
         if isinstance(value, list):
@@ -551,6 +694,46 @@ def normalized(command: str) -> str:
     text = " ".join(command.split())
     text = re.sub(r"\b[0-9a-f]{7,}\b", "<hex>", text)
     return re.sub(r"\d+", "#", text)
+
+
+def failure(action: Any) -> tuple[str, str]:
+    """What a failed call's output says went wrong: (kind, the line saying it)."""
+    lines = [x.strip() for x in str(action.args.get("output") or "").splitlines() if x.strip()]
+    for kind, pattern in ERROR_KINDS:
+        for line in lines:
+            if pattern.search(line):
+                return kind, line
+    exit_code = FAILED_OUTPUT.match(lines[0]) if lines else None
+    last = lines[-1] if len(lines) > 1 or not exit_code else ""
+    return "no error text", (f"{exit_code.group(1)}; last line: {last}" if exit_code else last)
+
+
+def woke_by(prompt: str) -> str:
+    head = prompt[:2000]
+    return next((name for name, pattern in WOKE_BY if pattern.search(head)), "typed prompt")
+
+
+def time_split(actions: list[Any]) -> dict[str, Any]:
+    """One trace session's span, split into model, tool and idle, idle by what ended each wait."""
+    busy = merged([(a.start, a.end) for a in actions if a.category in ("llm", "tool", "message")])
+    tool = length([(a.start, a.end) for a in actions if a.category == "tool"])
+    first, last = min(a.start for a in actions), max(a.end for a in actions)
+    prompts = sorted((a.start, str(a.args.get("prompt") or "")) for a in actions if a.category == "turn")
+    waits: dict[str, float] = {}
+    edges = [(first, first)] + busy + [(last, last)]
+    for (_, gap_start), (gap_end, _) in zip(edges, edges[1:]):
+        if gap_end - gap_start < 0.1:
+            continue
+        # The wait ended where the next prompt arrived; from there to the model starting, and
+        # in a gap no prompt ends, the agent was inside a prompt with nothing running (hooks,
+        # retries), or, past its last activity, had stopped and nothing came before the log ended.
+        woke = next(((at, woke_by(p)) for at, p in prompts if gap_start < at <= gap_end + 1), None)
+        arrived = min(woke[0], gap_end) if woke else gap_start
+        rest = "after the last activity" if gap_end == last and not woke else "inside a prompt"
+        for name, seconds in ((woke[1] if woke else "", arrived - gap_start), (rest, gap_end - arrived)):
+            if seconds >= 0.1:
+                waits[name] = waits.get(name, 0.0) + seconds
+    return {"span": last - first, "model": length(busy) - tool, "tool": tool, "waits": waits}
 
 
 # ---------------------------------------------------------------- reviews
@@ -606,12 +789,19 @@ def digest(info: dict[str, Any], top: int, repeat_min: int, stretch_min: int, us
     w(f"- began {iso(t0)}, ended {iso(t1)}, wall time {secs(t1 - t0) if t0 and t1 else '?'}")
     spent = info["spent"]
     if spent:
+        tokens = ", ".join(
+            f"{kind.replace('_', ' ')} {int(spent[f'{kind}_tokens'])}"
+            for kind, _ in TOKEN_FIELDS
+            if f"{kind}_tokens" in spent
+        )
         w(
-            f"- spend (sum of `usage` lines): cost ${spent.get('cost', 0):.4f}, "
-            f"output tokens {int(spent.get('output_tokens', 0))}, agent seconds {secs(spent.get('seconds'))}"
+            f"- spend ({info['spent_from']}): cost "
+            + (f"${spent['cost']:.4f}" if "cost" in spent else "not priced (a model hmz has no price for)")
+            + f"; tokens: {tokens or 'none counted'}"
+            + (f"; agent seconds {secs(spent['seconds'])}" if "seconds" in spent else "")
         )
     else:
-        w("- spend: no `usage` line")
+        w(f"- spend: none counted ({info['spent_from']})")
     if began.get("budget"):
         w(f"- budget: `{json.dumps(began['budget'])}`")
     if began.get("params"):
@@ -648,15 +838,18 @@ def digest(info: dict[str, Any], top: int, repeat_min: int, stretch_min: int, us
     w("## Sessions\n")
     if not info["sessions"]:
         w("No `opened` line: the run opened no session.\n")
-    w("| session | role | backend | flow | opened | log | model turns (raw) | send-backs |")
-    w("|---|---|---|---|---|---|---|---|")
+    w("| session | role | backend | flow | opened | last record | log | model turns (raw) | send-backs | compactions |")
+    w("|---|---|---|---|---|---|---|---|---|---|")
     for s in info["sessions"]:
         logs = logs_of[s["id"]]
         kept = ", ".join(shown(p, base) for p in logs) or "not kept"
         r = raw.get(s["id"])
+        ends = [a.end for t in trace or [] if t.ident == s["id"] for a in t.actions]
+        last = max(ends) if ends else (r["last_at"] if r else None)
         w(
-            f"| `{s['id'][:8]}` | {s['role']} | {s['backend']} | {s['flow']} | {s['opened']} | {kept} | "
-            f"{r['model_turns'] if r else '-'} | {len(r['sendbacks']) if r else '-'} |"
+            f"| `{s['id'][:8]}` | {s['role']} | {s['backend']} | {s['flow']} | {s['opened']} | {iso(last)} | {kept} | "
+            f"{r['model_turns'] if r else '-'} | {len(r['sendbacks']) if r else '-'} | "
+            f"{len(r['compactions']) if r else '-'} |"
         )
     w("")
 
@@ -671,13 +864,22 @@ def digest(info: dict[str, Any], top: int, repeat_min: int, stretch_min: int, us
         if not typed and not interrupted:
             continue
         any_typed = True
+        # Another session of the run (an overseer) types into this one's terminal too: a line
+        # whose opening is in one of that session's own commands was typed by it, not by a person.
+        typers = [
+            (f"typed by {role_of(t, info, keyed)} `{t.ident[:8]}`", command_of(a))
+            for t in trace or [] if t.ident != s["id"] for a in t.actions if a.category == "tool"
+        ]
         w(f"{s['role']} `{s['id'][:8]}`, log {shown(log, base)}:\n")
         for p in typed:
             when = dt.datetime.fromtimestamp(p["at"], dt.UTC).strftime("%m-%d %H:%MZ") if p["at"] else "?"
             if p["gap"] is not None:
                 when += f", {secs(p['gap'])} after the last reply"
-            text = "(masked: may hold a secret)" if SECRET.search(p["text"]) else one_line(p["text"], 300)
-            w(f"- line {p['line']} [{p['how']} {when}] {text}")
+            opening = re.sub(r"^\s*<pasted_content[^>]*>\s*", "", p["text"]).strip().split("\n")[0][:24]
+            how = p["how"]
+            if how in ("typed", "queued") and len(opening) >= 12:
+                how = next((who for who, said in typers if opening in said), how)
+            w(f"- line {p['line']} [{how} {when}] {one_line(p['text'], 300)}")
         if interrupted:
             w(f"- interrupted at lines {', '.join(str(n) for n in interrupted)}")
         w("")
@@ -691,34 +893,36 @@ def digest(info: dict[str, Any], top: int, repeat_min: int, stretch_min: int, us
     else:
         roles: dict[str, dict[str, Any]] = {}
         for t in trace:
-            role = role_of(t, info, keyed)
+            role = role_of(t, info, keyed) + (" sub-agents" if t.parent else "")
             r = roles.setdefault(
                 role,
-                {"sessions": 0, "subagents": 0, "prompts": 0, "turns": 0, "tools": 0,
-                 "span": 0.0, "model": 0.0, "tool": 0.0, "idle": 0.0},
+                {"sessions": 0, "prompts": 0, "turns": 0, "tools": 0,
+                 "span": 0.0, "model": 0.0, "tool": 0.0, "waits": {}},
             )
-            r["subagents" if t.parent else "sessions"] += 1
+            r["sessions"] += 1
             acts = t.actions
             if not acts:
                 continue
             r["prompts"] += sum(1 for a in acts if a.category == "turn")
             r["turns"] += sum(1 for a in acts if a.category == "llm" and a.name.startswith("think"))
             r["tools"] += sum(1 for a in acts if a.category == "tool")
-            span = max(a.end for a in acts) - min(a.start for a in acts)
-            tool = union([(a.start, a.end) for a in acts if a.category == "tool"])
-            busy = union([(a.start, a.end) for a in acts if a.category in ("tool", "llm")])
-            r["span"] += span
-            r["tool"] += tool
-            r["model"] += busy - tool
-            r["idle"] += max(0.0, span - busy)
-        w("| role | sessions | sub-agent sessions | prompts | model turns | tool calls | span | model | tool | idle |")
+            split = time_split(acts)
+            for key in ("span", "model", "tool"):
+                r[key] += split[key]
+            for woke, seconds in split["waits"].items():
+                r["waits"][woke] = r["waits"].get(woke, 0.0) + seconds
+        w("| role | sessions | prompts | model turns | tool calls | span | model | tool | idle | idle, by what ended the wait |")
         w("|---|---|---|---|---|---|---|---|---|---|")
         for role, r in sorted(roles.items()):
+            waits = sorted(r["waits"].items(), key=lambda kv: -kv[1])
             w(
-                f"| {role} | {r['sessions']} | {r['subagents']} | {r['prompts']} | {r['turns']} | {r['tools']} | "
-                f"{secs(r['span'])} | {secs(r['model'])} | {secs(r['tool'])} | {secs(r['idle'])} |"
+                f"| {role} | {r['sessions']} | {r['prompts']} | {r['turns']} | {r['tools']} | "
+                f"{secs(r['span'])} | {secs(r['model'])} | {secs(r['tool'])} | {secs(sum(r['waits'].values()))} | "
+                + (", ".join(f"{woke} {secs(seconds)}" for woke, seconds in waits) or "-")
+                + " |"
             )
-        w("\nSpans and splits are summed over a role's sessions, sub-agents included.\n")
+        w("\nA role's sub-agents are their own row; each row sums its sessions' spans, so sub-agents running")
+        w("side by side can add up to more than the wall time.\n")
 
     # ---------------- tool calls, from the trace
     calls: list[tuple[Any, Any, int]] = []  # (session, action, turn)
@@ -752,19 +956,19 @@ def digest(info: dict[str, Any], top: int, repeat_min: int, stretch_min: int, us
     if trace is None:
         w(f"Unavailable: {why}.\n")
     else:
-        failed = [c for c in calls if is_failed(c[1])]
+        failed = [(t, a, turn, *failure(a)) for t, a, turn in calls if is_failed(a)]
         if not failed:
             w("None marked failed.\n")
         else:
-            w(f"{len(failed)} of {len(calls)} tool calls.\n")
-            w("| where | tool call | output: first line (and last, after an exit code) |")
-            w("|---|---|---|")
-            for t, a, turn in failed:
-                lines = [x for x in str(a.args.get("output") or "").splitlines() if x.strip()]
-                first = lines[0] if lines else ""
-                if FAILED_OUTPUT.match(first) and len(lines) > 1:
-                    first += " ... " + lines[-1].strip()  # a shell's error is usually its last line
-                w(f"| {where(t, turn)} | {one_line(a.name, 100)} | {one_line(first, 160)} |")
+            kinds: dict[str, int] = {}
+            for *_, kind, _ in failed:
+                kinds[kind] = kinds.get(kind, 0) + 1
+            by_kind = ", ".join(f"{kind} {n}" for kind, n in sorted(kinds.items(), key=lambda kv: -kv[1]))
+            w(f"{len(failed)} of {len(calls)} tool calls; by kind: {by_kind}.\n")
+            w("| where | tool call | kind | the line that says it |")
+            w("|---|---|---|---|")
+            for t, a, turn, kind, line in failed:
+                w(f"| {where(t, turn)} | {one_line(a.name, 100)} | {kind} | {one_line(line, 160)} |")
             w("")
 
     w(f"## Commands repeated near-verbatim (>= {repeat_min} times)\n")
@@ -789,12 +993,14 @@ def digest(info: dict[str, Any], top: int, repeat_min: int, stretch_min: int, us
         if not repeated:
             w(f"None among {len(commands)} shell commands.\n")
         else:
-            w("| times | seconds | first command | where |")
+            w("| times | seconds | first one | where |")
             w("|---|---|---|---|")
             for g in repeated[:top]:
                 total = sum(a.end - a.start for _, _, a, _ in g)
                 spots = ", ".join(where(t, turn) for _, t, _, turn in g[:6]) + (" ..." if len(g) > 6 else "")
-                w(f"| {len(g)} | {total:.1f} | `{one_line(g[0][0], 100)}` | {spots} |")
+                command, _, first, _ = g[0]
+                said = one_line(first.name, 80) if " ".join(command.split())[:20] not in first.name else ""
+                w(f"| {len(g)} | {total:.1f} | {said + ' ' if said else ''}`{elided(command)}` | {spots} |")
             w("")
 
     # ---------------- send-backs
@@ -936,9 +1142,7 @@ def show(log: Path, line: int, context: int) -> str:
                 mark = "error" if block.get("is_error") else "result"
                 body.append(f"<- {mark}: " + "\n   ".join(s[:300] for s in lines[:8])
                             + (f"\n   ... {len(lines) - 8} more lines" if len(lines) > 8 else ""))
-        if record.get("type") == "user" and any(SECRET.search(b) for b in body):
-            body = ["(masked: may hold a secret)"]
-        out.append(head + "\n" + "\n".join("  " + b for b in body if b.strip()))
+        out.append(head + "\n" + "\n".join("  " + mask(b) for b in body if b.strip()))
     return "\n\n".join(out) or f"no record near line {line}"
 
 

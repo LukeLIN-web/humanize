@@ -25,13 +25,13 @@ cd /tmp && $PY -I <本 skill 目录>/scripts/digest.py <来源> --show <行号> 
 
 | 节 | 说什么 |
 |---|---|
-| 头部 | flow、任务、工作目录、怎么结束的、墙钟、花费（钱、输出 token、agent 秒）、预算、参数、各角色、调用的子 flow |
-| Sessions | 每个会话：角色、后端、日志、模型轮数、被 Stop hook 顶回几次 |
-| What the user typed | 人亲手打的每一句（带时间、距上一次回复多久，含干活中途插进来的）、被打断的行；像口令的遮掉 |
-| Time per role | 每个角色的会话数、子 agent 数、轮数、工具调用数，时长拆成模型、工具、空等 |
+| 头部 | flow、任务、工作目录、怎么结束的、墙钟、花费（钱、各类 token、agent 秒；没有 `usage` 行就从 Claude 对话记录连子 agent 算，hmz 价目表没有的模型写 not priced）、预算、参数、各角色、调用的子 flow |
+| Sessions | 每个会话：角色、后端、日志、最后一条记录的时刻、模型轮数、被 Stop hook 顶回几次、压缩上下文几次 |
+| What the user typed | 打进终端的每一句（带时间、距上一次回复多久，含干活中途插进来的）、别的会话发来的消息（标发件会话）、被打断的行。同一 run 里别的会话（旁观者）经 tmux 打进来的标 `typed by` 那个角色；派单员打进来的仍记 typed，开头自报「我是 …-dispatcher」。压缩上下文的摘要不算。像口令的值遮掉 |
+| Time per role | 每个角色（子 agent 单独一行）的会话数、轮数、工具调用数，时长拆成模型、工具、空等；空等再按什么结束了它拆：typed prompt（人或别的会话打字）、background task、another session、usage limit reset、stop hook；没有 prompt 结束的是 inside a prompt，最后一次活动之后的是 after the last activity |
 | Slowest tool calls | 最慢的工具调用，带角色、会话、轮次 |
-| Failed tool calls | 失败的调用（含子 agent 的），输出的首行，退出码后再带末行 |
-| Commands repeated near-verbatim | 只差数字或 id 的重复命令 |
+| Failed tool calls | 失败的调用（含子 agent 的），按出错的类别计数（缺文件、没权限、找不到命令、超时……），每条带说出错的那一行；no error text 多是 grep、test 没找到东西 |
+| Commands repeated near-verbatim | 只差数字或 id 的重复命令（Codex 的也算），带描述和命令的首尾 |
 | Sent back without progress | 连续被顶回、中间一个工具都没调的段：轮次、秒数、token、日志行、goal 条件、首末理由 |
 | Reviews of this run | 这次 run 写的审稿文件 |
 
@@ -43,6 +43,7 @@ cd /tmp && $PY -I <本 skill 目录>/scripts/digest.py <来源> --show <行号> 
 
 **错在哪、该记什么**
 1. **user 纠正、定规矩**：「不要…」「以后…」「为啥要…」、打断后改了方向、隔很久回来问「怎么还没好」。原话和日期照录。
+   `typed by` 别的角色、`sent by session` 的、派单员自报身份的是转话：里面引的 user 原话照它注的出处核过再记，转话者自己的话不算 user 裁定。
 2. **同一个错犯了两次以上，或一个错耗掉明显的时间**（重试、绕路、换方案）：找到根因，是环境、集群、工具，还是某条指示写错了。
 3. **被钩子或门禁挡回**：挡对了，说明规则不在你会看的地方，让它好找；挡错了是钩子的 bug，去修钩子。
 4. **摸出来的多步流程**：这次试了很多步才走通、以后还会再走（装环境、起服务、对齐某个 benchmark 的协议、排某类故障）。
@@ -50,8 +51,9 @@ cd /tmp && $PY -I <本 skill 目录>/scripts/digest.py <来源> --show <行号> 
 **卡在哪、哪里慢**（按通常的回报排）
 1. **连续被顶回的段**：agent 一遍遍用话回答同一个 goal 检查、不动手。多半是 goal 条件 agent 一个人满足不了（要人拍板，或和任务矛盾）。
    改设定条件的措辞，让「列为待 user 决定」也算完成；或者让 flow 不把任务禁止动手的发现再交回去。
-2. **某个角色空等占大头**：actor 的长时间空等多半是在等审稿人，正常；一个 prompt 内部的长空等，指向钩子或一次等待，写之前先看日志里那段空档。
-   人隔很久才回来问进度，说明 agent 停下来空等了：查它停之前有没有挂一个会唤醒自己的等待。
+2. **某个角色空等占大头**：看空等按什么结束的拆分。inside a prompt 长：actor 在等审稿人是正常的，否则指向钩子或一次等待，写之前先看日志里那段空档。
+   typed prompt 长：agent 停下来等人；人隔很久才回来问进度，查它停之前有没有挂一个会唤醒自己的等待。
+   background task 长：在等后台作业，看是作业本身慢，还是 agent 本可以边等边做别的。
 3. **慢的工具调用**：是重复的活，或者跑了全量测试而窄的就够。
 4. **同一类失败调用不止一次**：缺工具、路径错、权限没给；改的是 agent 学到错命令的那个地方。
 5. **重复命令**：轮询，或反复读同一个文件。告诉它答案在哪，或者把轮询换成一次等待。
