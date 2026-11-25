@@ -1,15 +1,27 @@
 #!/usr/bin/env python3
-"""Print a markdown digest of one hmz run (an epic), for reviewing what to improve.
+"""Print a markdown digest of one session or one hmz run (an epic), for learning what to change.
 
-    epic_digest.py [EPIC_DIR] [--top N] [--repeat-min N] [--stretch-min N] [--no-trace]
+    digest.py [SOURCE] [--top N] [--repeat-min N] [--stretch-min N] [--no-trace]
+    digest.py [SOURCE] --show LINE [--log PATH] [--context K]
 
-EPIC_DIR defaults to the newest epic of the current directory:
-$HUMANIZE_HOME/epics/<cwd with every non-alphanumeric char as '-'>/<newest>, with
-HUMANIZE_HOME defaulting to ~/.hmz. Standard library plus the installed hmz package; run it
-with the Python hmz is installed in. Without hmz.runtime.tracing the sections that need the
-trace say so and the rest still prints.
+SOURCE is one of:
+- a Claude Code session: its id (in a session, the name of its scratchpad directory), looked
+  up as ~/.claude/projects/*/<id>.jsonl, or the path of that transcript. It is read as a run
+  of one session, role `session`: task = the first thing the user typed, workspace = the
+  transcript's `cwd`, wall time from its first record to its last.
+- a run: an epic directory (or its epic.jsonl), as hmz keeps one per run of a flow and
+  todo-dispatch keeps one per dispatched card (.humanize/runs/<run>/). Without SOURCE: the
+  newest epic of the current directory, $HUMANIZE_HOME/epics/<cwd with every
+  non-alphanumeric char as '-'>/<newest>, with HUMANIZE_HOME defaulting to ~/.hmz.
 
-Where every number comes from (so it can be recomputed from the epic's own files):
+Standard library plus the installed hmz package; run it with the Python hmz is installed in.
+Without hmz.runtime.tracing the sections that need the trace say so and the rest still prints.
+
+--show LINE prints, as text, the record at LINE of a session's log (the first session's, or
+--log PATH) and the K records before and after it (--context, default 3): kind, time, the
+text of each block, a tool call's name and input, a tool result's first lines.
+
+Where every number comes from (so it can be recomputed from the source's own files):
 
 - epic.jsonl (and epic.*.jsonl, one per sub-flow the run called) is JSON Lines. `began`
   gives flow, task, workspace, agents (role, backend, model, effort, name), params and budget;
@@ -35,6 +47,12 @@ Where every number comes from (so it can be recomputed from the epic's own files
   send-back to the record that ends it; its output tokens are the `usage.output_tokens` of
   the model requests inside it (the last value seen per request). Line numbers are 1-based
   physical lines of the log.
+- What the user typed (Claude): `type == "user"` records with `origin.kind == "human"`, and
+  `queued_command` attachments with that origin (typed while the agent was working); in logs
+  older than the `origin` field, user records whose content is a string, not `isMeta`, not a
+  send-back, not a `<local-command-…>` echo. A typed one also says how long after the session's previous `assistant` record
+  it came. A line that looks like it holds a secret (password, token, key) is masked.
+  Interrupted: user records whose text starts with "[Request interrupted by user".
 - Reviews: files under <workspace>/.hmz/reviews/<run>/ where <run> is either named in a
   session log or is a local-time stamp (%Y%m%dT%H%M%S) inside the run's window.
 """
@@ -61,6 +79,8 @@ CONTINUE = re.compile(
     re.I,
 )
 BLOCK_CAP = re.compile(r"blocked the turn from ending (\d+) consecutive times")
+SECRET = re.compile(r"(?i)passw|mima|密码|口令|token|secret|api[_-]?key|ghp_|sk-[a-z0-9]")
+INTERRUPTED = "[Request interrupted by user"
 REVIEW_REF = re.compile(r"\.hmz/reviews/([^/\s`'\"\\)\]]+)/([^\s`'\"\\)\]]+)")
 FAILED_OUTPUT = re.compile(r"^\s*(Exit code [1-9]\d*|Process exited with code [1-9]\d*)")
 
@@ -233,7 +253,12 @@ def read_epic(epic: Path) -> dict[str, Any]:
                     }
                 )
     sessions.sort(key=lambda s: s["opened"])
+    for s in sessions:
+        s["logs"] = session_logs(epic, s)
     return {
+        "kind": "epic",
+        "base": epic,
+        "kept": [epic / "sessions"] if (epic / "sessions").is_dir() else [],
         "events": events,
         "began": began,
         "ended": ended,
@@ -241,6 +266,30 @@ def read_epic(epic: Path) -> dict[str, Any]:
         "sessions": sessions,
         "calls": calls,
         "roles": roles,
+    }
+
+
+def read_session(log: Path) -> dict[str, Any]:
+    """One Claude Code transcript, in the shape read_epic gives a run: one session, role `session`."""
+    held = jsonl(log)
+    records = [r for _, r in held]
+    stamps = [r["timestamp"] for r in records if isinstance(r.get("timestamp"), str)]
+    task = next((p["text"] for p in typed_prompts(held)[0] if p["how"] == "typed"), "")
+    workspace = next((r["cwd"] for r in records if isinstance(r.get("cwd"), str)), "")
+    sid = log.stem
+    return {
+        "kind": "session",
+        "base": log.parent,
+        "kept": [],
+        "events": [],
+        "began": {"flow": "session", "task": task, "workspace": workspace, "at": stamps[0] if stamps else ""},
+        "ended": {"how": "the transcript's last record", "at": stamps[-1]} if stamps else None,
+        "spent": {},
+        "sessions": [{"id": sid, "role": "session", "backend": "claude", "name": "", "where": "",
+                      "opened": stamps[0] if stamps else "", "flow": "session", "record": log.name,
+                      "logs": [log]}],
+        "calls": [],
+        "roles": {},
     }
 
 
@@ -408,11 +457,41 @@ def claude_raw(path: Path) -> dict[str, Any]:
     }
 
 
+def typed_prompts(held: list[tuple[int, dict[str, Any]]]) -> tuple[list[dict[str, Any]], list[int]]:
+    """What the user typed into one Claude transcript, and the lines where they interrupted."""
+    typed: list[dict[str, Any]] = []
+    interrupted: list[int] = []
+    last_reply = None
+    for line, record in held:
+        kind = record.get("type")
+        at = parse_at(record.get("timestamp"))
+        if kind == "assistant":
+            last_reply = at or last_reply
+        elif kind == "attachment":
+            a = record.get("attachment") if isinstance(record.get("attachment"), dict) else {}
+            if a.get("type") == "queued_command" and (a.get("origin") or {}).get("kind") == "human":
+                typed.append({"line": line, "at": at, "how": "queued", "text": str(a.get("prompt") or ""), "gap": None})
+        elif kind == "user":
+            content = (record.get("message") or {}).get("content") if isinstance(record.get("message"), dict) else None
+            body = text_of(content)
+            if body.startswith(INTERRUPTED):
+                interrupted.append(line)
+            elif "origin" in record:
+                if (record.get("origin") or {}).get("kind") == "human":
+                    gap = at - last_reply if at and last_reply else None
+                    typed.append({"line": line, "at": at, "how": "typed", "text": body, "gap": gap})
+            elif (isinstance(content, str) and not record.get("isMeta") and not SEND_BACK.match(body)
+                  and not body.startswith("<local-command-")):
+                gap = at - last_reply if at and last_reply else None
+                typed.append({"line": line, "at": at, "how": "typed", "text": body, "gap": gap})
+    return typed, interrupted
+
+
 # ---------------------------------------------------------------- the trace
 
 
-def gather_trace(epic: Path, info: dict[str, Any]) -> tuple[list[Any] | None, str]:
-    """The trace sessions of this epic's sessions, read from the epic's own kept logs first."""
+def gather_trace(info: dict[str, Any]) -> tuple[list[Any] | None, str]:
+    """The trace sessions of the source's sessions, read from an epic's own kept logs first."""
     try:
         from hmz.runtime.tracing import collector
     except Exception as error:  # noqa: BLE001  any import failure means no trace
@@ -424,9 +503,8 @@ def gather_trace(epic: Path, info: dict[str, Any]) -> tuple[list[Any] | None, st
     for s in info["sessions"]:
         agents.setdefault(s["role"], []).append(s["id"])
     workspace = info["began"].get("workspace") or None
-    kept = [epic / "sessions"] if (epic / "sessions").is_dir() else []
     try:
-        held = collector.gather(workspace, sessions=ids, agents=agents, kept=kept)
+        held = collector.gather(workspace, sessions=ids, agents=agents, kept=info["kept"])
     except Exception as error:  # noqa: BLE001
         return None, f"hmz trace gather failed ({type(error).__name__}: {error})"
     # The same log can be read from the epic and from the CLI's own home; keep the fuller one.
@@ -503,15 +581,22 @@ def reviews(info: dict[str, Any], logs: list[Path], began: float | None, ended: 
 # ---------------------------------------------------------------- the digest
 
 
-def digest(epic: Path, top: int, repeat_min: int, stretch_min: int, use_trace: bool) -> str:
-    info = read_epic(epic)
-    began, ended = info["began"], info["ended"]
+def shown(path: Path, base: Path) -> str:
+    return f"`{path.relative_to(base)}`" if path.is_relative_to(base) else f"`{path}`"
+
+
+def digest(info: dict[str, Any], top: int, repeat_min: int, stretch_min: int, use_trace: bool) -> str:
+    began, ended, base = info["began"], info["ended"], info["base"]
     out: list[str] = []
     w = out.append
     t0 = parse_at(began.get("at"))
     t1 = parse_at(ended.get("at")) if ended else None
-    w(f"# Epic digest: {epic.name}\n")
-    w(f"- epic: `{epic}`")
+    if info["kind"] == "epic":
+        w(f"# Epic digest: {base.name}\n")
+        w(f"- epic: `{base}`")
+    else:
+        w(f"# Session digest: {info['sessions'][0]['id']}\n")
+        w(f"- transcript: `{info['sessions'][0]['logs'][0]}`")
     w(f"- flow: `{began.get('flow', '?')}` (ref `{began.get('ref', '')}`)")
     task = str(began.get("task") or "")
     w(f"- task ({len(task)} chars): {one_line(task, 400)}")
@@ -551,29 +636,53 @@ def digest(epic: Path, top: int, repeat_min: int, stretch_min: int, use_trace: b
     logs_of: dict[str, list[Path]] = {}
     all_logs: list[Path] = []
     for s in info["sessions"]:
-        logs = session_logs(epic, s)
+        logs = s["logs"]
         logs_of[s["id"]] = logs
         all_logs += logs
         if s["backend"] == "claude" and logs:
             raw[s["id"]] = claude_raw(logs[0])
 
-    trace, why = (gather_trace(epic, info) if use_trace else (None, "--no-trace given"))
+    trace, why = (gather_trace(info) if use_trace else (None, "--no-trace given"))
     keyed = {t.key: t for t in trace} if trace else {}
 
     w("## Sessions\n")
     if not info["sessions"]:
         w("No `opened` line: the run opened no session.\n")
-    w("| session | role | backend | flow | opened | log (under the epic) | model turns (raw) | send-backs |")
+    w("| session | role | backend | flow | opened | log | model turns (raw) | send-backs |")
     w("|---|---|---|---|---|---|---|---|")
     for s in info["sessions"]:
         logs = logs_of[s["id"]]
-        shown = ", ".join(f"`{p.relative_to(epic)}`" if p.is_relative_to(epic) else f"`{p}`" for p in logs) or "not kept"
+        kept = ", ".join(shown(p, base) for p in logs) or "not kept"
         r = raw.get(s["id"])
         w(
-            f"| `{s['id'][:8]}` | {s['role']} | {s['backend']} | {s['flow']} | {s['opened']} | {shown} | "
+            f"| `{s['id'][:8]}` | {s['role']} | {s['backend']} | {s['flow']} | {s['opened']} | {kept} | "
             f"{r['model_turns'] if r else '-'} | {len(r['sendbacks']) if r else '-'} |"
         )
     w("")
+
+    # ---------------- what the user said, raw Claude reading
+    w("## What the user typed\n")
+    any_typed = False
+    for s in info["sessions"]:
+        if s["id"] not in raw:
+            continue
+        log = logs_of[s["id"]][0]
+        typed, interrupted = typed_prompts(jsonl(log))
+        if not typed and not interrupted:
+            continue
+        any_typed = True
+        w(f"{s['role']} `{s['id'][:8]}`, log {shown(log, base)}:\n")
+        for p in typed:
+            when = dt.datetime.fromtimestamp(p["at"], dt.UTC).strftime("%m-%d %H:%MZ") if p["at"] else "?"
+            if p["gap"] is not None:
+                when += f", {secs(p['gap'])} after the last reply"
+            text = "(masked: may hold a secret)" if SECRET.search(p["text"]) else one_line(p["text"], 300)
+            w(f"- line {p['line']} [{p['how']} {when}] {text}")
+        if interrupted:
+            w(f"- interrupted at lines {', '.join(str(n) for n in interrupted)}")
+        w("")
+    if not any_typed:
+        w("Nothing typed by a person in the Claude logs.\n")
 
     # ---------------- per role, from the trace
     w("## Time per role (from the trace)\n")
@@ -648,11 +757,14 @@ def digest(epic: Path, top: int, repeat_min: int, stretch_min: int, use_trace: b
             w("None marked failed.\n")
         else:
             w(f"{len(failed)} of {len(calls)} tool calls.\n")
-            w("| where | tool call | first line of output |")
+            w("| where | tool call | output: first line (and last, after an exit code) |")
             w("|---|---|---|")
             for t, a, turn in failed:
-                first = next((x for x in str(a.args.get("output") or "").splitlines() if x.strip()), "")
-                w(f"| {where(t, turn)} | {one_line(a.name, 100)} | {one_line(first, 120)} |")
+                lines = [x for x in str(a.args.get("output") or "").splitlines() if x.strip()]
+                first = lines[0] if lines else ""
+                if FAILED_OUTPUT.match(first) and len(lines) > 1:
+                    first += " ... " + lines[-1].strip()  # a shell's error is usually its last line
+                w(f"| {where(t, turn)} | {one_line(a.name, 100)} | {one_line(first, 160)} |")
             w("")
 
     w(f"## Commands repeated near-verbatim (>= {repeat_min} times)\n")
@@ -693,7 +805,7 @@ def digest(epic: Path, top: int, repeat_min: int, stretch_min: int, use_trace: b
         if not r:
             continue
         log = logs_of[s["id"]][0]
-        rel = log.relative_to(epic) if log.is_relative_to(epic) else log
+        rel = log.relative_to(base) if log.is_relative_to(base) else log
         for st in r["stretches"]:
             if st["count"] < stretch_min:
                 continue
@@ -775,20 +887,84 @@ def digest(epic: Path, top: int, repeat_min: int, stretch_min: int, use_trace: b
     return "\n".join(out)
 
 
+def read_source(said: str | None) -> dict[str, Any]:
+    if not said:
+        return read_epic(default_epic().resolve())
+    path = Path(said).expanduser()
+    if path.is_file() and not path.match(SUBRECORDS) and path.name != JOURNAL:
+        return read_session(path.absolute())
+    if path.is_file():
+        path = path.parent
+    if path.is_dir():
+        if not (path / JOURNAL).is_file():
+            sys.exit(f"{path} holds no {JOURNAL}")
+        return read_epic(path.resolve())
+    found = sorted(Path.home().glob(f".claude/projects/*/{said}.jsonl"))
+    if not found:
+        sys.exit(f"{said}: not an epic, a transcript, or a session id under ~/.claude/projects/")
+    return read_session(found[0])
+
+
+def show(log: Path, line: int, context: int) -> str:
+    """The records around one line of a Claude log, as text."""
+    held = [(n, r) for n, r in jsonl(log) if r.get("type") in ("user", "assistant", "system", "attachment")]
+    here = next((i for i, (n, _) in enumerate(held) if n >= line), len(held))
+    out = []
+    for n, record in held[max(0, here - context) : here + context + 1]:
+        kind = str(record.get("type"))
+        if record.get("subtype"):
+            kind += f":{record['subtype']}"
+        at = parse_at(record.get("timestamp"))
+        head = f"line {n} {kind} " + (dt.datetime.fromtimestamp(at, dt.UTC).strftime("%m-%d %H:%M:%SZ") if at else "")
+        body: list[str] = []
+        attachment = record.get("attachment")
+        if isinstance(attachment, dict):
+            body.append(f"[{attachment.get('type')}] " + one_line(attachment.get("prompt") or attachment.get("content") or "", 600))
+        content = (record.get("message") or {}).get("content") if isinstance(record.get("message"), dict) else None
+        if isinstance(content, str):
+            body.append(content[:2000])
+        for block in content if isinstance(content, list) else []:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "text":
+                body.append(str(block.get("text") or "")[:2000])
+            elif block.get("type") == "tool_use":
+                body.append(f"-> {block.get('name')} {json.dumps(block.get('input'), ensure_ascii=False)[:1000]}")
+            elif block.get("type") == "tool_result":
+                result = block.get("content")
+                lines = (result if isinstance(result, str) else text_of(result)).splitlines()
+                mark = "error" if block.get("is_error") else "result"
+                body.append(f"<- {mark}: " + "\n   ".join(s[:300] for s in lines[:8])
+                            + (f"\n   ... {len(lines) - 8} more lines" if len(lines) > 8 else ""))
+        if record.get("type") == "user" and any(SECRET.search(b) for b in body):
+            body = ["(masked: may hold a secret)"]
+        out.append(head + "\n" + "\n".join("  " + b for b in body if b.strip()))
+    return "\n\n".join(out) or f"no record near line {line}"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("epic", nargs="?", help="epic directory (default: newest of this cwd)")
+    parser.add_argument("source", nargs="?", help="session id, transcript, or epic directory (default: newest epic of this cwd)")
     parser.add_argument("--top", type=int, default=10, help="rows in the top-N tables")
     parser.add_argument("--repeat-min", type=int, default=3, help="times a command must repeat")
     parser.add_argument("--stretch-min", type=int, default=3, help="send-backs that make a stretch")
     parser.add_argument("--no-trace", action="store_true", help="skip hmz.runtime.tracing")
+    parser.add_argument("--show", type=int, metavar="LINE", help="print the records around this line of a log instead")
+    parser.add_argument("--log", help="the log --show reads (default: the first session's), absolute or under the source")
+    parser.add_argument("--context", type=int, default=3, help="records before and after --show's line")
     args = parser.parse_args()
-    epic = Path(args.epic).expanduser() if args.epic else default_epic()
-    if epic.is_file():
-        epic = epic.parent
-    if not (epic / JOURNAL).is_file():
-        sys.exit(f"{epic} holds no {JOURNAL}")
-    print(digest(epic.resolve(), args.top, args.repeat_min, args.stretch_min, not args.no_trace))
+    info = read_source(args.source)
+    if args.show:
+        if args.log:
+            log = Path(args.log).expanduser()
+            log = log if log.is_absolute() else info["base"] / log
+        else:
+            log = next((s["logs"][0] for s in info["sessions"] if s["logs"]), None)
+            if log is None:
+                sys.exit("no session log to show; pass --log")
+        print(show(log, args.show, args.context))
+        return 0
+    print(digest(info, args.top, args.repeat_min, args.stretch_min, not args.no_trace))
     return 0
 
 

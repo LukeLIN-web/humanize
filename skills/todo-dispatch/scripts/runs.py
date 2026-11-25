@@ -4,7 +4,7 @@ A card is a Claude Code session and its transcript says what it did, but nothing
 transcript to the task it was opened for, to the other sessions that worked the same task (an
 overseer, a reviewer) or to how the task ended. This writes that binding, in the shape hmz gives a
 run of a flow (an epic: `epic.jsonl` of `began` / `opened` / `ended` events, the sessions' logs
-under `sessions/`), so one reader serves both: skills/hmz-epic-review/scripts/epic_digest.py.
+under `sessions/`), so one reader serves both: skills/learn/scripts/digest.py.
 
     python3 runs.py list
     python3 runs.py session <run> <role> <claude|codex> <session-id> [--host <label>] [--log <path>]
