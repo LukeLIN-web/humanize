@@ -5,42 +5,16 @@ description: Run a multi-step engineering/research task as an orchestrator that 
 
 # Orchestrate（指挥者模式）
 
-来源：`humanfia/oh-my-humanize` → `packages/coding-agent/src/prompts/system/orchestrate-notice.md`
-（`src/modes/orchestrate.ts` 在消息里出现独立小写单词 `orchestrate` 时把它附在 user 消息后面）。
-这里把它的契约映射到 Claude Code：`task` 子 agent = **Agent 工具**（`subagent_type: general-purpose`），
-`todo` = 本会话 scratchpad 里的 `orchestrate-todo.md`，`bun check` 等门禁 = 仓库自己的检查。
-
 ## 角色
 
 你**拆任务、派活、验收、循环**。能独立交出去的活交给 Agent 子 agent，跟你手上的上下文
 紧耦合的自己做，判据见规则 10。你的工具预算：读文件做规划、Agent 派活、Edit/Write 只做琐碎的内联修补、
 Bash 跑门禁与 git、todo 文件记进度。
 
-## 协作 PR 模式
+## 两种模式：先读对应文件全文再动手
 
-user 要你**并行派 agent 走标准多人协作流程（PR）推进仓库**、并**观察协作摩擦、在流程上解决**时（「来，做 idea 1、2、3」，
-常带 merge queue、SemVer、CI/CD），**先读同目录的 `collab-pr.md` 全文再动手**。要点：
-
-- 两份交付：PR 都合进去；**摩擦台账**（现象 → 流程修补 → 复发没有）——后者是主要的。修流程，不修个案。
-- 顺序：CI/CD 体检（第 0 波只修挡住所有 PR 的）→ 开 issue、定文件归属 → 并行派作者（各自 worktree）→ 零上下文交叉 review
-  → `scripts/merge-queue.sh` 合并（门禁跑在合并结果上，有版本号时由它按 PR 标题做 SemVer）→ 每次合并后广播给在飞的作者。
-- 覆盖下面两条规则：规则 6（user 要的就是 PR 流程，推分支、合并授权内）、规则 9（作者在自己的 worktree 里跑快门禁）。
-
-## 里程碑模式
-
-user 给一个 milestone（「这个 milestone 要做 X」「开个 milestone」「按 milestone 走」），要你从 brainstorm 一路推到合进默认分支时，
-**先读同目录的 `milestone.md` 全文再动手**。它是协作 PR 模式前面加了规划、后面换了门禁：
-
-- 一个 session 只管一个 milestone，开一条 `milestone/<ms>` dev 分支；别的 milestone 各开各的 session。
-- 规划全在 GitHub issue 里，不写本地 md：milestone issue（Points 清单就是 todo）→ 影响微架构的开 decision issue
-  （选项、tradeoff、research、决定；推翻只开新的，历史不改写）→ decision 定了开 feature / infra issue（功能、目标、方案、测试、文件、`Blocked-by:`）。
-- `scripts/ready-issues.py` 按 `Blocked-by:` 算出能派的一批，一条消息并行派；每合一个就再算一次，新就绪的当场派。
-- 作者端到端：自己的 worktree、静态检查、unit + 自己 feature 的 system 测试（要不要自建 unit testbench 自己定）、
-  和便宜的别家模型（advisor）结伴；PR 进 dev 分支，review LGTM 就合，**不等 dev 上的 CI**。
-- 全量测试（静态检查 + unit + system）每次 push dev 时异步跑，红了找到是谁、让他修；dev → 默认分支时同一套全量挡合并（合并队列）。
-  heavy 测试夜跑，不进任何 PR 的门禁；不碰代码逻辑的提交不跑任何测试。
-- 覆盖下面工作流第 2 步（todo 是 milestone issue，不是 scratchpad 文件）、规则 5（作者的 PR 合进 dev 不等 dev 的测试；dev → 默认分支红灯不前进）、
-  规则 6 和规则 9（同协作 PR 模式；作者自己跑测试）。
+- **协作 PR 模式**：user 要你并行派 agent 走 PR 流程推进仓库、观察协作摩擦并在流程上解决（「来，做 idea 1、2、3」，常带 merge queue、SemVer、CI/CD）。读同目录的 `collab-pr.md`；它覆盖规则 6、9。
+- **里程碑模式**：user 给一个 milestone（「这个 milestone 要做 X」「开个 milestone」「按 milestone 走」），要你从 brainstorm 一路推到合进默认分支。读同目录的 `milestone.md`；它覆盖工作流第 2 步和规则 5、6、9。
 
 ## 十条规则
 
@@ -113,15 +87,8 @@ user 给一个 milestone（「这个 milestone 要做 X」「开个 milestone」
 - **语法/导入**：用仓库自己的解释器 `python -c "import <module>"`，不要用系统 python。
 - **静态检查先行**：能用脚本静态查出来的（lint、类型、shellcheck、schema、import、禁用写法的 grep）都放进仓库的静态检查脚本，
   每次先于测试跑。review 里同一类意见第二次出现，就把它写成一条检查，不再靠人看。
-- **测试分层**：unit（单个模块，邻居用 stub / fake，秒级）/ system（跨模块、走真入口）/ heavy（GPU、大数据、长回归，夜跑）。
-  用 marker 或目录分开，每层一条命令；PR 的门禁只含 unit + system。
-- **全量跑、不 fail-fast，第一处失败就开始修**：不加 `-x` / `--maxfail` / `-failfast`，一次把问题全暴露出来；测试命令要逐条打印结果
-  （pytest 加 `-v -rfE`，只打点的 `-q` 要到跑完才列失败）。用 `scripts/snapshot-run.sh` 在快照里后台跑，日志里一出现第一条失败
-  就开始修（规则 9 下由你派修补子 agent，不等跑完）；修的是工作树，快照不受影响。跑完拿完整失败列表一起修，
-  先只重跑失败的（测试 ID 从日志里取：快照跑完就删，`--lf` 这类缓存跟着没了），最后全量再跑一遍。
-  这样就没有「跑 → 第一处红 → 修 → 从头再跑 → 下一处红」的串行循环。用法和取失败 ID 的命令见脚本开头。
-- **不碰代码逻辑就不跑测试**：`scripts/touches-logic.sh <base>`（到工作树为止，没提交的改动也算）退出 1，即改的全是文档这类非逻辑文件，
-  就不跑任何测试；CI 用两个参数 `<base> <head>`，同一个判据（`milestone.md` 第 6 步）。
+- **测试**：unit / system / heavy 分层、全量跑不 fail-fast（`scripts/snapshot-run.sh` 在快照里跑，第一处失败就开始修）、
+  不碰代码逻辑就不跑测试（`scripts/touches-logic.sh`），见 `milestone.md` 第 3 步作者派单的「测试」、第 6 步和第 8 步。
 - **离线核对**：把新代码跑在已有的、标签已知的产物上，和旧标签逐字节比；这是比单测强得多的判据。
 - **冒烟**：真实入口、最小规模（1 个 task、2 个 episode、1 张卡），看产物目录里有没有东西，再放量。
 - **放量跑**：按 `background-tasks-freeze-with-session` 用 `setsid nohup` 挂在盒子上并验 `ppid=1`；
@@ -132,8 +99,7 @@ user 给一个 milestone（「这个 milestone 要做 X」「开个 milestone」
     跑的是钉住的代码快照还是活目录；「覆盖」和「封顶」有没有弄反；杀进程会不会留下还在写的孤儿；冒烟有没有走到每个分支。
   - **收尾**（合并之前）审结果页对产物：每个数能不能从产物现算出来；配对、对照是不是同开局、同代码；
     判据和冻结的口径一致；措辞不比数据强。
-  - 结论评论到 goal 的 issue 上：首行 `复审：LGTM` 或 `复审：CHANGES`，后面写核了什么；CHANGES 修完再审一轮，最多审 2 轮：第 2 轮还是 CHANGES，照它给的替换修完就收尾、不再审（user 2026-10-15 由 3 轮改 2 轮，2026-11-14 定为每个仓库）。
-    本工作区的合并脚本见到结果页改过、issue 上最后一条复审不是 LGTM，会拒绝合并。
+  - 审的结论记在哪、最多审几轮、合并闸，照仓库的 `CONTRIBUTING.md` 和 memory。
   旁观者（monitor-claude-goal）是第三道，不是门禁：它每小时才看一次，抓到时 GPU 已经烧了。
 
 ## 长 GPU 作业（发射 → 盯 → 读）
@@ -149,14 +115,12 @@ goal 的主体是几小时的训练 / 评测 / 采集时，按这个形状跑（
    每小时读产物时看。重挂不重放：日志从当前末尾读起（`tail -n0 -F`；别的机器经 NFS 写的日志记偏移轮询），按状态变化吐行的
    脚本先把现值记成上一次、变了才吐（agent-harness 的 `scripts/watch_job.py` 就这么读）。管道里的过滤写
    `command grep --line-buffered`（Bash 工具里的 `grep` 是包 ugrep 的函数，在常驻管道里不逐行吐）。另外每小时读一次真实产物、重算不变量。
-5. **等的时候不空等**：派不在关键路径上的活（分析脚本、结果页骨架、下一阶段的准备）；不在前台 sleep。
+5. **等的时候不空等**：派不在关键路径上的活（分析脚本、结果页骨架、下一阶段的准备）。
 6. **读数 → 收尾审 → 合并。**
 
 ## 本工作区的附加裁定（覆盖默认）
 
-- **不用 `AskUserQuestion`**；不停下来问审批。GPU 活直接发射，发射的同一条消息说清在跑什么。
-- 子 agent 的派单里也写上：不许用 AskUserQuestion，拿不准就按派单里的假设做并在报告里摊开。
-- **等待不占前台**：超过约一分钟的等待放后台（`run_in_background` 的 until 循环或 Monitor），前台 Bash 不 sleep 等，
-  这样 user 和旁观者的消息不会被压住。
+- **等待不占前台**：超过约一分钟的等待用 Monitor（到期重挂，见「长 GPU 作业」第 4 步），不换成 `run_in_background` 的
+  until / sleep 循环（会睡死）；前台 Bash 不 sleep 等，这样 user 和旁观者的消息不会被压住。
 - 一次性脚本（核对、探针）落 scratchpad，不进仓库；进仓库的只有要长期用的代码。
 - 实验结果写进仓库 `docs/` 的结果页，不写 memory；memory 只留规则、坑、配方。
