@@ -16,53 +16,41 @@ Choose the CLI from the running parent, not from this skill's directory: a Codex
 
 ## One-time connection setup (once per task chain)
 
-1. **Exclusive session name**: `S=<agent>_<purpose>` (e.g. `myagent_train`). Never reuse a session another agent is using — you would interleave commands, fight over the pane, and mix outputs. Check first with `tmux has-session -t "$S" 2>/dev/null`; skip straight to "Sending prompts" only if it belongs to your own task chain and already runs the selected CLI. If it runs another CLI, leave it intact and choose a new exclusive name.
+1. **Exclusive session name**: `S=<agent>_<purpose>` (e.g. `myagent_train`). Never reuse a session another agent is using — you would interleave commands, fight over the pane, and mix outputs. Check first with `tmux -L <private-socket> has-session -t "$S" 2>/dev/null` (socket: step 2); skip straight to "Sending prompts" only if it belongs to your own task chain and already runs the selected CLI. If it runs another CLI, leave it intact and choose a new exclusive name.
 
-2. **Open the local tmux and ssh (the only ssh of the whole workflow)**:
+2. **Open the local tmux on a private socket and ssh (the only ssh of the whole workflow)**:
    ```bash
-   tmux new-session -d -s "$S" -x 220 -y 50
-   tmux send-keys -t "$S" 'ssh <host>' Enter
+   T="tmux -L <private-socket>"   # every tmux call of the chain goes through $T
+   $T new-session -d -s "$S" -x 220 -y 50
+   $T send-keys -t "$S" 'ssh <host>' Enter
    ```
-   If the task chain works on a GitHub issue `#N`, tag this session and the remote tmux layer you open later, each on its own server, so CI can close them once the issue closes: `tmux set-option -t "=$S:" @issue N`.
+   Never the default socket (inside a tmux-hosted agent a bare `tmux` lands there via `$TMUX`): tools that scan it, such as a session dashboard, open their own windows in your session, and your send-keys then land in another agent's input box.
+   If the task chain works on a GitHub issue `#N`, tag this session and the remote tmux layer you open later, each on its own server, so CI can close them once the issue closes: `$T set-option -t "=$S:" @issue N`.
 
-3. **Wait for login** (end-marker with bounded polling, never a fixed sleep). The
-   marker MUST contain a shell expansion so that only a real remote shell can
-   produce the matched string: the send-keys text is also echoed back by the
-   terminal (and would be echoed verbatim by a host-key/password prompt), so
-   grepping for a literal marker can false-positive on the command echo before —
-   or without — any shell executing it.
+3. **Wait for login** with the shell-command helper (see "Sending"), bounded, never a fixed sleep:
    ```bash
-   tmux send-keys -t "$S" 'echo MARK_login_"$(echo OK)"_END' Enter
-   for i in $(seq 1 30); do
-     tmux capture-pane -p -t "$S" | grep -q 'MARK_login_OK_END' && { login=ok; break; }
-     tmux capture-pane -p -t "$S" | grep -qiE 'permission denied|authenticity of host|password:|connection (refused|closed|timed out)' && break
-     sleep 2
-   done
-   [ "${login:-}" = ok ] || { tmux capture-pane -p -t "$S" | tail -5; echo "LOGIN FAILED"; }
+   <skill-dir>/scripts/rrun.sh <private-socket> "$S" <host> 60 true
    ```
-   `MARK_login_OK_END` never appears literally in what was typed — a prompt
-   echoing the command back shows `"$(echo OK)"` unexpanded — so a match proves an
-   authenticated shell ran the command. On a password/host-key prompt or a refused
-   connection the loop surfaces the failure instead of treating it as logged in.
+   `<host>` is what `hostname -s` prints on the remote, not the alias you ssh to. Exit 0: a shell on `<host>` ran the command. Exit 3: ssh failed and the pane is back on the local shell, which a marker without the host check (`$(echo OK)`) would report as logged in. Exit 124 prints the pane tail (password or host-key prompt, refused connection).
 
 4. **Open the remote tmux + selected agent session**:
    ```bash
-   tmux send-keys -t "$S" 'tmux new -A -s '"$S" Enter
+   $T send-keys -t "$S" 'tmux new -A -s '"$S" Enter
    ```
-   If this attaches to an existing remote session, inspect the pane before sending a shell marker or launch command: continue with prompts only if it belongs to this task chain and already runs the selected CLI; leave a mismatched session intact and use a new exclusive name. For a shell in this task chain's remote tmux, confirm it with a marker, then mark the pane as a parent-controlled helper, so the board keeps it off the dashboard cards (history and session-id lookup still find it):
+   If this attaches to an existing remote session, inspect the pane before sending a shell marker or launch command: continue with prompts only if it belongs to this task chain and already runs the selected CLI; leave a mismatched session intact and use a new exclusive name. For a shell in this task chain's remote tmux, confirm it with `rrun.sh … true`, then mark the pane as a parent-controlled helper, so the board keeps it off the dashboard cards (history and session-id lookup still find it):
    ```bash
-   tmux send-keys -t "$S" 'tmux set-option -p @fleet-passive 1' Enter
+   $T send-keys -t "$S" 'tmux set-option -p @fleet-passive 1' Enter
    ```
    Then run **one** of the following.
 
    For a **Codex parent** (including a Codex goal), start the interactive Codex TUI. Keep it in this pane with `--no-daemon`, so the board can still map it to its session, and skip the startup update picker:
    ```bash
-   tmux send-keys -t "$S" 'cd <remote-workdir> && codex --no-daemon -c check_for_update_on_startup=false' Enter
+   $T send-keys -t "$S" 'cd <remote-workdir> && codex --no-daemon -c check_for_update_on_startup=false' Enter
    ```
 
    For a **Claude Code parent**:
    ```bash
-   tmux send-keys -t "$S" 'cd <remote-workdir> && claude' Enter
+   $T send-keys -t "$S" 'cd <remote-workdir> && claude' Enter
    ```
    Wait until the selected CLI has finished starting (its input box / prompt appears in capture-pane) before sending the first prompt. Pass the selected CLI in the collaborator's handoff so any further remote collaborators use it too.
 
@@ -70,19 +58,18 @@ Choose the CLI from the running parent, not from this skill's directory: a Codex
 
 - **Send the text and the Enter separately**; send the text with `-l` (literal, so tmux does not interpret `;`, `$`, etc.):
   ```bash
-  tmux send-keys -t "$S" -l '<prompt or command text>'
+  $T send-keys -t "$S" -l '<prompt text>'
   sleep 1
-  tmux send-keys -t "$S" Enter
+  $T send-keys -t "$S" Enter
   ```
-- When sending commands to a remote shell (not the agent), append a unique marker: `…; echo MARK_<uniq>_END`. Use a fresh suffix for every command so you never match a stale marker from a previous one.
+- **Shell commands** to a remote shell (not the agent) go through `<skill-dir>/scripts/rrun.sh <private-socket> "$S" <host> <timeout_s> '<command>'`, not a wrapper of your own. Before every command it asserts the pane is on `<host>` (after a dropped ssh the pane is silently back on the local shell, and "remote" commands run there without error). The command travels base64-encoded, so `!` (history expansion in the remote interactive bash: `event not found`, nothing runs), `''`, nested quotes and multiple lines arrive intact. It prints the output between fresh per-call markers and exits with the command's status; its header lists the rest.
 
 ## Reading output / detecting completion
 
-- Read: `tmux capture-pane -p -t "$S"` (add `-S -2000` for scrollback history).
-- Completion: bounded polling for the marker (shell commands) or for the selected agent's output state; always set an upper bound on the wait. For long jobs, judge completion by artifacts (files appearing, byte counts growing), not by guessing from pane text.
+- Read: `$T capture-pane -p -t "$S"` (add `-S -2000` for scrollback history).
+- Completion: `rrun.sh` polls shell commands; for the agent, poll its output state; always set an upper bound on the wait. For long jobs, judge completion by artifacts (files appearing, byte counts growing), not by guessing from pane text.
 
 ## Teardown and discipline
 
-- **Keep the tmux alive**: do not kill the session while the task chain is unfinished. Only after everything is confirmed done, `tmux kill-session -t "$S"` locally; the remote tmux is usually left in place for later inspection.
+- **Keep the tmux alive**: do not kill the session while the task chain is unfinished. Only after everything is confirmed done, `$T kill-session -t "$S"` locally; the remote tmux is usually left in place for later inspection.
 - Never `pkill -f`; never `kill -9` remote CUDA processes.
-- Never fall back to one-shot `ssh host 'cmd'` — even read-only probes go through the established session.
