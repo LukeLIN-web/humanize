@@ -16,8 +16,6 @@ argument-hint: "[文件或目录,默认 docs/]"
 | `docs-ssot-tighten` | 这个数在别的页是不是又抄了一遍？ |
 | **`docs-prose-tighten`** | **这一句删了，读者会不会信错东西？** |
 
-三者正交。jargon-pass 改「看不懂」，ssot-tighten 删「跨页复本」，这里删「页内空句」。
-
 ## 唯一的检验
 
 对每一句、句里的每个数问：
