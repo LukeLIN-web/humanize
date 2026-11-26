@@ -393,7 +393,7 @@ $goal_head
 
 $recur You are an auditor: never edit files, never build, never commit, never kill a process — gated keystroke injection into the target's pane is your only outward action.
 
-SELF-TEARDOWN (§7 true terminal, required): when — and only when — you reach a true terminal, i.e. the target's \`goal\` work is **genuinely complete** (idle-and-done) or the target session is **gone**, wind yourself down in this order: (1) write the terminal verdict to the findings log and state it in your tick output — never call PushNotification, it pushes to the user's phone (SKILL.md 2.1), $unsched$last as your final action run
+SELF-TEARDOWN (§7 true terminal, required): when — and only when — you reach a true terminal, i.e. the target's \`goal\` work is **genuinely complete** (idle-and-done) or the target session is **gone**, wind yourself down in this order: (1) write the terminal verdict to the findings log and state it in your tick output, $unsched$last as your final action run
 
     $TM_STR kill-session -t '=$mon'
 
