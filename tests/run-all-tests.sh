@@ -125,6 +125,7 @@ TEST_SUITES=(
     "../skills/orchestrate/scripts/test-milestone-scripts.sh"
     # todo-dispatch skill scripts
     "../skills/todo-dispatch/scripts/test-dispatch.py"
+    "../skills/todo-dispatch/scripts/test-scan.py"
     # Robustness tests
     "robustness/test-state-file-robustness.sh"
     "robustness/test-session-robustness.sh"

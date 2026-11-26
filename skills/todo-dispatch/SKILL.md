@@ -1,6 +1,6 @@
 ---
 name: todo-dispatch
-description: One tick of the todo dispatcher loop (`/loop 30m /todo-dispatch`) — open a claude-board card for every unclaimed open todo item, fix collaboration friction between the parallel sessions in the process (merge queue, SemVer, CI/CD), push the shared default branch through the gate, and run one gpu-priority round. Triggers: 看 todo 派活、没人做的开 session 去做、todo 派单循环、观察协作摩擦、dispatcher loop.
+description: One tick of the todo dispatcher loop (`/loop 30m todo dispatch`) — open a claude-board card for every unclaimed open todo item, fix collaboration friction between the parallel sessions in the process (merge queue, SemVer, CI/CD), push the shared default branch through the gate, and run one gpu-priority round. Triggers: 看 todo 派活、没人做的开 session 去做、todo 派单循环、观察协作摩擦、dispatcher loop.
 argument-hint: "[可选：只看 todo 的哪一节]"
 ---
 
@@ -9,7 +9,7 @@ argument-hint: "[可选：只看 todo 的哪一节]"
 user 的原话（2026-10-14）：「你的任务就是看 todo，然后把没人做的，你新建 claude board card claude session 去做，没别的了，
 他们做完应该自己标注 todo done。你要研究的是观察协作摩擦、在流程上解决，考虑 merge queue、SemVer、CI/CD。」
 
-定时跑：`/loop 30m /todo-dispatch`（插件装法下叫 `/humanize:todo-dispatch`）。每轮按下面七步走完再停，不在两轮之间常驻。`/loop` 起的定时 7 天到期，末次触发后自己删掉、不报错，之后一轮都不跑：每天第一轮（本地 0 点那个小时）`CronList` 找到这条，`CronDelete` 掉再 `CronCreate` 一条同样的，7 天就到不了。
+定时跑：`/loop 30m todo dispatch`，写纯文本，不写 `/todo-dispatch`：斜杠形式每轮把整篇正文重新注入一次，上下文涨到撑爆为止。本 skill 在会话开头用 Skill 调一次（插件装法下叫 `humanize:todo-dispatch`），之后何时重读见「每轮开头：扫描」。每轮按扫描和下面七步走完再停，不在两轮之间常驻。`/loop` 起的定时 7 天到期，末次触发后自己删掉、不报错，之后一轮都不跑：每天第一轮（本地 0 点那个小时）`CronList` 找到这条，`CronDelete` 掉再 `CronCreate` 一条同样的，7 天就到不了。
 
 **派单员的会话名要手起**：会话名是别的会话找你的地址（派单里的「我是…」、issue 评论、SendMessage）。Claude Code 自动起的名是 `<目录名>-<2 位十六进制>`，只有 256 个，而且自动名不查重，同目录的会话会撞。手起的名会查重，撞了会自己让位改名。所以起循环的会话用 `claude -n <目录名>-dispatcher` 开，已经在跑的由 user 打 `/rename <目录名>-dispatcher`。会话起头查一次自己的名：
 
@@ -25,17 +25,21 @@ python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("name")
 你是派单员和流程维护者，**不做条目本身的活**。五件事：派活、看摩擦、修流程、推共享默认分支、照 GPU 排程转达和核对。
 条目的认领、进度、做完都由派出去的会话自己写；你只读台账、不替它们改条目。
 
-## 先读的（每轮重读，不凭上一轮的记忆）
+## 每轮开头：扫描
 
-- 目标仓库根目录的 `CLAUDE.md`、`CONTRIBUTING.md`：待办台账在哪、认领规则、认领工具、门禁命令、提交与推送规则。
-- 摩擦台账（目标仓库的 `docs/collab-friction.md`，没有就建）：上一轮记到哪、哪些修补在「待核」。
-- `git log` 自上一轮以来的提交（新会话没有「上一轮」：从摩擦台账最后一行的时间算起）、`gh run list -R <origin>` 最近的 CI、`ListAgents` 和 board 上的卡片。
+在目标仓库里跑 `python3 <本 skill>/scripts/scan.py`（台账不在 `docs/todo.md` 就加 `--todo <路径>`）。它和上一轮比（状态在 `.humanize/dispatch-scan/`，不入库），列出这一轮要处理的事；比哪些见脚本开头的说明。
+
+- 打印「无变化：…。这一轮到此收尾。」：汇报就回这一行，这一轮结束：不推、不读卡、不走 GPU 排程、不重列等 user 的条目。只有上一轮第 5 步退出 3 时，先再跑一次第 5 步。
+- 否则只处理它列出的事，七步里和它们无关的跳过。
+- 「今天第一轮」：续定时（见上），台账的 open 条目全部重新分类，等 user 的条目在汇报里重列一次。
+- 「重读 skill」，或这一轮之前刚压缩过上下文：用 Skill 重读本 skill 和 gpu-priority 再往下走；其余轮次照会话里已有的正文做。
+- 目标仓库根的 `CLAUDE.md` 自动加载；`CONTRIBUTING.md`（台账在哪、认领规则和工具、门禁、提交与推送）会话开头读一次，`git log` 里它改过再重读。摩擦台账（目标仓库的 `docs/collab-friction.md`，没有就建）要记一行或核「待核」的修补时才读。
 
 ## 一轮七步
 
 ### 1. 分类台账里的 open 条目
 
-读**工作树**里的台账（会话的进度常常还没提交）；某条在工作树和 HEAD 里不一样，说明有人正在改它，这一轮跳过。
+分类扫描列出的条目（今天第一轮是全部）。扫描读的是**工作树**里的台账（会话的进度常常还没提交）；某条在工作树和 HEAD 里不一样，说明有人正在改它，扫描等它提交了才列。
 「条目」只认认领工具认得的待办行（Markdown 台账是带 `- [ ]` / `- [x]` 复选框的列表行，HTML 台账是带 class 的 `<li>`；不带的是说明，不是条目）。逐条读全文（含子条目），还要读别的条目里提到它的话（交接、先后常写在另一条里）。只认这六类：
 
 | 类 | 判据 | 动作 |
@@ -64,19 +68,16 @@ python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("name")
   ② 照条目写的做，按仓库 CLAUDE.md、CONTRIBUTING.md 和 memory 的规则跑。<条目特有的边界：不碰哪些在跑的作业、预算闸、和哪一条不叠加> 一次性读数缺包就用机器上已有 venv 的 Python，不新建；等作业用 Monitor 的 until 循环、到期就重挂，只吐失败、停更和一段跑完（不吐局数进度，重挂不重放旧行），不写 sleep 接命令，也不换成后台 Bash 的等待（会睡死）；rm 的路径写成字面量，不带 shell 变量。
   ③ 做完用 <认领工具> 把它标成做完；判成不做或撒手，把判断写进条目、放掉认领。要 user 拍板的直接问 user。」
 - **超过 5 小时的活用 `/goal` 起**（user 2026-10-23「超过5个小时的任务，要用goal 启动。」）：按条目要跑的作业估墙钟（等卡、训练、整场评测、批量生成，按已量的每步、每局秒数算），超过 5 小时或拿不准的，派单前面加 `/goal `——Claude Code 自带的目标，会话一直做到 ③ 达成；goal 钩子据此起旁观者。整条不到 800 字：Claude Code 把一次打进来 800 字以上的输入当粘贴，`/goal` 就成了普通消息（dispatch.py 超长拒发；打进现成卡也一样），细节留在条目里让它读。压字数从条目特有的边界里删，② 末尾那几句通用的（Monitor 到期重挂、不换成后台 Bash 的等待、rm 写字面量）照抄不删。现成卡上已有在跑的 `/goal`，别往里打新的（会顶掉它的目标），开新卡。
-- **验收**（下一轮第 1 步，不在本轮里等）：那条有没有认领标记、`git log` 有没有认领提交。没认上的卡记一条摩擦，再派一次。
+- **验收**（下一轮，不在本轮里等；扫描会列出新开的卡）：那条有没有认领标记、`git log` 有没有认领提交。没认上的卡记一条摩擦，再派一次。
 
 ### 3. 看摩擦
 
-两路来源，缺一不可：会话发回来的消息和报告里的「摩擦」节；你从事件里量的。每轮至少查这些：
+两路来源，缺一不可：会话发回来的消息和报告里的「摩擦」节；你从事件里量的。扫描已经列出清理类提交（「退回」「误带」「revert」「冲突取」，和**别人**做的「并入 origin」）、带了别的文件的认领提交、新红的 CI、本地默认分支和 origin 的差距。它列出这些或「卡 不见了」时，再查：
 
-- 清理类提交：`git log` 里的「退回」「误带」「revert」「冲突取」，以及**别人**做的「并入 origin」（第 5 步脚本自己的合并提交消息正好是 `并入 origin/<分支>`，不算）；
-- 默认分支上的 CI 红：哪次红、红了多久、红着时有几次推；
-- 本地默认分支和 origin 的差距：`git rev-list --left-right --count <分支>...origin/<分支>`；
-- 认领碰撞：同一条被两个会话认领、认领后卡片没了、认领提交里带了别人的改动（`git show --stat` 看认领提交是不是只改一行）；
+- CI 红了多久、红着时有几次推；
+- 认领碰撞：同一条被两个会话认领、认领后卡片没了；
 - 热点文件：`git log --since=<上一轮> --name-only` 计数，最高的几个；
-- 会话里反复撞的错：本机有 `agentshark` 时跑 `agentshark index && agentshark failures --since <上一轮> --signatures`，看 SESSIONS ≥ 2 的签名——权限拦截（policy 族：一条命令多个操作、`cd` 后跑 git、变量没法预检）、worktree 隔离拦截、同一个缺文件。只读本机日志，跨机的不在里面；没装就跳过这项；
-- 修补后的复发：台账里每条「待核」的修补，这一轮同类现象出现没有。
+- 修补后的复发：台账里每条「待核」的修补，同类现象又出现没有。
 
 每条写进摩擦台账一行：时间 / 涉及谁 / 现象（可观察的）/ 代价 / 根因 / 流程修补（落在哪个文件、哪个 PR）/ 复发没有。
 
@@ -89,7 +90,7 @@ python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("name")
 
 ### 5. 推共享默认分支
 
-user 2026-10-14：共享工作树的本地默认分支由派单员推。每轮跑一次：
+user 2026-10-14：共享工作树的本地默认分支由派单员推。扫描列出「推送」的那一轮跑一次：
 
 ```bash
 bash <本 skill>/scripts/push-shared-main.sh            # 在目标仓库里跑；门禁默认 bash scripts/ci_check.sh，别的用 --gate '<命令>'
@@ -108,19 +109,19 @@ bash <本 skill>/scripts/push-shared-main.sh            # 在目标仓库里跑�
 
 ### 6. GPU 排程
 
-用 Skill 调 `gpu-priority`（插件装法下 `humanize:gpu-priority`），参数 `loop`（user 2026-10-23「让 todo dispatch 自动调用一下这个 skill.」）。它只提醒 user 拍过板、已经到点的那几步，核对放卡和领卡；要新拍板的写进排程文件的「待 user 拍板」，由第 7 步转给 user。不管条目是不是你派的，全集群的卡都看。
+扫描列出 GPU 行或「排程到点」时，照 gpu-priority 的 `loop` 一节走一轮（user 2026-10-23「让 todo dispatch 自动调用一下这个 skill.」）；没列就只写「GPU 照排程」。gpu-priority 的正文在会话开头用 Skill 读一次（插件装法下 `humanize:gpu-priority`），重读的时机同本 skill。它只提醒 user 拍过板、已经到点的那几步，核对放卡和领卡；要新拍板的写进排程文件的「待 user 拍板」，由第 7 步转给 user。不管条目是不是你派的，全集群的卡都看。
 
 ### 7. 汇报
 
 一段短的：这一轮派了谁（卡、会话名、条目）、哪些条目在等 user（每条一句为什么）、新记的摩擦和修补进度、推送结果、GPU（提醒了谁接哪几张卡；「待 user 拍板」里的建议原样列出）。
-**派出去的会话问 user 的话只落在它自己的 pane 里**，user 多半看不到：每轮读每张派出去的卡最近一条输出
+**派出去的会话问 user 的话只落在它自己的 pane 里**，user 多半看不到：扫描列出在问、等对话框、停住、一轮结束的卡，读它最近的输出
 （board 的 `GET /api/windows/<key>/timeline`，跨机的卡由 board 转发），在等 user 定的问题连同它给的选项和建议原样转给 user，
 并说明它停着占了什么（卡、服务）。转述台账里等 user 的条目前，当场重读那一条的现行文字，别用早先读到的（条目常被别的会话改过）。
 user 已经裁定过的事不再问。不用 AskUserQuestion。
 
-**等卡 5 小时以上的卡收尾、关掉**（user 2026-11-03「以后如果一个 agent 要等 5 个小时以上卡, 你就让他 grace 结束, 把 card 关了, 到时候再开, 这样节省 token.」）：每轮读卡时，对每张在等 GPU 的卡（最近几条输出是「等卡」「监视已重挂」这类、名下没有在跑的作业）按排程文件估它的领卡时刻：已经空等了 5 小时，或离领卡还有 5 小时以上，而且它手上没有不用卡的活，就用 `/prompt` 让它收尾——在跑的作业和已登记的 gpu_wait 不停，做到哪、发射件、下一步写进 issue 或条目，会话内的 Monitor 和定时器撤掉，写一句「交接已写完，可以关卡」。下一轮核到这句和交接，用 `POST /api/windows/<key>/close` 关卡；关之前在同一条命令里重读它的 timeline，交接之后它收到过 user 的输入（Stop hook、后台通知不算）或又开始动手，就不关——用 `/goal` 起的卡不能留到下一轮：目标没达成，goal 钩子不让它停，它写完交接后会每几秒被打回一次、回一句「还在等卡」，一直空转；这种卡发完收尾消息后在同一轮里盯它的 timeline，交接一落到 issue 就关。读卡时看到连着几条 `user_text` 是「Stop hook feedback」的卡，就是这种空转，核到交接后立刻关。关卡后在排程文件「没排的」记一行「等 <主机> <卡> 约 HH:MM → 重开卡续 <条目>」；领卡前约 30 分钟开新卡，派单里写「接着做 <条目>，先读 #N 最后的交接」。你自己给一件活定「排在后面、最早今晚」的那一刻就照这条判，不等它空转几轮。**只剩等 user 拍板的 `/goal` 卡也这样收尾、关掉**（user 2026-11-18「可以」：名下没有在跑的作业、目标只差 user 的一个选择时，goal 钩子同样每几秒把它打回一次）：让它把选项、它的建议和下一步写进 issue，核到就关，排程文件「没排的」记「等 user 定 <哪件> → 重开卡续 <条目>」；user 答了再开卡，派单里写 user 的答复原话和「先读 #N 最后的交接」。空着的、做完的卡照旧不关。
+**等卡 5 小时以上的卡收尾、关掉**（user 2026-11-03「以后如果一个 agent 要等 5 个小时以上卡, 你就让他 grace 结束, 把 card 关了, 到时候再开, 这样节省 token.」）：扫描列出某张卡「5 小时没变」或 GPU 排队里多了它时，看它是不是在等 GPU（最近几条输出是「等卡」「监视已重挂」这类、名下没有在跑的作业），是就按排程文件估它的领卡时刻：已经空等了 5 小时，或离领卡还有 5 小时以上，而且它手上没有不用卡的活，就用 `/prompt` 让它收尾——在跑的作业和已登记的 gpu_wait 不停，做到哪、发射件、下一步写进 issue 或条目，会话内的 Monitor 和定时器撤掉，写一句「交接已写完，可以关卡」。下一轮核到这句和交接，用 `POST /api/windows/<key>/close` 关卡；关之前在同一条命令里重读它的 timeline，交接之后它收到过 user 的输入（Stop hook、后台通知不算）或又开始动手，就不关——用 `/goal` 起的卡不能留到下一轮：目标没达成，goal 钩子不让它停，它写完交接后会每几秒被打回一次、回一句「还在等卡」，一直空转；这种卡发完收尾消息后在同一轮里盯它的 timeline，交接一落到 issue 就关。扫描列出「空转」的卡就是这种，核到交接后立刻关。关卡后在排程文件「没排的」记一行「等 <主机> <卡> 约 HH:MM → 重开卡续 <条目>」；领卡前约 30 分钟开新卡，派单里写「接着做 <条目>，先读 #N 最后的交接」。你自己给一件活定「排在后面、最早今晚」的那一刻就照这条判，不等它空转几轮。**只剩等 user 拍板的 `/goal` 卡也这样收尾、关掉**（user 2026-11-18「可以」：名下没有在跑的作业、目标只差 user 的一个选择时，goal 钩子同样每几秒把它打回一次）：让它把选项、它的建议和下一步写进 issue，核到就关，排程文件「没排的」记「等 user 定 <哪件> → 重开卡续 <条目>」；user 答了再开卡，派单里写 user 的答复原话和「先读 #N 最后的交接」。空着的、做完的卡照旧不关。
 
-**Fable 周额度满了的账号，卡切成 Opus**（user 2026-11-13；2026-11-16「dispatch skill 还要负责一个事情, 就是把 fable 满了的切换到 opus.」）：每轮对 board 上有卡的每个账号读一次 `POST /api/usage`（同账号的几台读一台）。「Current week (Fable)」到 100% 的账号，把它各台上 `model` 还是 Fable 的卡都用 `POST /api/windows/<key>/model`（body `{"model": "opus"}`）切成 Opus，不等它撞限：全 board 的卡都切，不只这个仓库的、不只你派的；派单员自己那张也切（user 2026-11-16「让我到 100% 时自己切成 Opus 接着跑」）：撞限之后自己就停住、切不了，所以自己那个账号的 Fable 读数到 95% 的那一轮就把自己的卡切成 Opus，汇报里说一句。已经撞限的卡（timeline 最近的输出里有「Fable limit」：见过「You've hit your Fable limit」「You've reached your Fable limit」两种写法，按「Fable limit」匹配，任何 `kind` 的事件都算）已经停住、后台通知也不会处理：切完再用 `/prompt` 打一句让它接着做，并列出停着这段它没处理的后台通知（timeline 里撞限之后的 `user_text`）。汇报里说切了哪几张、哪个账号、撞限的停了多久。不等 user 来切；到那个账号的 `resets` 之前不切回 Fable。
+**Fable 周额度满了的账号，卡切成 Opus**（user 2026-11-13；2026-11-16「dispatch skill 还要负责一个事情, 就是把 fable 满了的切换到 opus.」）：扫描按账号读「Current week (Fable)」，列出要切的卡：到 100% 的账号上 `model` 还是 Fable 的卡，用 `POST /api/windows/<key>/model`（body `{"model": "opus"}`）切成 Opus，不等它撞限：全 board 的卡都切，不只这个仓库的、不只你派的；派单员自己那张也切（user 2026-11-16「让我到 100% 时自己切成 Opus 接着跑」）：撞限之后自己就停住、切不了，所以自己那个账号到 95% 扫描就列出它，那一轮切，汇报里说一句。扫描列出「撞限」的卡已经停住、后台通知也不会处理：切完再用 `/prompt` 打一句让它接着做，并列出停着这段它没处理的后台通知（timeline 里撞限之后的 `user_text`）。汇报里说切了哪几张、哪个账号、撞限的停了多久。不等 user 来切；到那个账号的 `resets` 之前不切回 Fable。
 
 ## 不做
 
@@ -130,4 +131,4 @@ user 已经裁定过的事不再问。不用 AskUserQuestion。
 
 ## 目标仓库的接线
 
-本仓库公开：主机、路径、端口、账号这类接线一律写在目标仓库的 fleet 配置里，不写进本仓库。fleet 配置是 `$HUMANIZE_FLEET_CONFIG`，没设就是当前 git checkout 根下的 `.humanize/fleet.yaml`；`scripts/dispatch.py` 的 `fleet()` 读它，`board.dir`（board 的 checkout）、`board.aggregator` 和 `board.tunnel_port`（`board.tunnel_port`：别的主机到聚合 board 的隧道在本机这一头的端口；`board.aggregator`：隧道那头的主机，只用在印出的 ssh 命令里）、`dispatch.card_hosts`（能开新卡的主机，dispatch.py 拒绝别的）由代码用，其余键（不开卡的主机和原因、同账号的主机、用量命令、`gpu.plan`）每轮读一遍照做。台账、认领工具、门禁、推送规则照目标仓库的 `CLAUDE.md`、`CONTRIBUTING.md`。
+本仓库公开：主机、路径、端口、账号这类接线一律写在目标仓库的 fleet 配置里，不写进本仓库。fleet 配置是 `$HUMANIZE_FLEET_CONFIG`，没设就是当前 git checkout 根下的 `.humanize/fleet.yaml`；`scripts/dispatch.py` 的 `fleet()` 读它，`board.dir`（board 的 checkout）、`board.aggregator` 和 `board.tunnel_port`（`board.tunnel_port`：别的主机到聚合 board 的隧道在本机这一头的端口；`board.aggregator`：隧道那头的主机，只用在印出的 ssh 命令里）、`dispatch.card_hosts`（能开新卡的主机，dispatch.py 拒绝别的）、`dispatch.shared_accounts`（同账号的主机，scan.py 按它合算 Fable 用量）和 `gpu.plan`（排程文件，scan.py 读它「接下来」里到点的行）由代码用，其余键（不开卡的主机和原因、用量命令）开卡前读一遍照做。台账、认领工具、门禁、推送规则照目标仓库的 `CLAUDE.md`、`CONTRIBUTING.md`。
