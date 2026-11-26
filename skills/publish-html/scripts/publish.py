@@ -9,6 +9,9 @@ publish unchanged pages again. Run from the repo root.
     python3 publish.py              # JSON list, one item per page to publish
     python3 publish.py --mark PAGE  # after publishing PAGE: record what is now live
 
+Each item carries, beside its url, the account the session publishes as (the login email before the @): a URL of
+another account reads as "artifact not found", and the account name says whose page it is.
+
 publish.json:
     {"title_prefix": "Proj_",                  # every page's <title> starts with it
      "leak": "node\\d+|/shared/|outputs/",      # regex a page read outside the lab must not match
@@ -96,6 +99,15 @@ def load():
     return json.loads(read(STATE)) if os.path.exists(STATE) else {}
 
 
+def account():
+    """the claude.ai account claude on this host is logged in as, or None when it has no claude.ai login"""
+    path = os.path.join(os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~"), ".claude.json")
+    try:
+        return json.loads(read(path))["oauthAccount"]["emailAddress"].split("@")[0]
+    except (OSError, KeyError, TypeError):
+        return None
+
+
 def target(cfg):
     """the pages this host publishes, with its account's URLs, and the suffix its cache entries carry"""
     host = socket.gethostname()
@@ -108,7 +120,7 @@ def target(cfg):
 
 
 def plan(cfg, pages, key):
-    state, items = load(), []
+    state, items, who = load(), [], account()
     for page, p in pages.items():
         files = files_of(page, p.get("files", []))
         was = state.get(page + key, {})
@@ -118,7 +130,7 @@ def plan(cfg, pages, key):
         removed = {pub: None for pub in was if pub not in now}
         if was.get(name) == now[name] and not upload and not removed:
             continue
-        items.append({"page": page, "url": p["url"], "file_path": os.path.abspath(page),
+        items.append({"page": page, "url": p["url"], "account": who, "file_path": os.path.abspath(page),
                       "files": batches({**upload, **removed}), "capabilities": p.get("capabilities"),
                       "problems": problems(cfg, page, files, p.get("public", True))})
     return items
@@ -132,6 +144,8 @@ def mark(pages, key, page):
 
 
 if __name__ == "__main__":
+    if not os.path.exists(MANIFEST):
+        sys.exit(f"没有 {MANIFEST}：在仓库根跑；项目还没接入就照 publish-html 的 SKILL.md 末段建它，格式见 {os.path.abspath(__file__)} 开头")
     cfg = json.loads(read(MANIFEST))
     pages, key = target(cfg)
     if sys.argv[1:2] == ["--mark"]:
