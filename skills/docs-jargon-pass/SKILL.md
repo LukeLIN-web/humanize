@@ -1,6 +1,6 @@
 ---
 name: docs-jargon-pass
-description: Use when docs read fine to the author but not to anyone else — 文档术语审查/把只有作者懂的词换成领域通用说法/新人读不懂文档/统一术语/jargon audit — and before a doc or HTML page leaves the repo (发布成网页、发给合作者). Catches made-up words, terms used before they are defined, one word with several meanings, internal names an outside reader cannot resolve (machines, local paths, run / checkpoint / dataset names, lineage modifiers like 「补跑的那份」), and 废话. Two passes — blind read first, then verify against the repo and rewrite.
+description: Use when docs read fine to the author but not to anyone else — 文档术语审查/把只有作者懂的词换成领域通用说法/新人读不懂文档/统一术语/jargon audit. Interactive sessions do not invoke it on their own, not even before a doc or HTML page is published or sent out: CI runs it, or the user names it. Catches made-up words, terms used before they are defined, one word with several meanings, internal names an outside reader cannot resolve (machines, local paths, run / checkpoint / dataset names, lineage modifiers like 「补跑的那份」), and 废话. Two passes — blind read first, then verify against the repo and rewrite.
 argument-hint: "[docs 目录或文件列表,默认 docs/]"
 ---
 
@@ -205,28 +205,5 @@ grep -noE '(重跑|补跑|重打|重算|上一轮|上一版|旧的|第[二三四
 
 | 症状 | 纠正 |
 |---|---|
-| 边读边 grep 代码"确认一下" | 盲读就作废了;确认放第二趟 |
-| 直接读 HTML 源码盲读 | 读者看的是渲染后的页面;先抽文本 |
-| 后文有定义就放过 | 定义晚于使用照记,把定义搬到首次出现处 |
-| 表头、图注里的词"正文定义过了" | 表图是独立阅读单元,算未定义 |
-| 每个没见过的名词都记 → 上百条 | 门槛是"必须重读或翻页",不是"不眼熟" |
-| 承重条目 20+ 还在逐词记 | 那是结构问题,转去写文档级判定 |
-| 把术语当 jargon 改成大白话 | 领域读者认得的原样留,进良品名单 |
-| 词进了良品名单,它带的数就跟着留下 | 良品只管词;数照样过删句测试(C 组·仪表读数) |
 | 比值、加速比没写比的是谁(「快 1.6×」「少 4.7× token」) | 卡住;同一从句里写出比较对象 |
 | 双语文档只盲读一种语言,另一种按字符串同步 | 译文自己会漏:组内黑话(管基准叫什么、管自家代码叫什么)、领域术语的自造译法。验收盲读两种语言都给,并让它标两边说法不一致处 |
-| 标准概念的自造中文写法被放过 | 这类最隐蔽,按"换成通行写法"处理 |
-| 发明一个"更清楚"的新词 | 只能用文档已有的词或领域已有的词,否则是新黑话 |
-| 看不懂的词一律补定义 | 顺序反了:先试删、再试换成文档已有的词,补定义是第四选择 |
-| 只出现一次的自造词被放过 | 默认删。全文只用一次的名词几乎不可能承重 |
-| 高频词"改起来太多处"就留着补个定义 | 频次不是保留理由;判据是"文档里有没有同义词" |
-| 给产物名、机器名补一句解释 | 内部名只删不补;要交代的是它的内容,不是它的名字 |
-| 修饰语读得顺就放过(「补跑的那份」「上一轮的」) | 卡住门槛抓不到血统词;grep 补扫,问输入差别写出来没有,并报用户 |
-| 把废话改写得更通顺 | C 组没有改写选项,只删或降级 |
-| 删句后不查前后指代 | 被删句喂养的"这个对比"会悬空;删一句要重读整段 |
-| 摘要与正文打架,顺手改一处对齐 | 这是 bug,先报;信哪个由用户定 |
-| "本页读不懂"被摊成 30 条悬空指代 | 写进文档级判定,正解是加前置概念小节 |
-| 只改了派生 HTML,源 md 里旧词还在 | 换词要连源页一起换(内部名除外) |
-| 盲读说「没回答 X」,就补一句回答 | 那是内容取舍,不是措辞;查有没有作者裁定,没有就报用户 |
-| 修复时随手起了个叫法 | 先 grep 文档里这个概念已经叫什么;新叫法常和旧叫法撞成同物异名 |
-| 发布模型名同时指它的重训变体,觉得读者能从上下文分清 | 承重;发布名只给发布的那一个,重训变体用描述性名词短语 |
