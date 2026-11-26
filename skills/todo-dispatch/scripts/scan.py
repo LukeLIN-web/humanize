@@ -55,6 +55,14 @@ def git(*args: str, check: bool = True) -> str:
     return r.stdout
 
 
+def run(*cmd: str) -> subprocess.CompletedProcess:
+    """A network read (ls-remote, gh) that fails as a return code, never as an exception."""
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return subprocess.CompletedProcess(cmd, 1, "", str(e))
+
+
 def short(text: str, n: int = 70) -> str:
     text = " ".join(text.split())
     return text if len(text) <= n else text[:n - 1] + "…"
@@ -120,7 +128,7 @@ def scan_todo(path: str, last: dict, out: list[str], keep: dict) -> str:
 
 def scan_git(branch: str, ledger_path: str, last: dict, out: list[str], keep: dict, notes: list[str]) -> str:
     keep["head"] = head = git("rev-parse", "HEAD").strip()
-    r = subprocess.run(["git", "ls-remote", "origin", f"refs/heads/{branch}"], capture_output=True, text=True, timeout=60)
+    r = run("git", "ls-remote", "origin", f"refs/heads/{branch}")
     origin = r.stdout.split()[0] if r.returncode == 0 and r.stdout.split() else f"origin/{branch}"
     if r.returncode:
         notes.append(f"origin 没读到（{short(r.stderr, 50)}），按上次 fetch 的 origin/{branch} 比")
@@ -160,16 +168,15 @@ def scan_ci(branch: str, last: dict, out: list[str], keep: dict, notes: list[str
     keep["ci_reported"] = reported = last.get("ci_reported", [])
     if not m:
         return
-    r = subprocess.run(["gh", "run", "list", "-R", m[1], "-b", branch, "-L", "20", "--json",
-                        "databaseId,name,status,conclusion,headSha,createdAt"],
-                       capture_output=True, text=True, timeout=60)
+    r = run("gh", "run", "list", "-R", m[1], "-b", branch, "-L", "20", "--json",
+            "databaseId,name,status,conclusion,headSha,createdAt")
     if r.returncode:
         notes.append(f"CI 没读到（{short(r.stderr, 60)}）")
         return
     newest: dict[str, dict] = {}
-    for run in json.loads(r.stdout):
-        if run["status"] == "completed":
-            newest.setdefault(run["name"], run)
+    for job in json.loads(r.stdout):
+        if job["status"] == "completed":
+            newest.setdefault(job["name"], job)
     red = [x for x in newest.values() if x["conclusion"] in CI_FAILED and x["databaseId"] not in reported]
     for x in red:
         out.append(f'CI 红：{x["name"]} {x["createdAt"][5:16]} {x["headSha"][:7]}（run {x["databaseId"]}）')

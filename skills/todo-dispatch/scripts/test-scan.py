@@ -262,6 +262,30 @@ class Scan(unittest.TestCase):
         self.assertIn(f"GPU 排程到点（{soon:%H:%M}）：约 {soon:%H:%M} 放 0-3 给 job", out)
         self.assertNotIn("已提醒", out)
 
+    def test_a_newly_failed_ci_run_is_reported_once(self):
+        runs = [{"databaseId": 2, "name": "ci", "status": "completed", "conclusion": "failure",
+                 "headSha": "abcdef1", "createdAt": "2026-11-25T10:00:00Z"},
+                {"databaseId": 1, "name": "ci", "status": "completed", "conclusion": "success",
+                 "headSha": "1234567", "createdAt": "2026-11-25T09:00:00Z"}]
+        git_, run_ = scan.git, scan.run
+
+        def fake_git(*args, **kw):
+            return "https://github.com/o/r.git\n" if args[:2] == ("remote", "get-url") else git_(*args, **kw)
+
+        def fake_run(*cmd):
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(runs), "") if cmd[0] == "gh" else run_(*cmd)
+
+        with mock.patch.object(scan, "git", fake_git), mock.patch.object(scan, "run", fake_run):
+            self.assertIn("CI 红：ci", self.scan())
+            self.assertQuiet(self.scan())
+            runs.insert(0, dict(runs[0], databaseId=3, conclusion="success"))
+            self.assertQuiet(self.scan())
+        with mock.patch.object(scan, "git", fake_git), \
+                mock.patch.object(scan, "run", lambda *c: subprocess.CompletedProcess(c, 1, "", "gh: not found")):
+            out = self.scan()
+        self.assertQuiet(out)
+        self.assertIn("CI 没读到", out)
+
     def test_an_edited_skill_is_reread(self):
         self.scan()
         os.utime(self.skill, (1, 1))
