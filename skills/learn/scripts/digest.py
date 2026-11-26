@@ -42,13 +42,18 @@ Where every number comes from (so it can be recomputed from the source's own fil
   sends under the same `promptId` merged into it.
 - Time split per session, from the trace slices: tool = length of the union of `tool`
   slices; model = length of the union of `llm`, `message` and `tool` slices minus tool;
-  idle = the gaps between those, within the span from the first slice's start to the last
-  slice's end. Each gap is put under what ended it: the first prompt that starts in it,
-  read by its text (a `<task-notification>`: background task; a cross-session message:
-  another session; "usage limit has reset"; a continue prompt: stop hook; anything else:
-  typed prompt, which includes what another session typed into the terminal). A gap no
-  prompt ends is "inside a prompt" (hooks, retries), or "after the last activity" when it
-  runs to the span's end. A role's sub-agents are a row of their own.
+  idle = the gaps between those, within the span from the first slice's start to the end of
+  the last of those (records after it, such as an idle compaction, are not activity). Each gap
+  is put under what ended it: the first prompt that starts in it, read by its text (a
+  `<task-notification>`: background task; a cross-session message: another session; "usage
+  limit has reset"; a continue prompt: stop hook; anything else: typed prompt, which includes
+  what another session typed into the terminal). A gap no prompt ends is "inside a prompt"
+  (hooks, retries). In a run, the gap its `ended` falls in is "after the run ended": the agent
+  was done and the wait was for a follow-up. A role's sub-agents are a row of their own.
+- Woken by a notification: prompts that are a `<task-notification>`; it did nothing else when
+  no tool but Monitor, TaskOutput or TaskStop is called before the next prompt.
+- Longest waits: the same gaps, each with the prompt that ended it and the last text the agent
+  wrote before it.
 - Session's last record: the latest slice end in the trace (else the log's last timestamp).
   Compactions: `system` records with subtype `compact_boundary`.
 - Send-back (Claude): a `type == "user"` record whose text starts with
@@ -713,27 +718,49 @@ def woke_by(prompt: str) -> str:
     return next((name for name, pattern in WOKE_BY if pattern.search(head)), "typed prompt")
 
 
-def time_split(actions: list[Any]) -> dict[str, Any]:
+# Tools an agent calls to keep waiting; a wake that calls nothing else did no work.
+KEEP_WAITING = ("Monitor", "TaskOutput", "TaskStop")
+
+
+def time_split(actions: list[Any], run_end: float | None = None) -> dict[str, Any]:
     """One trace session's span, split into model, tool and idle, idle by what ended each wait."""
     busy = merged([(a.start, a.end) for a in actions if a.category in ("llm", "tool", "message")])
     tool = length([(a.start, a.end) for a in actions if a.category == "tool"])
-    first, last = min(a.start for a in actions), max(a.end for a in actions)
+    first = min(a.start for a in actions)
+    last = busy[-1][1] if busy else max(a.end for a in actions)
     prompts = sorted((a.start, str(a.args.get("prompt") or "")) for a in actions if a.category == "turn")
+    tools = sorted((a.start, a.name.split(":")[0]) for a in actions if a.category == "tool")
+    woken = idle_wakes = 0
+    for (at, prompt), (until, _) in zip(prompts, prompts[1:] + [(float("inf"), "")]):
+        if woke_by(prompt) == "background task":
+            woken += 1
+            idle_wakes += all(name in KEEP_WAITING for start, name in tools if at <= start < until)
+    said = sorted((a.end, str(a.args.get("text") or "")) for a in actions if a.category == "message")
     waits: dict[str, float] = {}
-    edges = [(first, first)] + busy + [(last, last)]
+    gaps: list[dict[str, Any]] = []
+    edges = [(first, first)] + busy
     for (_, gap_start), (gap_end, _) in zip(edges, edges[1:]):
         if gap_end - gap_start < 0.1:
             continue
-        # The wait ended where the next prompt arrived; from there to the model starting, and
-        # in a gap no prompt ends, the agent was inside a prompt with nothing running (hooks,
-        # retries), or, past its last activity, had stopped and nothing came before the log ended.
-        woke = next(((at, woke_by(p)) for at, p in prompts if gap_start < at <= gap_end + 1), None)
-        arrived = min(woke[0], gap_end) if woke else gap_start
-        rest = "after the last activity" if gap_end == last and not woke else "inside a prompt"
-        for name, seconds in ((woke[1] if woke else "", arrived - gap_start), (rest, gap_end - arrived)):
+        # The wait ended where the next prompt arrived; from there to the model starting, and in
+        # a gap no prompt ends, the agent was inside a prompt with nothing running (hooks,
+        # retries). A gap the run's `ended` falls in is the agent done, waiting for a follow-up.
+        woke = next(((at, p) for at, p in prompts if gap_start < at <= gap_end + 1), None)
+        if run_end is not None and gap_start <= run_end <= gap_end:
+            parts = (("after the run ended", gap_end - gap_start),)
+        else:
+            arrived = min(woke[0], gap_end) if woke else gap_start
+            parts = ((woke_by(woke[1]) if woke else "", arrived - gap_start), ("inside a prompt", gap_end - arrived))
+        for name, seconds in parts:
             if seconds >= 0.1:
                 waits[name] = waits.get(name, 0.0) + seconds
-    return {"span": last - first, "model": length(busy) - tool, "tool": tool, "waits": waits}
+        gaps.append({
+            "start": gap_start, "end": gap_end, "woke": max(parts, key=lambda part: part[1])[0],
+            "prompt": woke[1] if woke else "",
+            "said": next((text for at, text in reversed(said) if at <= gap_start + 0.5), ""),
+        })
+    return {"span": last - first, "model": length(busy) - tool, "tool": tool, "waits": waits, "gaps": gaps,
+            "woken": woken, "idle_wakes": idle_wakes}
 
 
 # ---------------------------------------------------------------- reviews
@@ -774,6 +801,7 @@ def digest(info: dict[str, Any], top: int, repeat_min: int, stretch_min: int, us
     w = out.append
     t0 = parse_at(began.get("at"))
     t1 = parse_at(ended.get("at")) if ended else None
+    run_end = t1 if info["kind"] == "epic" else None  # a session's "end" is only its last record
     if info["kind"] == "epic":
         w(f"# Epic digest: {base.name}\n")
         w(f"- epic: `{base}`")
@@ -896,7 +924,7 @@ def digest(info: dict[str, Any], top: int, repeat_min: int, stretch_min: int, us
             role = role_of(t, info, keyed) + (" sub-agents" if t.parent else "")
             r = roles.setdefault(
                 role,
-                {"sessions": 0, "prompts": 0, "turns": 0, "tools": 0,
+                {"sessions": 0, "prompts": 0, "turns": 0, "tools": 0, "woken": 0, "idle_wakes": 0,
                  "span": 0.0, "model": 0.0, "tool": 0.0, "waits": {}},
             )
             r["sessions"] += 1
@@ -906,23 +934,26 @@ def digest(info: dict[str, Any], top: int, repeat_min: int, stretch_min: int, us
             r["prompts"] += sum(1 for a in acts if a.category == "turn")
             r["turns"] += sum(1 for a in acts if a.category == "llm" and a.name.startswith("think"))
             r["tools"] += sum(1 for a in acts if a.category == "tool")
-            split = time_split(acts)
-            for key in ("span", "model", "tool"):
+            split = time_split(acts, run_end)
+            for key in ("span", "model", "tool", "woken", "idle_wakes"):
                 r[key] += split[key]
             for woke, seconds in split["waits"].items():
                 r["waits"][woke] = r["waits"].get(woke, 0.0) + seconds
-        w("| role | sessions | prompts | model turns | tool calls | span | model | tool | idle | idle, by what ended the wait |")
-        w("|---|---|---|---|---|---|---|---|---|---|")
+        w("| role | sessions | prompts | model turns | tool calls | span | model | tool | idle | idle, by what ended the wait "
+          "| woken by a notification: did nothing else / all |")
+        w("|---|---|---|---|---|---|---|---|---|---|---|")
         for role, r in sorted(roles.items()):
             waits = sorted(r["waits"].items(), key=lambda kv: -kv[1])
             w(
                 f"| {role} | {r['sessions']} | {r['prompts']} | {r['turns']} | {r['tools']} | "
                 f"{secs(r['span'])} | {secs(r['model'])} | {secs(r['tool'])} | {secs(sum(r['waits'].values()))} | "
                 + (", ".join(f"{woke} {secs(seconds)}" for woke, seconds in waits) or "-")
-                + " |"
+                + f" | {r['idle_wakes']} / {r['woken']} |"
             )
         w("\nA role's sub-agents are their own row; each row sums its sessions' spans, so sub-agents running")
-        w("side by side can add up to more than the wall time.\n")
+        w("side by side can add up to more than the wall time. A wake did nothing else when, after a background")
+        w("notification, the agent called no tool but Monitor, TaskOutput or TaskStop before the next prompt:")
+        w("each is a model request with the whole context, for an event it did not act on.\n")
 
     # ---------------- tool calls, from the trace
     calls: list[tuple[Any, Any, int]] = []  # (session, action, turn)
@@ -938,6 +969,32 @@ def digest(info: dict[str, Any], top: int, repeat_min: int, stretch_min: int, us
     def where(t: Any, turn: int) -> str:
         sub = "" if not t.parent else f" sub-agent `{t.key.split(':')[-1][:14]}` of"
         return f"{role_of(t, info, keyed)}{sub} `{t.ident[:8]}` turn {turn}"
+
+    # ---------------- the longest waits, from the trace
+    w(f"## Longest waits (top {top}, a minute or more)\n")
+    if trace is None:
+        w(f"Unavailable: {why}.\n")
+    else:
+        lines_of: dict[str, list[tuple[float, int]]] = {}  # session id -> (time, line) of its log
+        for s in info["sessions"]:
+            if s["id"] in raw:
+                lines_of[s["id"]] = sorted(
+                    (at, n) for n, r in jsonl(logs_of[s["id"]][0]) if (at := parse_at(r.get("timestamp")))
+                )
+        waits = [(t, g) for t in trace if t.actions for g in time_split(t.actions, run_end)["gaps"] if g["end"] - g["start"] >= 60]
+        if not waits:
+            w("None.\n")
+        else:
+            w("| seconds | where | from → to | ended by | the agent's last words before it | log line |")
+            w("|---|---|---|---|---|---|")
+            for t, g in sorted(waits, key=lambda tg: tg[1]["start"] - tg[1]["end"])[:top]:
+                line = next((n for at, n in lines_of.get(t.ident, []) if at >= g["end"] - 0.5), "") if not t.parent else ""
+                woke = g["woke"] + (f": {one_line(g['prompt'], 90)}" if g["prompt"] else "")
+                w(
+                    f"| {g['end'] - g['start']:.0f} | {where(t, 0).rsplit(' turn', 1)[0]} | "
+                    f"{iso(g['start'])[5:16]} → {iso(g['end'])[5:16]} | {woke} | {one_line(g['said'], 140)} | {line} |"
+                )
+            w("\nThe log line is the record that ended the wait (`--show` it); a sub-agent's is not given.\n")
 
     w(f"## Slowest tool calls (top {top})\n")
     if trace is None:

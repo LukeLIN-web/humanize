@@ -28,7 +28,8 @@ cd /tmp && $PY -I <本 skill 目录>/scripts/digest.py <来源> --show <行号> 
 | 头部 | flow、任务、工作目录、怎么结束的、墙钟、花费（钱、各类 token、agent 秒；没有 `usage` 行就从 Claude 对话记录连子 agent 算，hmz 价目表没有的模型写 not priced）、预算、参数、各角色、调用的子 flow |
 | Sessions | 每个会话：角色、后端、日志、最后一条记录的时刻、模型轮数、被 Stop hook 顶回几次、压缩上下文几次 |
 | What the user typed | 打进终端的每一句（带时间、距上一次回复多久，含干活中途插进来的）、别的会话发来的消息（标发件会话）、被打断的行。同一 run 里别的会话（旁观者）经 tmux 打进来的标 `typed by` 那个角色；派单员打进来的仍记 typed，开头自报「我是 …-dispatcher」。压缩上下文的摘要不算。像口令的值遮掉 |
-| Time per role | 每个角色（子 agent 单独一行）的会话数、轮数、工具调用数，时长拆成模型、工具、空等；空等再按什么结束了它拆：typed prompt（人或别的会话打字）、background task、another session、usage limit reset、stop hook；没有 prompt 结束的是 inside a prompt，最后一次活动之后的是 after the last activity |
+| Time per role | 每个角色（子 agent 单独一行）的会话数、轮数、工具调用数，时长拆成模型、工具、空等；空等再按什么结束了它拆：typed prompt（人或别的会话打字）、background task、another session、usage limit reset、stop hook；没有 prompt 结束的是 inside a prompt；run 的 `ended` 落在里面的那段是 after the run ended（做完了、在等追问）。末列：被后台通知叫醒的次数，和其中除了重挂监视什么都没做的次数 |
+| Longest waits | 最长的几段空等：哪个会话、从几点到几点、什么结束了它、agent 停下前最后说的话、结束它的那条记录的行号 |
 | Slowest tool calls | 最慢的工具调用，带角色、会话、轮次 |
 | Failed tool calls | 失败的调用（含子 agent 的），按出错的类别计数（缺文件、没权限、找不到命令、超时……），每条带说出错的那一行；no error text 多是 grep、test 没找到东西 |
 | Commands repeated near-verbatim | 只差数字或 id 的重复命令（Codex 的也算），带描述和命令的首尾 |
@@ -53,7 +54,10 @@ cd /tmp && $PY -I <本 skill 目录>/scripts/digest.py <来源> --show <行号> 
    改设定条件的措辞，让「列为待 user 决定」也算完成；或者让 flow 不把任务禁止动手的发现再交回去。
 2. **某个角色空等占大头**：看空等按什么结束的拆分。inside a prompt 长：actor 在等审稿人是正常的，否则指向钩子或一次等待，写之前先看日志里那段空档。
    typed prompt 长：agent 停下来等人；人隔很久才回来问进度，查它停之前有没有挂一个会唤醒自己的等待。
-   background task 长：在等后台作业，看是作业本身慢，还是 agent 本可以边等边做别的。
+   after the run ended 长：活做完了、user 隔了很久才追问，不是 agent 卡住，不用查。
+   background task 长：在等后台作业，看是作业本身慢，还是 agent 本可以边等边做别的。空等本身不花钱，花钱的是叫醒：
+   「叫醒后什么都没做」占了被叫醒次数的一大半，就是监视器在吐进度或重挂时重放旧行，读 Monitor 的命令找是哪一种，
+   改教它这么写的那处（派单骨架 ②、orchestrate 的「盯」）。
 3. **慢的工具调用**：是重复的活，或者跑了全量测试而窄的就够。
 4. **同一类失败调用不止一次**：缺工具、路径错、权限没给；改的是 agent 学到错命令的那个地方。
 5. **重复命令**：轮询，或反复读同一个文件。告诉它答案在哪，或者把轮询换成一次等待。
