@@ -9,16 +9,16 @@ argument-hint: "[可选：只看 todo 的哪一节]"
 user 的原话（2026-10-14）：「你的任务就是看 todo，然后把没人做的，你新建 claude board card claude session 去做，没别的了，
 他们做完应该自己标注 todo done。你要研究的是观察协作摩擦、在流程上解决，考虑 merge queue、SemVer、CI/CD。」
 
-定时跑：`/loop 30m /todo-dispatch`（插件装法下叫 `/humanize:todo-dispatch`）。每轮按下面七步走完再停，不在两轮之间常驻。`/loop` 起的定时 7 天到期，末次触发后自己删掉、不报错，之后一轮都不跑（2026-11-19 一条 7 天前起的定时这样停了，漏了四轮才被 user 发现）：每天第一轮（本地 0 点那个小时）`CronList` 找到这条，`CronDelete` 掉再 `CronCreate` 一条同样的，7 天就到不了。
+定时跑：`/loop 30m /todo-dispatch`（插件装法下叫 `/humanize:todo-dispatch`）。每轮按下面七步走完再停，不在两轮之间常驻。`/loop` 起的定时 7 天到期，末次触发后自己删掉、不报错，之后一轮都不跑：每天第一轮（本地 0 点那个小时）`CronList` 找到这条，`CronDelete` 掉再 `CronCreate` 一条同样的，7 天就到不了。
 
-**派单员的会话名要手起**：会话名是别的会话找你的地址（派单里的「我是…」、issue 评论、SendMessage）。Claude Code 自动起的名是 `<目录名>-<2 位十六进制>`，只有 256 个，而且自动名不查重，同目录的会话会撞（2026-11-04 派单员 `agent-harness-cc` 和一个派出去的会话同名，发给派单员的消息进了那个会话的收件箱）。手起的名会查重，撞了会自己让位改名。所以起循环的会话用 `claude -n <目录名>-dispatcher` 开，已经在跑的由 user 打 `/rename <目录名>-dispatcher`。每轮开头查一次自己的名：
+**派单员的会话名要手起**：会话名是别的会话找你的地址（派单里的「我是…」、issue 评论、SendMessage）。Claude Code 自动起的名是 `<目录名>-<2 位十六进制>`，只有 256 个，而且自动名不查重，同目录的会话会撞。手起的名会查重，撞了会自己让位改名。所以起循环的会话用 `claude -n <目录名>-dispatcher` 开，已经在跑的由 user 打 `/rename <目录名>-dispatcher`。会话起头查一次自己的名：
 
 ```bash
 p=$$; while [ "$p" -gt 1 ] && [ ! -f ~/.claude/sessions/$p.json ]; do p=$(ps -o ppid= -p "$p" | tr -d ' '); done
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("name"), d.get("nameSource"))' ~/.claude/sessions/$p.json
 ```
 
-`nameSource` 是 `derived` 的，这一轮照做，汇报第一句请 user 打 `/rename <目录名>-dispatcher`。
+`nameSource` 是 `derived` 的，照常跑，每轮汇报第一句请 user 打 `/rename <目录名>-dispatcher`，每轮再查，查到改好为止。
 
 ## 角色
 
@@ -60,10 +60,10 @@ python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("name")
 - **开 hmz 卡**（条目要「做完再由另一个模型复审」时）：`dispatch.py <host> <仓库路径> <派单文件> --hmz @user/goal_reviewed actor=<cli>/<模型>:<effort> reviewer=<cli>/<模型>:<effort> budget.duration=<ISO 时长>`，卡里跑的是 hmz，派单原文作为那个 flow 的任务；不改名、不切模型，记录由 hmz 自己写（输出的 `run` 是它的 epic 目录，同样用 `digest.py` 读）。**角色用什么模型、预算给多少由你按这一条定**（user 2026-11-18「定角色用什么模型、预算给多少 让 dispatch 来定吧」），脚本把它们写进那台主机的 hmz 设置再开卡：actor 照开卡的规矩，那台账号的 Fable 周额度没满用 `claude/claude-fable-5-2:high`，满了用 `claude/claude-opus-5-5:high`；reviewer 用另一家的模型（如 `codex/gpt-6.2-sol:high`，以那台 `codex` 现有的模型为准）；`budget.duration` 按条目的预计墙钟留余量（`PT12H` 这种写法），到点 hmz 让它收尾。`budget.cost=<美元>` 只在两个角色的模型都在 hmz 价目表里时才能用，否则 hmz 拒绝起跑。不带角色和预算时照那台上次的设置跑，从没设过就停在配置菜单上、`run` 为空。home 不在共享盘上的主机写不了设置，脚本报错不开卡。
 - **派单**（自包含、单段，不带换行；措辞照下面的骨架填，不另加「回我」：跨机的 SendMessage 送不到，做没做完你从台账、`git log` 和那张卡的 timeline 读）：
   「我是 <你的会话名>（<主机>），按 user 的 /loop 把 todo 上没人认领的条目派给新会话。派给你的是「<条目标题>」那一条（<在哪一节>）。
-  ① 先按根目录 CLAUDE.md 的认领规则用 <认领工具> 认领；那条已经有认领就别做，直接停。
+  ① 那条已经有认领就别做，直接停；没有就照根目录 CLAUDE.md、CONTRIBUTING.md 认领（要先开 issue 的先开）。
   ② 照条目写的做，按仓库 CLAUDE.md、CONTRIBUTING.md 和 memory 的规则跑。<条目特有的边界：不碰哪些在跑的作业、预算闸、和哪一条不叠加> 一次性读数缺包就用机器上已有 venv 的 Python，不新建；等作业用 Monitor 的 until 循环、到期就重挂，只吐失败、停更和一段跑完（不吐局数进度，重挂不重放旧行），不写 sleep 接命令，也不换成后台 Bash 的等待（会睡死）；rm 的路径写成字面量，不带 shell 变量。
   ③ 做完用 <认领工具> 把它标成做完；判成不做或撒手，把判断写进条目、放掉认领。要 user 拍板的直接问 user。」
-- **超过 5 小时的活用 `/goal` 起**（user 2026-10-23「超过5个小时的任务，要用goal 启动。」）：按条目要跑的作业估墙钟（等卡、训练、整场评测、批量生成，按已量的每步、每局秒数算），超过 5 小时或拿不准的，派单前面加 `/goal `——Claude Code 自带的目标，会话一直做到 ③ 达成；goal 钩子据此起旁观者。整条不到 800 字：Claude Code 把一次打进来 800 字以上的输入当粘贴，`/goal` 就成了普通消息（dispatch.py 超长拒发；打进现成卡也一样），细节留在条目里让它读。压字数从条目特有的边界里删，② 末尾那几句通用的（Monitor 到期重挂、不换成后台 Bash 的等待、rm 写字面量）照抄不删（2026-11-19 给一张 /goal 卡压字数时删了「不换成后台 Bash」半句，它照样换了）。现成卡上已有在跑的 `/goal`，别往里打新的（会顶掉它的目标），开新卡。目标仓库要求 goal 先开 issue 的，① 写成「那条已经有认领就别做，直接停；没有就照 CONTRIBUTING.md 开 issue，再用 <认领工具> 按 issue 号认领」。
+- **超过 5 小时的活用 `/goal` 起**（user 2026-10-23「超过5个小时的任务，要用goal 启动。」）：按条目要跑的作业估墙钟（等卡、训练、整场评测、批量生成，按已量的每步、每局秒数算），超过 5 小时或拿不准的，派单前面加 `/goal `——Claude Code 自带的目标，会话一直做到 ③ 达成；goal 钩子据此起旁观者。整条不到 800 字：Claude Code 把一次打进来 800 字以上的输入当粘贴，`/goal` 就成了普通消息（dispatch.py 超长拒发；打进现成卡也一样），细节留在条目里让它读。压字数从条目特有的边界里删，② 末尾那几句通用的（Monitor 到期重挂、不换成后台 Bash 的等待、rm 写字面量）照抄不删。现成卡上已有在跑的 `/goal`，别往里打新的（会顶掉它的目标），开新卡。
 - **验收**（下一轮第 1 步，不在本轮里等）：那条有没有认领标记、`git log` 有没有认领提交。没认上的卡记一条摩擦，再派一次。
 
 ### 3. 看摩擦
@@ -82,17 +82,10 @@ python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("name")
 
 ### 4. 修流程
 
-照 orchestrate 的 `collab-pr.md`「摩擦：怎么看、怎么记、怎么修」：
+照 orchestrate 的 `collab-pr.md`：什么时候修、修补落在哪（本 skill 的派单骨架也算一处）、怎么派修补作者和转审阅意见，见「摩擦」一节的「修」；SemVer 见它的第 0、4 步。本循环里不同的两处：
 
-- **修流程不修个案**；同类第二次出现、或一次就代价大，才修。先删后加。
-- 修补落在流程的唯一正本（目标仓库的 CLAUDE.md / CONTRIBUTING / CI / 门禁脚本 / 工具脚本，或本 skill、orchestrate 的派单模板），不在派单里口头约定。
-- 修补走 PR：作者 agent 在自己的 worktree 里写（`isolation: "worktree"`），零上下文审阅（轮数上限照目标仓库 CONTRIBUTING 和 collab-pr.md），
-  `orchestrate/scripts/merge-queue.sh --gate ci <PR>` 合进 origin；不手工并回共享工作树，第 5 步的脚本会并；合进去后广播。
-- **转派审阅意见只转审阅原文和它验证过的改法**，不自己补措辞：指挥者顺手加的一句没经审，最容易出事。
-- 派单里写清**对手操作**：共享文件的每一条写入路径（会话的 Edit/Write 不拿 git 的锁、CI 机器人直推、别的脚本），作者才知道要防谁。
-- 审阅附的原型代码必须和审阅正文一致，或只给正文。
-- **SemVer** 只在目标仓库有被消费的版本号时才做（包 / 插件 manifest、`v*` tag），由合并队列按 PR 标题算；没有就不新造版本号文件。
-- 改别的会话也在用的规则（分支保护、推送权、认领规则），先问 user；user 定了就照做，并把裁定写进流程正本。
+- 修补 PR 由作者 agent 在自己的 worktree 里写（`isolation: "worktree"`），零上下文审阅后用 `orchestrate/scripts/merge-queue.sh --gate ci <PR>` 合进 origin；不手工并回共享工作树，第 5 步的脚本会并；合进去后广播。
+- 改别的会话也在用的规则（分支保护、推送权、认领规则），在汇报里问 user；user 定了就照做，并把裁定写进流程正本。
 
 ### 5. 推共享默认分支
 
@@ -125,7 +118,7 @@ bash <本 skill>/scripts/push-shared-main.sh            # 在目标仓库里跑�
 并说明它停着占了什么（卡、服务）。转述台账里等 user 的条目前，当场重读那一条的现行文字，别用早先读到的（条目常被别的会话改过）。
 user 已经裁定过的事不再问。不用 AskUserQuestion。
 
-**等卡 5 小时以上的卡收尾、关掉**（user 2026-11-03「以后如果一个 agent 要等 5 个小时以上卡, 你就让他 grace 结束, 把 card 关了, 到时候再开, 这样节省 token.」；2026-11-16 又漏了一次）：每轮读卡时，对每张在等 GPU 的卡（最近几条输出是「等卡」「监视已重挂」这类、名下没有在跑的作业）按排程文件估它的领卡时刻：已经空等了 5 小时，或离领卡还有 5 小时以上，而且它手上没有不用卡的活，就用 `/prompt` 让它收尾——在跑的作业和已登记的 gpu_wait 不停，做到哪、发射件、下一步写进 issue 或条目，会话内的 Monitor 和定时器撤掉，写一句「交接已写完，可以关卡」。下一轮核到这句和交接，用 `POST /api/windows/<key>/close` 关卡；关之前在同一条命令里重读它的 timeline，交接之后它收到过 user 的输入（Stop hook、后台通知不算）或又开始动手，就不关（2026-11-18 关一张等 user 选项的卡时，user 不到一分钟前刚答了它，关卡打断了它照答复动手）——用 `/goal` 起的卡不能留到下一轮：目标没达成，goal 钩子不让它停，它写完交接后会每几秒被打回一次、回一句「还在等卡」，一直空转（2026-11-16 两张卡这样转了几分钟才被发现）；这种卡发完收尾消息后在同一轮里盯它的 timeline，交接一落到 issue 就关。读卡时看到连着几条 `user_text` 是「Stop hook feedback」的卡，就是这种空转，核到交接后立刻关。关卡后在排程文件「没排的」记一行「等 <主机> <卡> 约 HH:MM → 重开卡续 <条目>」；领卡前约 30 分钟开新卡，派单里写「接着做 <条目>，先读 #N 最后的交接」。你自己给一件活定「排在后面、最早今晚」的那一刻就照这条判，不等它空转几轮。**只剩等 user 拍板的 `/goal` 卡也这样收尾、关掉**（user 2026-11-18「可以」：名下没有在跑的作业、目标只差 user 的一个选择时，goal 钩子同样每几秒把它打回一次）：让它把选项、它的建议和下一步写进 issue，核到就关，排程文件「没排的」记「等 user 定 <哪件> → 重开卡续 <条目>」；user 答了再开卡，派单里写 user 的答复原话和「先读 #N 最后的交接」。空着的、做完的卡照旧不关。
+**等卡 5 小时以上的卡收尾、关掉**（user 2026-11-03「以后如果一个 agent 要等 5 个小时以上卡, 你就让他 grace 结束, 把 card 关了, 到时候再开, 这样节省 token.」）：每轮读卡时，对每张在等 GPU 的卡（最近几条输出是「等卡」「监视已重挂」这类、名下没有在跑的作业）按排程文件估它的领卡时刻：已经空等了 5 小时，或离领卡还有 5 小时以上，而且它手上没有不用卡的活，就用 `/prompt` 让它收尾——在跑的作业和已登记的 gpu_wait 不停，做到哪、发射件、下一步写进 issue 或条目，会话内的 Monitor 和定时器撤掉，写一句「交接已写完，可以关卡」。下一轮核到这句和交接，用 `POST /api/windows/<key>/close` 关卡；关之前在同一条命令里重读它的 timeline，交接之后它收到过 user 的输入（Stop hook、后台通知不算）或又开始动手，就不关——用 `/goal` 起的卡不能留到下一轮：目标没达成，goal 钩子不让它停，它写完交接后会每几秒被打回一次、回一句「还在等卡」，一直空转；这种卡发完收尾消息后在同一轮里盯它的 timeline，交接一落到 issue 就关。读卡时看到连着几条 `user_text` 是「Stop hook feedback」的卡，就是这种空转，核到交接后立刻关。关卡后在排程文件「没排的」记一行「等 <主机> <卡> 约 HH:MM → 重开卡续 <条目>」；领卡前约 30 分钟开新卡，派单里写「接着做 <条目>，先读 #N 最后的交接」。你自己给一件活定「排在后面、最早今晚」的那一刻就照这条判，不等它空转几轮。**只剩等 user 拍板的 `/goal` 卡也这样收尾、关掉**（user 2026-11-18「可以」：名下没有在跑的作业、目标只差 user 的一个选择时，goal 钩子同样每几秒把它打回一次）：让它把选项、它的建议和下一步写进 issue，核到就关，排程文件「没排的」记「等 user 定 <哪件> → 重开卡续 <条目>」；user 答了再开卡，派单里写 user 的答复原话和「先读 #N 最后的交接」。空着的、做完的卡照旧不关。
 
 **Fable 周额度满了的账号，卡切成 Opus**（user 2026-11-13；2026-11-16「dispatch skill 还要负责一个事情, 就是把 fable 满了的切换到 opus.」）：每轮对 board 上有卡的每个账号读一次 `POST /api/usage`（同账号的几台读一台）。「Current week (Fable)」到 100% 的账号，把它各台上 `model` 还是 Fable 的卡都用 `POST /api/windows/<key>/model`（body `{"model": "opus"}`）切成 Opus，不等它撞限：全 board 的卡都切，不只这个仓库的、不只你派的；派单员自己那张也切（user 2026-11-16「让我到 100% 时自己切成 Opus 接着跑」）：撞限之后自己就停住、切不了，所以自己那个账号的 Fable 读数到 95% 的那一轮就把自己的卡切成 Opus，汇报里说一句。已经撞限的卡（timeline 最近的输出里有「Fable limit」：见过「You've hit your Fable limit」「You've reached your Fable limit」两种写法，按「Fable limit」匹配，任何 `kind` 的事件都算）已经停住、后台通知也不会处理：切完再用 `/prompt` 打一句让它接着做，并列出停着这段它没处理的后台通知（timeline 里撞限之后的 `user_text`）。汇报里说切了哪几张、哪个账号、撞限的停了多久。不等 user 来切；到那个账号的 `resets` 之前不切回 Fable。
 
