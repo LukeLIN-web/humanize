@@ -118,10 +118,19 @@ resolve_source_layout() {
     die "could not resolve Humanize source layout from: $candidate_root"
 }
 
+# An entry of a skills dir that is a symlink (say, a link into a Humanize
+# checkout) is left as is: replacing it would turn the link into a stale copy,
+# and writing through it would overwrite the checkout it points to.
+skip_if_link() {
+    [[ -L "$1" ]] || return 1
+    log "skip $1: symlink to $(readlink "$1"), left as is"
+}
+
 sync_dir() {
     local src="$1"
     local dst="$2"
 
+    skip_if_link "$dst" && return
     if [[ "$DRY_RUN" == "true" ]]; then
         log "DRY-RUN sync $src -> $dst"
         return
@@ -186,6 +195,8 @@ install_runtime_bundle() {
     local runtime_root="$target_dir/humanize"
     local component
 
+    # A linked humanize skill was already reported by skip_if_link.
+    [[ -L "$runtime_root" ]] && return
     log "syncing runtime bundle into: $runtime_root"
 
     for component in scripts hooks prompt-template templates config agents; do
@@ -202,7 +213,7 @@ hydrate_skill_runtime_root() {
 
     for skill in "${SKILL_NAMES[@]}"; do
         skill_file="$target_dir/$skill/SKILL.md"
-        [[ -f "$skill_file" ]] || continue
+        [[ -f "$skill_file" && ! -L "$target_dir/$skill" ]] || continue
 
         if [[ "$DRY_RUN" == "true" ]]; then
             log "DRY-RUN hydrate runtime root in $skill_file"
@@ -228,7 +239,7 @@ strip_claude_specific_frontmatter() {
 
     for skill in "${SKILL_NAMES[@]}"; do
         skill_file="$target_dir/$skill/SKILL.md"
-        [[ -f "$skill_file" ]] || continue
+        [[ -f "$skill_file" && ! -L "$target_dir/$skill" ]] || continue
 
         if [[ "$DRY_RUN" == "true" ]]; then
             log "DRY-RUN strip Claude-specific frontmatter in $skill_file"
@@ -415,6 +426,7 @@ overwrite_kimi_rlcr_skill() {
     local runtime_root="$target_dir/humanize"
 
     [[ -f "$kimi_src" ]] || die "missing Kimi RLCR skill source: $kimi_src"
+    [[ -L "$target_dir/humanize-rlcr" ]] && return
     [[ "$DRY_RUN" == "true" ]] && { log "DRY-RUN overwrite Kimi RLCR skill"; return; }
 
     local tmp

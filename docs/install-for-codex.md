@@ -23,7 +23,7 @@ Or use the unified installer directly:
 ```
 
 This will:
-- Sync `humanize`, `humanize-gen-plan`, `humanize-refine-plan`, `humanize-rlcr`, and `monitor-claude-goal` into `${CODEX_HOME:-~/.codex}/skills`
+- Sync `humanize`, `humanize-gen-plan`, `humanize-refine-plan`, `humanize-rlcr`, and `monitor-claude-goal` into `${CODEX_HOME:-~/.codex}/skills`. A skill dir there that is a symlink (for instance into a Humanize checkout) is left as is, with one `skip` line in the output.
 - Copy runtime dependencies into `${CODEX_HOME:-~/.codex}/skills/humanize`
 - Install/update native Humanize Stop hooks in `${CODEX_HOME:-~/.codex}/hooks.json`
 - Enable the native `hooks` feature in `${CODEX_HOME:-~/.codex}/config.toml` when `codex` is available

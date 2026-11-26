@@ -138,43 +138,12 @@ else
     fail "Codex install keeps humanize-rlcr entrypoint skill" "skills/humanize-rlcr/SKILL.md exists" "missing"
 fi
 
-MONITOR_SKILL="$CODEX_HOME_DIR/skills/monitor-claude-goal/SKILL.md"
-monitor_gaps=""
-
-note_monitor_gap() {
-    monitor_gaps="${monitor_gaps:+$monitor_gaps, }$1"
-}
-
-if [[ -f "$MONITOR_SKILL" ]]; then
-    grep -q 'Codex in the ChatGPT desktop app' "$MONITOR_SKILL" \
-        || note_monitor_gap "Codex scheduling host"
-    grep -q 'transactional save-clear-inject-restore' "$MONITOR_SKILL" \
-        || note_monitor_gap "draft-preservation transaction"
-    # No clear key may be hardcoded here. C-u is bound to scrolling (a silent
-    # no-op), and double-tap Escape opens the Rewind dialog on 2.1.259 -- a live
-    # menu that restores conversation AND code, so a blind Enter there is
-    # unrecoverable. The skill must warn about Rewind and must not pin a key.
-    grep -q 'Rewind' "$MONITOR_SKILL" \
-        || note_monitor_gap "Rewind hazard warning"
-    ! grep -q 'tmux send-keys C-u' "$MONITOR_SKILL" \
-        || note_monitor_gap "C-u composer clear regressed"
-    grep -q 'set-buffer.*paste-buffer' "$MONITOR_SKILL" \
-        || note_monitor_gap "literal buffer-paste restore"
-    grep -q 'restore the draft.*without Enter' "$MONITOR_SKILL" \
-        || note_monitor_gap "restore without Enter"
+if diff -r "$PROJECT_ROOT/skills/monitor-claude-goal" "$CODEX_HOME_DIR/skills/monitor-claude-goal" >/dev/null 2>&1; then
+    pass "Codex install syncs the monitor-claude-goal skill directory unchanged"
 else
-    note_monitor_gap "SKILL.md"
-fi
-
-[[ -f "$CODEX_HOME_DIR/skills/monitor-claude-goal/agents/openai.yaml" ]] \
-    || note_monitor_gap "agents/openai.yaml"
-
-if [[ -z "$monitor_gaps" ]]; then
-    pass "Codex install syncs the cross-host Claude goal monitor with draft preservation"
-else
-    fail "Codex install syncs the cross-host Claude goal monitor" \
-        "Codex scheduling, transactional draft preservation, and agents/openai.yaml are installed" \
-        "missing or incomplete: $monitor_gaps"
+    fail "Codex install syncs the monitor-claude-goal skill directory unchanged" \
+        "skills/monitor-claude-goal identical to the source" \
+        "$(diff -rq "$PROJECT_ROOT/skills/monitor-claude-goal" "$CODEX_HOME_DIR/skills/monitor-claude-goal" 2>&1 | head -5)"
 fi
 
 if [[ -f "$HOOKS_FILE" ]]; then
@@ -662,5 +631,94 @@ else
         "non-zero conflict error" \
         "exit=$NORMALIZED_SHARED_EXIT log=$(cat "$TEST_DIR/install-shared-normalized.log")"
 fi
+
+# --- A skill dir that is a symlink is left alone ---
+# Regression: a skill dir linked into a checkout was replaced by a copy when
+# rsync was missing (rm + mv), and written through when rsync was present, so
+# an install from another clone overwrote the checkout the link points to.
+# Hydration and the runtime bundle wrote through a linked humanize dir the same
+# way. Real and missing dirs must still be installed.
+
+NO_RSYNC_BIN="$TEST_DIR/bin-no-rsync"
+mkdir -p "$NO_RSYNC_BIN"
+IFS=: read -ra path_dirs <<< "$PATH"
+for dir in "${path_dirs[@]}"; do
+    [[ -d "$dir" ]] || continue
+    for tool in "$dir"/*; do
+        name="${tool##*/}"
+        [[ -e "$tool" && "$name" != rsync && ! -L "$NO_RSYNC_BIN/$name" ]] || continue
+        ln -s "$tool" "$NO_RSYNC_BIN/$name"
+    done
+done
+
+for sync_mode in rsync no-rsync; do
+    if [[ "$sync_mode" == rsync ]]; then
+        mode_path="$FAKE_BIN:$PATH"
+    else
+        mode_path="$FAKE_BIN:$NO_RSYNC_BIN"
+    fi
+    LINK_HOME="$TEST_DIR/link-home-$sync_mode"
+    LINK_SKILLS="$LINK_HOME/.codex/skills"
+    CHECKOUT="$LINK_HOME/checkout"
+    mkdir -p "$LINK_SKILLS" "$CHECKOUT"
+    cp -a "$PROJECT_ROOT/skills/monitor-claude-goal" "$PROJECT_ROOT/skills/humanize" "$CHECKOUT/"
+    echo "only in the checkout" > "$CHECKOUT/monitor-claude-goal/MARKER"
+    cp -a "$CHECKOUT" "$LINK_HOME/checkout.orig"
+    ln -s ../../checkout/monitor-claude-goal "$LINK_SKILLS/monitor-claude-goal"
+    mkdir -p "$LINK_SKILLS/humanize-rlcr"
+    echo stale > "$LINK_SKILLS/humanize-rlcr/STALE"
+
+    set +e
+    HOME="$LINK_HOME" PATH="$mode_path" TEST_CODEX_FEATURE_LOG="$TEST_DIR/feature-log-link.log" \
+        XDG_CONFIG_HOME="$LINK_HOME/.config" \
+        "$INSTALL_SCRIPT" \
+        --target codex \
+        --codex-config-dir "$LINK_HOME/.codex" \
+        --codex-skills-dir "$LINK_SKILLS" \
+        --command-bin-dir "$LINK_HOME/bin" \
+        > "$TEST_DIR/install-link-$sync_mode.log" 2>&1
+    link_exit=$?
+    set -e
+
+    if [[ "$link_exit" -eq 0 ]] \
+            && [[ "$(readlink "$LINK_SKILLS/monitor-claude-goal")" == ../../checkout/monitor-claude-goal ]] \
+            && diff -r "$LINK_HOME/checkout.orig" "$CHECKOUT" >/dev/null \
+            && grep -q "skip $LINK_SKILLS/monitor-claude-goal: symlink" "$TEST_DIR/install-link-$sync_mode.log"; then
+        pass "[$sync_mode] install keeps a symlinked skill dir and leaves its checkout untouched"
+    else
+        fail "[$sync_mode] install keeps a symlinked skill dir and leaves its checkout untouched" \
+            "exit 0, link kept, checkout unchanged, skip logged" \
+            "exit=$link_exit link=$(readlink "$LINK_SKILLS/monitor-claude-goal" || echo none) diff=$(diff -rq "$LINK_HOME/checkout.orig" "$CHECKOUT" 2>&1 | head -3)"
+    fi
+
+    if [[ ! -e "$LINK_SKILLS/humanize-rlcr/STALE" && -f "$LINK_SKILLS/humanize-rlcr/SKILL.md" \
+            && -d "$LINK_SKILLS/humanize-gen-plan" && ! -L "$LINK_SKILLS/humanize-gen-plan" ]]; then
+        pass "[$sync_mode] install updates a real skill dir and creates a missing one"
+    else
+        fail "[$sync_mode] install updates a real skill dir and creates a missing one" \
+            "humanize-rlcr refreshed, humanize-gen-plan created" "$(ls -la "$LINK_SKILLS")"
+    fi
+
+    rm -rf "$LINK_SKILLS/humanize"
+    ln -s ../../checkout/humanize "$LINK_SKILLS/humanize"
+    set +e
+    HOME="$LINK_HOME" PATH="$mode_path" XDG_CONFIG_HOME="$LINK_HOME/.config" \
+        "$INSTALL_SCRIPT" \
+        --target kimi \
+        --kimi-skills-dir "$LINK_SKILLS" \
+        --command-bin-dir "$LINK_HOME/bin" \
+        > "$TEST_DIR/install-link-humanize-$sync_mode.log" 2>&1
+    link_exit=$?
+    set -e
+
+    if [[ "$link_exit" -eq 0 && -L "$LINK_SKILLS/humanize" ]] \
+            && diff -r "$LINK_HOME/checkout.orig" "$CHECKOUT" >/dev/null; then
+        pass "[$sync_mode] install neither hydrates nor bundles into a linked humanize dir"
+    else
+        fail "[$sync_mode] install neither hydrates nor bundles into a linked humanize dir" \
+            "exit 0, link kept, checkout unchanged" \
+            "exit=$link_exit diff=$(diff -rq "$LINK_HOME/checkout.orig" "$CHECKOUT" 2>&1 | head -3)"
+    fi
+done
 
 print_test_summary "Codex Hook Install Tests"
