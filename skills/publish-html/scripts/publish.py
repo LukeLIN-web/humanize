@@ -10,28 +10,28 @@ publish unchanged pages again. Run from the repo root.
     python3 publish.py --mark PAGE  # after publishing PAGE: record what is now live
 
 Each item carries, beside its url, the account the session publishes as (the login email before the @): a URL of
-another account reads as "artifact not found", and the account name says whose page it is.
+another account reads as "artifact not found", and the account name says whose page it is. skip_accounts and
+accounts are keyed by that name, since what a host can publish to follows its login, which can change.
 
 publish.json:
     {"title_prefix": "Proj_",                  # every page's <title> starts with it
      "leak": "node\\d+|/shared/|outputs/",      # regex a page read outside the lab must not match
-     "skip_hosts": ["hostA"],                   # hosts whose claude.ai account cannot reach these URLs
-     "accounts": {"hostB": {"docs/html/idea.html": "https://claude.ai/artifact/…"}},
-                                                # a host whose account keeps its own copies: only these pages, to these URLs
+     "skip_accounts": ["accountA"],             # claude.ai accounts that cannot reach these URLs
+     "accounts": {"accountB": {"docs/html/idea.html": "https://claude.ai/artifact/…"}},
+                                                # an account that keeps its own copies: only these pages, to these URLs
      "pages": {"docs/html/idea.html": {"url": "https://claude.ai/artifact/…"},
                "code/vis/index.html": {"url": "…", "files": ["media/*.mp4"], "capabilities": {"downloads": true}},
                "docs/html/todo.html": {"url": "…", "public": false},
                "docs/html/new.html": {"url": null}}}
     files are globs relative to the page's directory; url null publishes a new artifact; capabilities is the page's
     runtime capability declaration, sent with every publish of it. An accounts copy takes its
-    files from the page's entry in pages and is cached apart (page@host), so the two accounts never mark each other done.
+    files from the page's entry in pages and is cached apart (page@account), so two accounts never mark each other done.
 """
 import glob
 import hashlib
 import json
 import os
 import re
-import socket
 import sys
 
 MANIFEST = os.path.join("docs", "html", "publish.json")
@@ -108,19 +108,18 @@ def account():
         return None
 
 
-def target(cfg):
-    """the pages this host publishes, with its account's URLs, and the suffix its cache entries carry"""
-    host = socket.gethostname()
-    own = cfg.get("accounts", {}).get(host)
+def target(cfg, who):
+    """the pages account `who` publishes, with its URLs, and the suffix its cache entries carry"""
+    own = cfg.get("accounts", {}).get(who)
     if own is not None:
-        return {page: {**cfg["pages"][page], "url": url} for page, url in own.items()}, "@" + host
-    if host in cfg.get("skip_hosts", []):
-        sys.exit(f"{host} 登录的 claude.ai 账号看不到这些 URL，换台机器发")
+        return {page: {**cfg["pages"][page], "url": url} for page, url in own.items()}, "@" + who
+    if who in cfg.get("skip_accounts", []):
+        sys.exit(f"这台机器登录的 claude.ai 账号 {who} 看不到这些 URL，换台登录别的账号的机器发")
     return cfg["pages"], ""
 
 
-def plan(cfg, pages, key):
-    state, items, who = load(), [], account()
+def plan(cfg, pages, key, who):
+    state, items = load(), []
     for page, p in pages.items():
         files = files_of(page, p.get("files", []))
         was = state.get(page + key, {})
@@ -147,9 +146,10 @@ if __name__ == "__main__":
     if not os.path.exists(MANIFEST):
         sys.exit(f"没有 {MANIFEST}：在仓库根跑；项目还没接入就照 publish-html 的 SKILL.md 末段建它，格式见 {os.path.abspath(__file__)} 开头")
     cfg = json.loads(read(MANIFEST))
-    pages, key = target(cfg)
+    who = account()
+    pages, key = target(cfg, who)
     if sys.argv[1:2] == ["--mark"]:
         for page in sys.argv[2:]:
             mark(pages, key, page)
     else:
-        print(json.dumps(plan(cfg, pages, key), ensure_ascii=False, indent=1))
+        print(json.dumps(plan(cfg, pages, key, who), ensure_ascii=False, indent=1))

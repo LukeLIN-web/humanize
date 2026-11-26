@@ -8,11 +8,11 @@ argument-hint: "[可选：报告文件路径，scripts/publish.sh 传]"
 
 改完就跑，不等 user 说：user 2026-10-26「把发一下弄成一个脚本, 这样以后 run一下就行了. 以后每次改完 run一下.」
 
-页面 → Artifact URL、每页一起发的文件、标题前缀、扫描用的正则、发不了的机器，都写在项目的 `docs/html/publish.json`，格式见 `scripts/publish.py` 开头。页面写法（不写机器名、产物名等）在项目的 `docs/html/CLAUDE.md`。
+页面 → Artifact URL、每页一起发的文件、标题前缀、扫描用的正则、发不了的账号，都写在项目的 `docs/html/publish.json`，格式见 `scripts/publish.py` 开头。页面写法（不写机器名、产物名等）在项目的 `docs/html/CLAUDE.md`。
 
 不在 Claude 会话里时，在仓库根跑 `bash <本 skill>/scripts/publish.sh`，用法见它的文件头。
 
-1. 在仓库根跑 `python3 <本 skill>/scripts/publish.py`：列出要发的页（JSON）；没改过的页不在里面，空列表就是都发过了。在 `skip_hosts` 里的机器上它直接退出，换台机器发。`accounts` 里有这台机器的，这台登录的账号另有一份：只列那里登记的页、发到那里的 URL（null 是这个账号上的新页，拿到 URL 写回 `accounts`），缓存和主账号分开记。每项的 `account` 是这台机器上 claude 登录的账号：URL 不归这个账号时，`Artifact` 报 not found。
+1. 在仓库根跑 `python3 <本 skill>/scripts/publish.py`：列出要发的页（JSON）；没改过的页不在里面，空列表就是都发过了。每项的 `account` 是这台机器上 claude 登录的账号：URL 不归这个账号时，`Artifact` 报 not found。`skip_accounts` 和 `accounts` 都按这个账号名记：账号在 `skip_accounts` 里，脚本直接退出，换台登录别的账号的机器发；`accounts` 里有它的，它另有一份：只列那里登记的页、发到那里的 URL（null 是这个账号上的新页，拿到 URL 写回 `accounts`），缓存和主账号分开记。
 2. 每一项：
    - `problems` 不空：这页不发，报给 user，照 `docs/html/CLAUDE.md` 改页面或改生成它的脚本再重跑。只有「引用的 X 本地没有」一条时，先 `Artifact list`（`scope: "files"`）看远端：远端有 X 就照发（更新不删远端没提到的文件）。
    - 读：页面以外一起发的文件靠脚本的扫描，不整份读。`url` 本会话还没 read 过，先 `Artifact read` 它（不带 `path`，带 `path` 不算）。
