@@ -15,6 +15,9 @@ params, picking up the ended epic's journal -- with only the budget changed: the
 to --until, and the cost cap is what is left of --cost-total once the whole chain's spending is
 taken off (by default the first epic's own cap, so the chain stays held to what the human set).
 
+It refuses at once a flow that cannot be picked up: one whose epic keeps no resume journal
+with a flow call in it (goal_reviewed is such a flow).
+
 It starts nothing unless all of these hold when the epic has ended:
   - the end was a cap (`stopped` with the duration, cost or token cap reached), never a human
     /stop, a failure, or a host that died without writing an end;
@@ -152,6 +155,9 @@ def main() -> int:
     epic = next((e for e in all_epics if e.name == args.epic), None) if args.epic else (all_epics[-1] if all_epics else None)
     if epic is None:
         return say({"outcome": "refused", "why": f"no epic {args.epic or 'at all'} in {ws}"}, args.log, 2)
+    if not any(r.get("t") == "call" for r in events(epic / "resume.jsonl")):
+        return say({"outcome": "refused", "epic": epic.name,
+                    "why": "the flow keeps no resume journal: a cap end cannot be picked up"}, args.log, 2)
 
     # Wait for the end, unless only asked what would be sent.
     while not args.dry_run:

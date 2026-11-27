@@ -25,7 +25,10 @@ import time
 from pathlib import Path
 
 # What the harness injects as a user turn, which is not anybody steering.
-INJECTED = re.compile(r"^<total_tokens>|hasn't heard from you in a while|^<system-reminder>")
+INJECTED = re.compile(
+    r"^<total_tokens>|hasn't heard from you in a while|^<system-reminder>|^# AGENTS\.md instructions"
+    r"|^<environment_context>|^A session-scoped Stop hook is now active"
+)
 DENIED = re.compile(r"Permission denied|Read-only file system|Operation not permitted|EACCES|EPERM")
 ISO_DURATION = re.compile(r"P(?:(\d+(?:\.\d+)?)D)?T?(?:(\d+(?:\.\d+)?)H)?(?:(\d+(?:\.\d+)?)M)?(?:(\d+(?:\.\d+)?)S)?$")
 
@@ -110,7 +113,10 @@ def read_turn(path: Path, mb: float, n: int) -> dict:
             kind = payload.get("type")
             if kind == "message":
                 text = " ".join(str(c.get("text", "")) for c in payload.get("content") or [] if isinstance(c, dict))
-                (said if payload.get("role") == "assistant" else user).append(clip(text, 400))
+                # `developer` messages are the harness's instructions, not anybody speaking.
+                lines = {"assistant": said, "user": user}.get(payload.get("role"))
+                if lines is not None:
+                    lines.append(clip(text, 400))
             elif kind in ("function_call", "custom_tool_call"):
                 commands.append(clip(f"{payload.get('name')}: {payload.get('arguments') or payload.get('input')}", 240))
             elif kind in ("function_call_output", "custom_tool_call_output"):
@@ -214,6 +220,13 @@ def fence_of(pid: int) -> str:
         if var.startswith(b"TMPDIR=/tmp/hmz-fence-"):
             return var[7:].decode(errors="replace")
     return ""
+
+
+def in_tmux_panes(table: dict) -> set[int]:
+    """Every process under a tmux server: interactive sessions, not jobs a turn detached."""
+    servers = [int(pid) for pid, _, comm in (l.strip().partition(" ") for l in sh(["ps", "-eo", "pid=,comm="]).splitlines())
+               if pid.isdigit() and comm.strip() == "tmux: server"]
+    return set().union(*(descendants(table, p) for p in servers)) if servers else set()
 
 
 def gpus() -> dict:
@@ -345,23 +358,27 @@ def main() -> None:
         "hours_to_duration_cap": round((cap_s - spent_s) / 3600, 1) if cap_s else None,
     }
 
-    # Turns, in the order the engine's journal opened them.
+    # Sessions, in the order the run opened them (`opened` names the agent, `began` its role).
+    named = {a.get("name"): a for a in began.get("agents", [])}
     roles = {}
-    for rec in events(epic / "resume.jsonl"):
-        if rec.get("t") == "session" and rec.get("session"):
-            roles[str(rec["session"])] = {"role": rec.get("role"), "harness": rec.get("harness"), "model": rec.get("model")}
+    for e in ev:
+        if e.get("event") == "opened" and e.get("session"):
+            one = named.get(e.get("agent"), {})
+            roles[str(e["session"])] = {"role": one.get("agent", e.get("agent")), "harness": e.get("backend"),
+                                        "model": one.get("model"), "opened": e.get("at")}
     files = transcripts(epic)
-    turns = []
-    for path in files:
-        sid = next((s for s in roles if s in path.name), "")
-        turns.append({"path": str(path), "session": sid, **roles.get(sid, {}), "bytes": path.stat().st_size,
-                      "idle_s": round(time.time() - path.stat().st_mtime)})
-    snap["turns"] = turns
-    snap["turn_detail"] = []
-    for path in files[-args.turns:]:
-        detail = read_turn(path, args.tail_mb, args.lines)
-        sid = next((s for s in roles if s in path.name), "")
-        snap["turn_detail"].append({**roles.get(sid, {}), "session": sid, **detail})
+    sid_of = {path: next((s for s in roles if s in path.name), "") for path in files}
+
+    def opened_at(path: Path) -> str:
+        return roles.get(sid_of[path], {}).get("opened") or time.strftime(
+            "%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(path.stat().st_mtime))
+
+    snap["turns"] = [{"path": str(path), "session": sid_of[path], **roles.get(sid_of[path], {}),
+                      "bytes": path.stat().st_size, "idle_s": round(time.time() - path.stat().st_mtime)}
+                     for path in sorted(files, key=opened_at)]
+    # A role that keeps its session for every turn opened first and is written last: detail by recency.
+    snap["turn_detail"] = [{**roles.get(sid_of[path], {}), "session": sid_of[path], **read_turn(path, args.tail_mb, args.lines)}
+                           for path in files[-args.turns:]]
 
     # Processes: the daemon's tree, and anything else running in the workspace.
     table = process_table()
@@ -371,13 +388,18 @@ def main() -> None:
         {"pid": p, "etimes": table[p][1], "args": clip(table[p][2], 200), **({"gpu": gpu["apps"][p]} if p in gpu["apps"] else {})}
         for p in sorted(tree) if p in table and p != host.pid and " internal " not in table[p][2]
     ] if host is not None else []
-    # A turn's detached jobs (setsid, nohup) leave the tree but keep its fence's TMPDIR.
+    # A turn's detached jobs (setsid, nohup) leave the tree. A fenced role's keep its fence's
+    # TMPDIR; an unfenced role's (danger-full-access with network) carry none, and are found by
+    # working in the workspace while not under a tmux pane, where other sessions work.
     current = {fence_of(p) for p in tree} - {""}
+    panes = in_tmux_panes(table)
     left = []
     for pid, (ppid, et, cmd) in table.items():
-        fence = fence_of(pid) if pid not in tree else ""
-        if fence:
-            left.append({"pid": pid, "ppid": ppid, "etimes": et, "fence": fence, "cwd": cwd_of(pid),
+        if pid in tree:
+            continue
+        fence, cwd = fence_of(pid), cwd_of(pid)
+        if fence or (pid not in panes and (cwd + "/").startswith(ws + "/")):
+            left.append({"pid": pid, "ppid": ppid, "etimes": et, "fence": fence, "cwd": cwd,
                          "args": clip(cmd, 200), **({"gpu": gpu["apps"][pid]} if pid in gpu["apps"] else {})})
     snap["current_turn_fence"] = sorted(current)
     snap["processes_outside_run_tree"] = left

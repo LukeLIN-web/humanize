@@ -22,6 +22,8 @@ Prints one JSON object. Exit status:
   4  queued: waiting in the host's queue -- behind an earlier line the agent has not yet
      acknowledged (the host hands an agent one line at a time), or because no turn is
      open, in which case the next turn's prompt carries it
+  5  not acknowledged: the turn ended holding it (`unheld`) or the run ended with it still
+     waiting (`dropped`); it may or may not have reached the model
   2  refused, or no run is going here
 """
 from __future__ import annotations
@@ -32,6 +34,15 @@ import os
 import sys
 import threading
 import time
+
+
+def unacknowledged(message: dict, text: str) -> bool:
+    """Whether a host message says the line was let go of without the agent saying it had it."""
+    if message.get("type") == "unheld":  # the turn ended holding it
+        return text in (message.get("texts") or [])
+    if message.get("type") == "dropped":  # the run ended with it handed out or queued
+        return any(one.get("text") == text for one in [*(message.get("given") or []), *(message.get("queued") or [])])
+    return False
 
 
 def main() -> int:
@@ -91,6 +102,13 @@ def main() -> int:
             if refused:
                 print(json.dumps({"outcome": "refused", "because": refused[-1].get("because")}, ensure_ascii=False))
                 return 2
+            if any(m.get("type") == "said" and m.get("text") == args.text for m in heard):
+                outcome = "taken"
+                break
+            lost = [m for m in heard if unacknowledged(m, args.text)]
+            if lost:
+                print(json.dumps({"outcome": lost[-1]["type"], "epic": status.get("epic")}, ensure_ascii=False))
+                return 5
             waiting = [m for m in heard if m.get("type") == "waiting"]
             if not waiting:
                 continue
@@ -107,7 +125,7 @@ def main() -> int:
                 # next turn starts with none open: that is the answer, not a wait to sit out.
                 if time.monotonic() - queued_since > 15:
                     break
-            elif seen_given or any(m.get("type") == "said" and m.get("text") == args.text for m in heard):
+            elif seen_given:
                 outcome = "taken"
                 break
         codes = {"taken": 0, "given": 3, "queued": 4}
