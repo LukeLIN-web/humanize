@@ -1,6 +1,6 @@
 ---
 name: learn
-description: 复盘一个会话或一次 hmz run：从它留下的日志找出错在哪、卡在哪、哪里慢、摸出了什么流程，把够格的写进各自唯一的归属（出错的 skill 或文档本身、新 skill、项目文档、CLAUDE.md、memory），下一次不再犯、照着做。goal 收尾时由 orchestrate 工作流第 8 步调用；user 说 /learn、复盘、retro、总结踩的坑、沉淀经验、把流程做成 skill、那次 run 哪里卡住 / 为什么这么慢 / 为什么花这么多、review the hmz run、epic review 时也用。也读派单卡的 run 记录（.humanize/runs/<run>/）。还在跑的 run 要盯着看用 monitor-hmz。
+description: 复盘一个会话或一次 hmz run：从它留下的日志找出错在哪、卡在哪、哪里慢、摸出了什么流程，把够格的写进各自唯一的归属（出错的 skill 或文档本身、新 skill、项目文档、CLAUDE.md、memory），下一次不再犯、照着做。goal 收尾时由 orchestrate 工作流的「复盘」一步调用；user 说 /learn、复盘、retro、总结踩的坑、沉淀经验、把流程做成 skill、那次 run 哪里卡住 / 为什么这么慢 / 为什么花这么多、review the hmz run、epic review 时也用。也读派单卡的 run 记录（.humanize/runs/<run>/）。还在跑的 run 要盯着看用 monitor-hmz。
 argument-hint: "[session id、transcript、epic 目录或 run 记录；默认本会话]"
 ---
 
@@ -18,25 +18,16 @@ cd /tmp && $PY -I <本 skill 目录>/scripts/digest.py <来源> --show <行号> 
 ```
 
 来源：
-- **本会话**：session id，即本会话 scratchpad 目录的名字。goal 收尾就用它。
+- **本会话**：session id，即本会话 scratchpad 目录的名字。goal 收尾就用它；事情在你的上下文里，只出头部和两节
+  （`--only 'time per role' --only 'sent back'`），候选从上下文和这两节挑。
 - **派单卡**：它的 run 记录 `<checkout>/.humanize/runs/<UTC 时刻>-<卡名>/`（`python3 <todo-dispatch>/scripts/runs.py list` 列出），
   连旁观者会话一起读；`usage`（token，hmz 价目表有的模型才有钱数）在卡的会话结束时才写。
 - **hmz run**：它的 epic 目录；不给来源时取当前目录最新的 epic。
 
-| 节 | 说什么 |
-|---|---|
-| 头部 | flow、任务、工作目录、怎么结束的、墙钟、花费（钱、各类 token、agent 秒；没有 `usage` 行就从 Claude 对话记录连子 agent 算，hmz 价目表没有的模型写 not priced）、预算、参数、各角色、调用的子 flow |
-| Sessions | 每个会话：角色、后端、日志、最后一条记录的时刻、模型轮数、被 Stop hook 顶回几次、压缩上下文几次 |
-| What the user typed | 打进终端的每一句（带时间、距上一次回复多久，含干活中途插进来的）、别的会话发来的消息（标发件会话）、被打断的行。同一 run 里别的会话（旁观者）经 tmux 打进来的标 `typed by` 那个角色；派单员打进来的仍记 typed，开头自报「我是 …-dispatcher」。压缩上下文的摘要不算。像口令的值遮掉 |
-| Time per role | 每个角色（子 agent 单独一行）的会话数、轮数、工具调用数，时长拆成模型、工具、空等；空等再按什么结束了它拆：typed prompt（人或别的会话打字）、background task、another session、usage limit reset、stop hook；没有 prompt 结束的是 inside a prompt；run 的 `ended` 落在里面的那段是 after the run ended（做完了、在等追问）。末列：被后台通知叫醒的次数，和其中除了重挂监视什么都没做的次数 |
-| Longest waits | 最长的几段空等：哪个会话、从几点到几点、什么结束了它、agent 停下前最后说的话、结束它的那条记录的行号 |
-| Slowest tool calls | 最慢的工具调用，带角色、会话、轮次 |
-| Failed tool calls | 失败的调用（含子 agent 的），按出错的类别计数（缺文件、没权限、找不到命令、超时……），每条带说出错的那一行；no error text 多是 grep、test 没找到东西 |
-| Commands repeated near-verbatim | 只差数字或 id 的重复命令（Codex 的也算），带描述和命令的首尾 |
-| Sent back without progress | 连续被顶回、中间一个工具都没调的段：轮次、秒数、token、日志行、goal 条件、首末理由 |
-| Reviews of this run | 这次 run 写的审稿文件 |
-
-每个数怎么从文件里重算，见脚本开头的说明。digest 只负责定位，具体发生了什么要看日志：写任何一条之前，先用 `--show` 读它指的那几行。
+digest 的节：头部（怎么结束、墙钟、花费）、Sessions、What the user typed、Time per role（空等按什么结束了它拆；末列是被通知叫醒的次数
+和其中什么都没做的次数）、Longest waits、Slowest tool calls、Failed tool calls、Commands repeated near-verbatim、
+Sent back without progress、Reviews of this run。每节的口径、每个数怎么重算见脚本开头的说明。
+读的是别的会话、派单卡或 epic 时，写任何一条之前先用 `--show` 读它指的那几行；复盘本会话不必。
 
 ## 2. 挑候选
 
@@ -50,14 +41,15 @@ cd /tmp && $PY -I <本 skill 目录>/scripts/digest.py <来源> --show <行号> 
 4. **摸出来的多步流程**：这次试了很多步才走通、以后还会再走（装环境、起服务、对齐某个 benchmark 的协议、排某类故障）。
 
 **卡在哪、哪里慢**（按通常的回报排）
-1. **连续被顶回的段**：agent 一遍遍用话回答同一个 goal 检查、不动手。多半是 goal 条件 agent 一个人满足不了（要人拍板，或和任务矛盾）。
-   改设定条件的措辞，让「列为待 user 决定」也算完成；或者让 flow 不把任务禁止动手的发现再交回去。
+1. **连续被顶回的段，或这次收尾停在等 user 拍板**：先看 goal 条件里「把判断写进条目、问了 user」算不算达成。不算的话，
+   报告发出后会被一遍遍顶回，而 digest 这时还看不到。改产出那段条件的原文（派单骨架 ③、flow 模板），让「列为待 user 决定」
+   也算完成；或者让 flow 不把任务禁止动手的发现再交回去。
 2. **某个角色空等占大头**：看空等按什么结束的拆分。inside a prompt 长：actor 在等审稿人是正常的，否则指向钩子或一次等待，写之前先看日志里那段空档。
    typed prompt 长：agent 停下来等人；人隔很久才回来问进度，查它停之前有没有挂一个会唤醒自己的等待。
    after the run ended 长：活做完了、user 隔了很久才追问，不是 agent 卡住，不用查。
    background task 长：在等后台作业，看是作业本身慢，还是 agent 本可以边等边做别的。空等本身不花钱，花钱的是叫醒：
-   「叫醒后什么都没做」占了被叫醒次数的一大半，就是监视器在吐进度或重挂时重放旧行，读 Monitor 的命令找是哪一种，
-   改教它这么写的那处（派单骨架 ②、orchestrate 的「盯」）。
+   「叫醒后什么都没做」超过被叫醒次数的一半，就是监视器在吐进度或重挂时重放旧行，读 Monitor 的命令找是哪一种，
+   改教它这么写的那处（派单骨架 ②、orchestrate 的「盯」）；那处已经改过、改动晚于这张卡开卡的，报告里写一句「已在 <提交> 修，这张卡早于它」。
 3. **慢的工具调用**：是重复的活，或者跑了全量测试而窄的就够。
 4. **同一类失败调用不止一次**：缺工具、路径错、权限没给；改的是 agent 学到错命令的那个地方。
 5. **重复命令**：轮询，或反复读同一个文件。告诉它答案在哪，或者把轮询换成一次等待。
@@ -89,11 +81,13 @@ cd /tmp && $PY -I <本 skill 目录>/scripts/digest.py <来源> --show <行号> 
 | user 定的、对这个仓库所有人都成立的工作规矩 | 项目 `CLAUDE.md`，照录原话和日期 |
 | 修不掉的机器、集群、工具的坑，user 的偏好，个人或机器特有的规矩 | memory |
 
-- `CLAUDE.md` 只收 user 明说的规矩；你自己归纳的道理进 memory，不升级成硬规则。
-- memory 按 memory 目录自己的规则写和提交：`readlink -f` 看它落在哪个仓库，那里有 `CLAUDE.md` 就照它（没有就照 system prompt 的「Memory」一节）。
+- 根目录 `CLAUDE.md` 只收 user 明说的规矩。旁观者、派单员的纠正不是 user 裁定：先找它依据的现有规矩（`CLAUDE.md`、skill、memory），
+  找到就让那条好找（改 description 或措辞），不另起一条；找不到才作为自己归纳的写进 memory，写明「不是 user 的裁定」，只写到证据覆盖的情形。
+- memory：`readlink -f` 看它落在哪个仓库，照那里的 `CLAUDE.md`（没有就照 system prompt 的「Memory」一节）写和提交。
+  正文只写规则、至多一句 Why 和怎么用；这次怎么踩的（会话、#号、几点、等了多久）写进提交信息，不进正文。
   软链的条目改链的目标（正本），它的索引行也在正本那边的 `MEMORY.md`。
-- 新 skill：全 fleet 通用的工作流建在 humanize 仓 `skills/<name>/`；研究、写作类建在 ARIS fork
-  （`~/workspace/juyi/Auto-claude-code-research-in-sleep`）的 `skills/<name>/`；只这个项目用的流程写成项目文档里的一页，
+- 新 skill：全 fleet 通用的工作流建在 humanize 仓 `skills/<name>/`；研究、写作类建在 ARIS fork 的 `skills/<name>/`
+  （clone 在哪见 memory `external-skills-and-plugins`）；只这个项目用的流程写成项目文档里的一页，
   项目 `CLAUDE.md` 里只写路径指过去。description 写清什么时候用、触发词；正文写步骤和每步怎么验，不写这次的经过。
 - 流程还没走通（链路没跑完、还停在 `[blocked]`）就先不写成 skill 或文档页，只记已经确定的坑；走通了再写。
 - 写的是替换后的原文，不是「应该改进 X」这种方向。
@@ -102,10 +96,11 @@ cd /tmp && $PY -I <本 skill 目录>/scripts/digest.py <来源> --show <行号> 
 ## 4. 提交
 
 改了仓库里的文件（含进了 git 的 memory 目录）：按那个仓库的流程提交，只带自己改的路径。
-共享的 memory 正本由它所在仓库的同步流程提交，照那边的规矩。别的会话正在改的文件不碰（看 `git status` 和 mtime）。
+共享的 memory 正本由它所在仓库的同步流程提交，照那边的规矩，报告里列出留给它提交的路径。
+改任何文件之前先 `git status --short <文件>`：有别人没提交的改动就不碰，要写的内容放进报告。
 
 ## 5. 报告
 
-收尾消息里每条一行：写到哪（路径）、写了什么（一句）、证据（会话和轮次、行号或原话）、花掉多少（秒、token、钱，查不出就写「正确性问题，无可量花费」）、
-下一次的 digest 应该显示什么（如「没有 3 次以上的连续顶回」）。没有就一行「复盘：无新增」。
-最后一行：来源、怎么结束的、墙钟、花费、写了几条。
+收尾消息里每条一行：写到哪（路径）、写了什么（一句）、证据（会话和轮次、行号或原话）；「卡在哪」那类再加花掉多少
+（秒、token、钱）和下一次的 digest 应该显示什么（如「没有 3 次以上的连续顶回」）。没有就一行「复盘：无新增」。
+最后一行：来源、怎么结束的、墙钟、花费和花在哪（模型轮数 × 平均上下文、空叫醒几次）、写了几条。

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Print a markdown digest of one session or one hmz run (an epic), for learning what to change.
 
-    digest.py [SOURCE] [--top N] [--repeat-min N] [--stretch-min N] [--no-trace]
+    digest.py [SOURCE] [--top N] [--repeat-min N] [--stretch-min N] [--no-trace] [--only SECTION ...]
     digest.py [SOURCE] --show LINE [--log PATH] [--context K]
 
 SOURCE is one of:
@@ -16,6 +16,9 @@ SOURCE is one of:
 
 Standard library plus the installed hmz package; run it with the Python hmz is installed in.
 Without hmz.runtime.tracing the sections that need the trace say so and the rest still prints.
+
+--only SECTION (repeatable) prints the head and only the `## ` sections whose title starts
+with SECTION, ignoring case (e.g. --only 'time per role' --only 'sent back').
 
 --show LINE prints, as text, the record at LINE of a session's log (the first session's, or
 --log PATH) and the K records before and after it (--context, default 3): kind, time, the
@@ -1213,6 +1216,8 @@ def main() -> int:
     parser.add_argument("--show", type=int, metavar="LINE", help="print the records around this line of a log instead")
     parser.add_argument("--log", help="the log --show reads (default: the first session's), absolute or under the source")
     parser.add_argument("--context", type=int, default=3, help="records before and after --show's line")
+    parser.add_argument("--only", action="append", metavar="SECTION",
+                        help="print the head and only the sections whose title starts with this (repeatable)")
     args = parser.parse_args()
     info = read_source(args.source)
     if args.show:
@@ -1225,7 +1230,12 @@ def main() -> int:
                 sys.exit("no session log to show; pass --log")
         print(show(log, args.show, args.context))
         return 0
-    print(digest(info, args.top, args.repeat_min, args.stretch_min, not args.no_trace))
+    text = digest(info, args.top, args.repeat_min, args.stretch_min, not args.no_trace)
+    if args.only:
+        wanted = tuple(o.lower() for o in args.only)
+        parts = re.split(r"(?m)^(?=## )", text)
+        text = "".join([parts[0]] + [p for p in parts[1:] if p[3:].lower().startswith(wanted)])
+    print(text)
     return 0
 
 
