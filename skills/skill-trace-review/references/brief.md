@@ -10,6 +10,7 @@
   - 后面是会话接着做了什么：`A:` 模型说的话，`T:` 工具调用，`R:` 工具结果摘要，`HUMAN:` user 的下一句。user 的纠正、抱怨、追问是最强的信号。
   - `========` 那一行带原始 jsonl 的路径，要看细节就去读原文件。
   - 先通读最新的 8–10 次，其余的按需 grep。
+  - Codex 跑的 skill 另有 `<skill>.codex.txt`，每段第二行是 rollout 路径。rollout 里 `event_msg` 的 `task_started` 开一个 tick，`response_item` 的 `custom_tool_call`（`input` 是跑的命令）和 `custom_tool_call_output` 是工具调用和结果，`message`（role=assistant）是模型说的话，`compacted` 是压缩。
 - 上一轮关于这个 skill 的报告条目：{PREVIOUS}。没有就是第一次审。
 - 查一句话是哪天加的：`git -C <仓库> log -L <起>,<止>:<相对路径> --format='%cs %s' -s | head`，或者用 `git blame`。比最新一次调用还新的句子，trace 判不了，标「太新」。
 

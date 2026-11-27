@@ -14,9 +14,11 @@ argument-hint: "[skill 名…；不给就挑本周花得最多的]"
 
 ## 1. 挑 skill，抽 trace
 
+在项目 checkout 里跑：各机的 home 从它的 `.humanize/fleet.yaml` 读，找不到就只读本机，stderr 会警告。
+
 ```bash
-python3 <本 skill>/scripts/extract.py <run> --list       # 近 7 天调用过的 skill：次数、正文字节、次数×字节、路径 → <run>/skills.tsv
-python3 <本 skill>/scripts/extract.py <run> <skill> ...  # 每个 skill 最近 60 次调用的 trace → <run>/<skill>.txt
+python3 <本 skill>/scripts/extract.py <run> --list       # 近 7 天：Claude 调用次数、Codex 整篇读次数、正文字节、成本、路径 → <run>/skills.tsv
+python3 <本 skill>/scripts/extract.py <run> <skill> ...  # 每个 skill 最近 60 次调用的 trace → <run>/<skill>.txt；Codex 读过的另出 <run>/<skill>.codex.txt
 ```
 
 挑哪些：
@@ -27,7 +29,7 @@ python3 <本 skill>/scripts/extract.py <run> <skill> ...  # 每个 skill 最近 
 
 一轮最多派 10 个审稿 agent，小 skill 两三个合给一个 agent。
 
-脚本只读 Claude Code 的会话记录。由 Codex 跑的 skill（比如钩子起的旁观者）要直接读各机 `~/.codex/sessions/` 里的 rollout：一个 tick 算一次调用，数它每个 tick 把正文读了几遍。还要查 `~/.codex/skills/<skill>` 是不是一份和正本内容不同的独立副本。
+Codex 跑的 skill（比如钩子起的旁观者）看 `<skill>.codex.txt`：每场 rollout 一段，一个 turn 是一个 tick，列出每次整篇读、部分读和压缩。`<skill>.txt` 开头的 `INDEPENDENT COPY` 行是各机 skill 目录里同名的实体副本，会和正本分叉，写进报告。
 
 ## 2. 先读上一轮
 

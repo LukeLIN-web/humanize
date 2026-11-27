@@ -4,19 +4,25 @@
     python3 extract.py <out_dir> <skill> [<skill> ...] [--days 60] [--keep 60]
 
 --list writes <out_dir>/skills.tsv: each skill invoked in the last --days days that resolves to a
-SKILL.md here, with its invocation count, the SKILL.md size, count x size (what loading it cost)
-and the resolved path, largest cost first.
+SKILL.md here, with its Claude invocation count, its Codex full reads (a tool call that cats the
+SKILL.md), the SKILL.md size, (count + codex_full_reads) x size (what loading it cost) and the
+resolved path, largest cost first.
 
 With skill names, one file per skill, <out_dir>/<skill>.txt: for each invocation (newest first,
 the newest --keep) the transcript path, how it was invoked (Skill tool call or /slash command), the
 user's message before it, and what the session did next: `A:` the model's text, `T:` tool calls,
 `R:` short tool results, `HUMAN:` the user's next messages (stops after the third, or 260 events).
+Its first lines name the independent copies: a real directory (not a link) of the same name under
+<home>/.codex/skills, .agents/skills or .claude/skills, which drifts from the canonical one.
+A skill that Codex read also gets <out_dir>/<skill>.codex.txt: one block per rollout started in the
+window (turns, full and partial reads, compactions, cwd, path), then each read and compaction by
+turn. A turn is one tick of a loop; hash checks (sha256sum, stat) are counted in no column.
 
-Transcripts: ~/.claude/projects here, plus <home>/.claude/projects for each host in
-`dispatch.card_hosts` of the fleet config, <home> being `dispatch.homes` with <NN> replaced by the
-host (fleet config: $HUMANIZE_FLEET_CONFIG, else .humanize/fleet.yaml at the top of the current
-checkout, as in todo-dispatch/scripts/dispatch.py). Homes this machine cannot see are skipped.
-Codex rollouts are not read.
+Homes: ~ here, plus `dispatch.homes` with <NN> replaced by each host in `dispatch.card_hosts` of the
+fleet config ($HUMANIZE_FLEET_CONFIG, else .humanize/fleet.yaml at the top of the current checkout,
+as in todo-dispatch/scripts/dispatch.py). Homes this machine cannot see are skipped. Transcripts are
+<home>/.claude/projects, rollouts <home>/.codex/sessions. The homes read go to stderr, with a warning
+when no fleet config was found (only this host is read then).
 """
 import glob
 import json
@@ -33,31 +39,42 @@ MAX_CHARS_PER_INV = 24000
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
-def fleet() -> dict:
+def fleet_path() -> str:
     path = os.environ.get("HUMANIZE_FLEET_CONFIG")
     if not path:
         top = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip()
         path = os.path.join(top or ".", ".humanize", "fleet.yaml")
+    return path
+
+
+def fleet() -> dict:
     try:
-        with open(path, encoding="utf-8") as f:
+        with open(fleet_path(), encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
     except FileNotFoundError:
         return {}
 
 
-def transcript_roots() -> list[str]:
+def homes() -> list[str]:
     d = fleet().get("dispatch", {})
-    homes = [os.path.expanduser("~")]
+    hs = [os.path.expanduser("~")]
     if d.get("homes"):
-        homes += [d["homes"].replace("<NN>", str(h)) for h in d.get("card_hosts", [])]
-    return [p for p in (os.path.join(h, ".claude", "projects") for h in homes) if os.path.isdir(p)]
+        hs += [d["homes"].replace("<NN>", str(h)) for h in d.get("card_hosts", [])]
+    return [h for h in hs if os.path.isdir(h)]
 
 
-def transcripts(since: float) -> list[str]:
-    """Transcript files changed since `since`, one per session id (a home can be reachable twice)."""
+def announce():
+    if not os.path.isfile(fleet_path()):
+        print(f"WARNING: no fleet config at {fleet_path()}; reading this host only. Run from the project "
+              "checkout or set HUMANIZE_FLEET_CONFIG.", file=sys.stderr)
+    print("homes read: " + " ".join(homes()), file=sys.stderr)
+
+
+def files(sub: str, since: float) -> list[str]:
+    """*.jsonl under <home>/<sub> changed since `since`, one per file name (a home can be reachable twice)."""
     seen, out = set(), []
-    for root in transcript_roots():
-        for f in glob.glob(root + "/**/*.jsonl", recursive=True):
+    for h in homes():
+        for f in glob.glob(os.path.join(h, sub) + "/**/*.jsonl", recursive=True):
             name = os.path.basename(f)
             try:
                 if name in seen or os.path.getmtime(f) < since:
@@ -77,6 +94,65 @@ def skill_file(name: str) -> str | None:
         if os.path.isfile(p):
             return os.path.realpath(p)
     return None
+
+
+def copies(name: str) -> list[str]:
+    """Real directories named like the skill under each home's skill dirs: copies that drift."""
+    p = skill_file(name)
+    out = []
+    for h in homes():
+        for sub in (".codex/skills", ".agents/skills", ".claude/skills"):
+            d = os.path.join(h, sub, name)
+            if os.path.islink(d) or not os.path.isdir(d):
+                continue
+            mine = os.path.join(d, "SKILL.md")
+            same = p and os.path.isfile(mine) and open(mine, "rb").read() == open(p, "rb").read()
+            out.append(f"{d} (SKILL.md {'same as' if same else 'differs from'} {p})")
+    return out
+
+
+SKILL_PATH = re.compile(r"([\w.-]+)/SKILL\.md")
+PIECE = re.compile(r"\\n|\n|;|&&|\|")
+
+
+def read_kind(piece: str) -> str:
+    if re.search(r"\b(sha256sum|md5sum|stat|ls)\b", piece):
+        return "check"
+    if re.search(r"\bcat\b", piece):
+        return "full"
+    return "part"
+
+
+def rollout(raw: str):
+    """One Codex rollout: start, cwd, turns, and (turn, skill, kind, command) per SKILL.md named in a
+    tool call, plus (turn, "", "compacted", "") per compaction. Skill lists in the prompt are not tool calls."""
+    start = cwd = ""
+    turn, rows = 0, []
+    keep = ('"session_meta"', '"compacted"', '"task_started"', "SKILL.md")
+    for e in events("\n".join(l for l in raw.splitlines() if any(k in l for k in keep))):
+        p = e.get("payload") or {}
+        t = e.get("type")
+        if t == "session_meta":
+            start, cwd = p.get("timestamp") or e.get("timestamp", ""), p.get("cwd", "")
+        elif t == "compacted":
+            rows.append((turn, "", "compacted", ""))
+        elif t == "event_msg" and p.get("type") == "task_started":
+            turn += 1
+        elif t == "response_item" and p.get("type") in ("custom_tool_call", "function_call"):
+            for piece in PIECE.split(str(p.get("input") or p.get("arguments") or "")):
+                for m in SKILL_PATH.finditer(piece):
+                    rows.append((turn, m.group(1), read_kind(piece), piece.strip()[-160:]))
+    return start, cwd, turn, rows
+
+
+def rollouts(since: float):
+    for f in files(".codex/sessions", since):
+        try:
+            raw = open(f, errors="ignore").read()
+        except OSError:
+            continue
+        if "SKILL.md" in raw:
+            yield f, rollout(raw)
 
 
 def text_of(content, n):
@@ -164,8 +240,9 @@ def opt(args, name, default):
 
 
 def list_skills(out_dir, days):
-    counts = {}
-    for f in transcripts(time.time() - days * 86400):
+    since = time.time() - days * 86400
+    counts, codex = {}, {}
+    for f in files(".claude/projects", since):
         try:
             raw = open(f, errors="ignore").read()
         except OSError:
@@ -175,23 +252,55 @@ def list_skills(out_dir, days):
         for e in events(raw):
             for s, _ in invocations(e):
                 counts[s] = counts.get(s, 0) + 1
+    for _, (_, _, _, rows) in rollouts(since):
+        for _, s, kind, _ in rows:
+            if kind == "full":
+                codex[s] = codex.get(s, 0) + 1
     rows = []
-    for s, n in counts.items():
+    for s in set(counts) | set(codex):
         p = skill_file(s)
         if p:
-            size = os.path.getsize(p)
-            rows.append((n * size, n, size, s, p))
+            n, c, size = counts.get(s, 0), codex.get(s, 0), os.path.getsize(p)
+            rows.append(((n + c) * size, n, c, size, s, p))
     rows.sort(reverse=True)
     with open(os.path.join(out_dir, "skills.tsv"), "w") as fh:
-        fh.write(f"# skills invoked in the last {days} days, by count x SKILL.md bytes\ncost\tcount\tbytes\tskill\tpath\n")
+        fh.write(f"# skills invoked in the last {days} days, by (count + codex_full_reads) x SKILL.md bytes\n"
+                 "cost\tcount\tcodex_full_reads\tbytes\tskill\tpath\n")
         for r in rows:
             fh.write("\t".join(map(str, r)) + "\n")
     print(open(os.path.join(out_dir, "skills.tsv")).read(), end="")
 
 
+def extract_codex(out_dir, skills, since):
+    """<skill>.codex.txt for each skill some Codex rollout started since `since` read."""
+    blocks = {s: [] for s in skills}
+    for f, (start, cwd, turns, rows) in rollouts(since):
+        if not start or start < time.strftime("%Y-%m-%dT%H:%M", time.gmtime(since)):
+            continue
+        for s in skills:
+            mine = [r for r in rows if r[1] == s and r[2] in ("full", "part")]
+            if not mine:
+                continue
+            full = sum(r[2] == "full" for r in mine)
+            comp = [r for r in rows if r[2] == "compacted"]
+            lines = [f"  turn {t}: {k}: {c}" if k != "compacted" else f"  turn {t}: COMPACTED"
+                     for t, _, k, c in sorted(mine + comp, key=lambda r: r[0])]
+            blocks[s].append((start, f"======== {start[:16]} turns={turns} full_reads={full} "
+                                     f"partial_reads={len(mine) - full} compactions={len(comp)} cwd={cwd}\n  {f}\n"
+                                     + "\n".join(lines)))
+    for s, b in blocks.items():
+        if not b:
+            continue
+        with open(os.path.join(out_dir, f"{s}.codex.txt"), "w") as fh:
+            fh.write(f"# {s}: {len(b)} Codex rollouts that read it (newest first). A turn is one tick; "
+                     "hash checks are not listed.\n\n")
+            fh.write("\n\n".join(x for _, x in sorted(b, reverse=True)) + "\n")
+        print(s, "codex rollouts", len(b), flush=True)
+
+
 def extract(out_dir, skills, days, keep):
     invs = {s: [] for s in skills}
-    for f in transcripts(time.time() - days * 86400):
+    for f in files(".claude/projects", time.time() - days * 86400):
         try:
             raw = open(f, errors="ignore").read()
         except OSError:
@@ -215,6 +324,8 @@ def extract(out_dir, skills, days, keep):
         path = os.path.join(out_dir, f"{s}.txt")
         with open(path, "w") as fh:
             fh.write(f"# {s}: {len(L)} invocations in the last {days} days (newest first; {min(len(L), keep)} kept)\n")
+            for c in copies(s):
+                fh.write(f"# INDEPENDENT COPY: {c}\n")
             for k, (ts, f, i, how, req, ev) in enumerate(L[:keep]):
                 body, humans, n = [], 0, 0
                 for e2 in ev[i + 1:]:
@@ -240,10 +351,12 @@ def main():
     if not args or (not listing and len(args) < 2):
         sys.exit(__doc__)
     os.makedirs(args[0], exist_ok=True)
+    announce()
     if listing:
         list_skills(args[0], days)
     else:
         extract(args[0], args[1:], days, keep)
+        extract_codex(args[0], args[1:], time.time() - days * 86400)
 
 
 if __name__ == "__main__":
