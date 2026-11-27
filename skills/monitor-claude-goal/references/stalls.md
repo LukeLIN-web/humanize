@@ -1,4 +1,4 @@
-# Rare stalls (§5.1, §5.2, §5.5, §5.6)
+# Rare stalls (§5.1–§5.6)
 
 Read by `monitor-claude-goal` when one of its §5 stubs sends you here; read only the section it names. Section numbers refer to that skill's SKILL.md.
 
@@ -38,6 +38,40 @@ When all hold, pick it (bounded by the same per-window cap + cooldown as §5):
 3. send `Enter` to select.
 4. `tmux capture-pane` — **confirm the menu closed and the agent accepted the choice** (it began acting on that option). If the menu is still open, do **not** hammer keys — notify and stop.
 5. send a **post-hoc host notification** stating you **auto-picked the recommended option `<N: label>` after `<timeout>` of no human response**, and that the human can still redirect.
+
+### 5.3 Resource-blocked target → poll-and-resume nudge
+
+A special case of "blocked awaiting a human decision" that §5.2 **cannot** resolve: the target stopped because a resource it needs — **a free GPU / enough VRAM**, occasionally a busy port or a queue slot — isn't available right now, and it punted the call to the human (e.g. an `AskUserQuestion` "which GPUs do I run on?" or a plain "no card is free, waiting for you").
+
+§5.3 closes that stall **without** making the unsafe choice. The overseer does not pick "grab card N" or "kill the other job"; it injects a steer telling the target to **stop sitting idle, re-check availability now, and wait-then-auto-resume**: *if* enough is free this instant → proceed there; *else* set up a **resumable background watcher that polls for capacity and auto-launches the moment a card frees on its own** — never preempting, evicting, or killing anyone else's work.
+
+Before nudging, confirm **all** of:
+- the block is genuinely **resource-availability**, not a substantive research/design fork — the pane / recent transcript shows the agent waiting on free GPU/VRAM/compute (capacity), not asking *what experiment to run*. If it's a real methodology choice → that's §5.2 territory, not this;
+- it has been pending for **≥ `--decision-timeout`** with the prompt/idle state **byte-identical and unanswered** since previously seen (a changed prompt or any new user turn **resets the clock** — never step on a human who is mid-decision);
+- there exists a **safe non-destructive path**: capacity can be polled for and will plausibly free on its own (shared cluster, other jobs will finish), OR a "wait for free / auto-start" option is already on the menu. If the *only* ways forward evict/kill others or there's no resumable wait path → **stay in notify, do not nudge.**
+
+When all hold, act (bounded by the same per-window cap + cooldown as §5):
+1. `tmux capture-pane` — re-confirm the same resource block is on screen.
+2. **If the menu already offers a safe "wait for capacity / auto-start when free" option** (the non-destructive one, distinct from grab-shared-card / kill-others) → select it via the §5.2 deterministic-navigation steps (capture after each arrow; confirm highlight).
+3. **Otherwise inject a free-text steer** via the §5 path, e.g.: *"别停着等人要卡 — 先查一下现在的空闲显存;够就直接在空卡上跑,不够就挂一个可续跑的后台 watcher 轮询显存,等有卡自己空出来再自动开整跑。绝不抢占/停别人的 job,也不要挤会 OOM 的卡。"*
+4. `tmux capture-pane` — confirm the target accepted it (menu closed / steer consumed and it began checking capacity). If not consumed, do **not** hammer keys — notify and stop.
+5. send a **post-hoc host notification** stating you **nudged a GPU/resource-blocked target to poll-and-auto-resume**; the human can still redirect to a specific card.
+
+### 5.4 Idle-but-unfinished target → plain resume nudge
+
+A target can **stall at an idle prompt**: a tool/shell call **returned** (a long GPU job, eval, or download finished), the agent posted its summary, ended its turn, and is now sitting at a free-form `❯` prompt — but the `/goal` is **not done** (open tasks remain) and the agent did **not** drive on to the next step.
+
+Before nudging, confirm **all** of:
+- the pane is a **live, idle Claude Code TUI** at a free-form `❯` prompt — **no** running tool ("esc to interrupt" absent), **no** decision menu. Status is `idle`/`waiting`, **not** `busy`/`shell`. (If a tool is still shown running → it is either legitimately busy or a §5.1 wedge, not this.)
+- the `/goal` is **unfinished** — open/in-progress items in the task list, or remaining steps in the transcript's own stated plan. If everything is genuinely complete → that is the **idle-and-done terminal**: notify, do **not** nudge.
+- the agent's **last message does not ask the human anything** — no question, no "which should I…", no presented options, no "let me know / your call". If it is soliciting human input → that is **waiting-for-a-human**: notify (and §5.2 if it later hardens into a menu); do **not** nudge over a genuine question.
+- **nothing it is legitimately waiting on is still running** — if it launched a background job and is idling until that job finishes, verify the job's state: **still running →** treat as legitimately waiting, stay silent; **completed/dead →** the wake-up never came, nudging is exactly right. (This is the heart of the GPU-run case: the job is *done* but no foreground call was blocking, so nothing woke the agent.)
+- it has been idle for **≥1× the cadence** (from the `statusUpdatedAt` idle-since timestamp in `~/.claude/sessions/<pid>.json`), with the transcript **byte-identical and no new user turn** since the previous tick — so this is a settled stall, not an agent mid-thought or about to continue on its own.
+
+When all hold, nudge via the **normal §5 path** (bounded by the same per-window cap + cooldown):
+1. `tmux capture-pane` — re-confirm the idle prompt and that no tool/menu appeared in the meantime.
+2. inject a **concrete**, **outcome-aware** steer built from the transcript's own plan (§4 step 4 classification): if the awaited job (GPU run / eval / **download**) *finished cleanly* → name the finished step and the next one (e.g. *"labeling 跑完了,按计划接着走:build label set → train chooser → re-score → attribution → review → ledger,别停在这。"*), never a bare "continue"; if it *crashed/failed* (output missing/truncated, nonzero exit, traceback in the log) → name the symptom and steer the agent to **diagnose and decide on a rerun**, **not** to proceed as if it had succeeded.
+3. `tmux capture-pane` — confirm the steer landed and the agent picked the turn back up. If not consumed → do not hammer keys, notify and stop.
 
 ### 5.5 Dangerous-command guard false-positive → opt-in verified-safe auto-approve
 
