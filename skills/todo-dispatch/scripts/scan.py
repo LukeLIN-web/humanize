@@ -1,25 +1,28 @@
 """The start of every dispatcher round: what changed since the last round, which is all the round
 has to act on. When nothing did, it prints one line starting 「无变化」 and the round ends there.
 
-    python3 scan.py [--todo docs/todo.md] [--state <file>]
+    python3 scan.py [<repo> ...] [--todo docs/todo.md] [--state <file>]
 
-Run in the target repo. It writes nothing but its state file (default
-.humanize/dispatch-scan/state.json, in a directory that git-ignores itself); git, gh and the
-board are only read. What it compares with the last round:
+Run in the dispatcher's own repo: its fleet config is the one read. With no <repo> it scans the
+current checkout; given several, each repo's part is scanned in that repo and its lines start with
+`[<repo dir>]`, and the board-wide part (round, day, board hosts, usage limits, Fable, GPUs) comes
+once. It writes nothing but its state files (default <repo>/.humanize/dispatch-scan/state.json in
+each repo, in a directory that git-ignores itself; --state replaces the first one); each holds its
+repo's part and the board-wide part, which is compared with the first file's. git, gh and the board
+are only read. What it compares with the last round:
 
 - the ledger in the work tree: open items with no claim that are new or edited, items done since
   (a queued item may be free now); an item whose work-tree line differs from HEAD is being edited
   and is held back until it is committed;
 - the default branch against origin (ls-remote), listed again only once HEAD or origin moved,
-  and the commits since last round that look like friction: a revert, someone else's merge of
-  origin, a claim commit that carries other files;
+  and the commits since last round that look like friction: a revert, someone else's merge of origin;
 - the newest run of each CI workflow on the default branch, when it newly failed;
-- this repo's cards (cwd in the repo, or named `<repo dir>-…`): appeared, gone, asking (a turn
-  ending on 【等 user 定】), on a dialog, stalled, a turn ended, unchanged for 5 hours; a person
-  typing into one, Stop hook feedback looping one; any card on the board hitting a usage limit;
+- each repo's cards (cwd in the repo, or named `<repo dir>-…`): appeared, gone, asking (a turn
+  ending on 【等 user 定】), on a dialog, stalled, a turn ended; a person typing into one (one line
+  per card), Stop hook feedback looping one; any card on the board hitting a usage limit;
 - cards still on Fable whose account's Fable week is used up (the dispatcher's own card at 95%);
-- per GPU host: free cards, gpu_wait claims and the queue; the rows of the GPU plan's 「接下来」
-  whose time came;
+- per GPU host: free cards, gpu_wait claims and the queue; a scanned repo's card whose gpu_wait has
+  been queued 5 hours (the 5-hour rule); the rows of the GPU plan's 「接下来」 whose time came;
 - todo-dispatch's or gpu-priority's SKILL.md edited since; the first round of a local day.
 """
 import argparse
@@ -45,7 +48,7 @@ NEED = re.compile(r"--(?:need-gb|num-gpus) \S+")
 LIMIT = re.compile(r"(hit|reached) your [^.\n]*limit", re.I)
 # a time in a row of the plan's 「接下来」; one whose clause says 已 (已放、已提醒) is a past fact
 CLOCK = re.compile(r"(?:(\d{1,2})-(\d{1,2}) )?\b([01]?\d|2[0-3]):([0-5]\d)\b(?![^，。；\n]*已)")
-STILL = 5 * 3600  # a card unchanged this long may be waiting on GPUs for nothing (the 5-hour rule)
+STILL = 5 * 3600  # a card queued this long for GPUs is wrapped up and closed (the 5-hour rule)
 
 
 def git(*args: str, check: bool = True) -> str:
@@ -126,7 +129,7 @@ def scan_todo(path: str, last: dict, out: list[str], keep: dict) -> str:
     return f"未认领 {len(keep['open'])} 条" + (f"（有人在改、没提交，跳过：{'；'.join(editing)}）" if editing else "")
 
 
-def scan_git(branch: str, ledger_path: str, last: dict, out: list[str], keep: dict, notes: list[str]) -> str:
+def scan_git(branch: str, last: dict, out: list[str], keep: dict, notes: list[str]) -> str:
     keep["head"] = head = git("rev-parse", "HEAD").strip()
     r = run("git", "ls-remote", "origin", f"refs/heads/{branch}")
     origin = r.stdout.split()[0] if r.returncode == 0 and r.stdout.split() else f"origin/{branch}"
@@ -146,15 +149,9 @@ def scan_git(branch: str, ledger_path: str, last: dict, out: list[str], keep: di
     prev = last.get("head")
     if prev and prev != head and subprocess.run(["git", "merge-base", "--is-ancestor", prev, head],
                                                 capture_output=True).returncode == 0:
-        hits = []
-        for entry in git("log", "--format=%x00%h\t%s", "--numstat", f"{prev}..{head}").split("\0")[1:]:
-            first, *stat = entry.strip("\n").split("\n")
-            sha, subject = first.split("\t", 1)
-            files = [s.split("\t") for s in stat if s.count("\t") == 2]
-            if FRICTION.search(subject) and subject != f"并入 origin/{branch}":
-                hits.append(f"{sha} {short(subject, 60)}")
-            elif [f[2] for f in files if f[:2] == ["1", "1"]] == [ledger_path] and len(files) > 1:
-                hits.append(f"{sha} 认领提交带了另外 {len(files) - 1} 个文件：{short(subject, 50)}")
+        hits = [f"{sha} {short(subject, 60)}" for sha, subject in
+                (line.split("\t", 1) for line in git("log", "--format=%h\t%s", f"{prev}..{head}").splitlines())
+                if FRICTION.search(subject) and subject != f"并入 origin/{branch}"]
         if hits:
             out.append("摩擦提交：" + "；".join(hits))
     elif prev and prev != head:
@@ -198,46 +195,44 @@ def card_class(w: dict) -> str:
     return "working"
 
 
-def person_typed(e: dict) -> bool:
-    """A timeline line a person typed (from the board page or at the terminal), not one a
-    script, the overseer or a slash command put there."""
-    by = (e.get("extra") or {}).get("by")
-    text = (e.get("text") or "").strip()
-    if e.get("kind") != "user_text" or (e.get("extra") or {}).get("meta") or not text:
-        return False
-    if by is not None:
-        return by == "web"
-    return not (text.startswith(("旁观", "[Request interrupted", "Stop hook", "<")) or re.fullmatch(r"[a-z-]+", text))
+def scan_hosts(snap: dict, last: dict, out: list[str], keep: dict) -> set[str]:
+    """Board hosts that stopped answering since the last round; returns the ones down now."""
+    down = {p["host"] for p in snap.get("peers", []) if not p.get("online") or p.get("stale")}
+    keep["down"] = sorted(down)
+    for h in sorted(down - set(last.get("down", []))):
+        out.append(f"board 主机 {h} 不应答（它的卡看不到）")
+    return down
 
 
-def scan_cards(snap: dict, top: str, last: dict, out: list[str], keep: dict, now: float) -> str:
+def scan_cards(snap: dict, top: str, down: set[str], last: dict, out: list[str], keep: dict) -> str:
+    """The repo's cards: appeared, gone, or now doing something the dispatcher acts on."""
     me = os.environ.get("CLAUDE_CODE_SESSION_ID")
     base = os.path.basename(top) + "-"
-    since_iso = last.get("ts", "")
-    down = {p["host"] for p in snap.get("peers", []) if not p.get("online") or p.get("stale")}
-    was_down = set(last.get("down", []))
-    keep["down"] = sorted(down)
-    for h in sorted(down - was_down):
-        out.append(f"board 主机 {h} 不应答（它的卡看不到）")
     prev = last.get("cards", {})
     keep["cards"] = cards = {}
-    ours = [w for w in snap["windows"] if w.get("session_id") != me and not w.get("hidden") and (
-        os.path.realpath(w.get("cwd") or "/").startswith(top) or (w.get("name") or "").startswith(base))]
-    for w in ours:
+    for w in snap["windows"]:
+        if w.get("session_id") == me or w.get("hidden") or not (
+                os.path.realpath(w.get("cwd") or "/").startswith(top) or (w.get("name") or "").startswith(base)):
+            continue
         cls, p = card_class(w), prev.get(w["key"])
         name = w.get("name") or w["key"]
-        cards[w["key"]] = {"name": name, "host": w.get("host"), "class": cls,
-                           "since": p["since"] if p and p["class"] == cls else now}
+        cards[w["key"]] = {"name": name, "host": w.get("host"), "class": cls}
         if not p:
             if "cards" in last:
                 out.append(f"卡 新出现：{name}（{w.get('host')}）{'' if cls == 'working' else short(cls, 90)}")
         elif cls != p["class"] and cls != "working":
             out.append(f"卡 {name}：{short(cls, 110)}")
-        elif cls == p["class"] and now - p["since"] >= STILL > last.get("now", now) - p["since"]:
-            out.append(f"卡 {name} 5 小时没变（{short(cls, 60)}）：在等卡的照 5 小时那条收尾")
     for key, p in prev.items():
         if key not in cards and p.get("host") not in down:
             out.append(f"卡 不见了：{p['name']}（{p.get('host')}）")
+    return f"本仓 {len(cards)} 张卡"
+
+
+def scan_timelines(snap: dict, since_iso: str, outs: dict[str, list[str]], out: list[str]) -> None:
+    """What reached each card's timeline since the last round. Any card hitting a usage limit goes
+    to `out` (a card outside the scanned repos only for the Fable limit); for a scanned repo's card
+    (a key of `outs`, whose value is its repo's lines) Stop hook loops and what a person typed."""
+    me = os.environ.get("CLAUDE_CODE_SESSION_ID")
 
     def timeline(w: dict) -> tuple[dict, list]:
         try:
@@ -248,20 +243,20 @@ def scan_cards(snap: dict, top: str, last: dict, out: list[str], keep: dict, now
     with ThreadPoolExecutor(8) as pool:
         lines = list(pool.map(timeline, [w for w in snap["windows"] if w.get("session_id") != me]))
     for w, events in lines:
-        name, mine = w.get("name") or w["key"], w["key"] in cards
-        fresh = [e for e in events if since_iso and (e.get("ts") or "") > since_iso]
+        name, mine = w.get("name") or w["key"], outs.get(w["key"])
+        fresh = sorted((e for e in events if since_iso and (e.get("ts") or "") > since_iso), key=lambda e: e["ts"])
         hit = next((e for e in reversed(fresh) if LIMIT.search(e.get("text") or "")), None)
-        if hit and (mine or "fable limit" in hit["text"].lower()):
+        if hit and (mine is not None or "fable limit" in hit["text"].lower()):
             out.append(f"卡 撞限：{name}（{w.get('host')}）「{short(LIMIT.search(hit['text'])[0], 50)}」")
-        if not mine:
+        if mine is None:
             continue
         spins = sum(1 for e in fresh if e.get("kind") == "user_text" and (e.get("text") or "").startswith("Stop hook"))
         if spins >= 3:
-            out.append(f"卡 空转：{name} 上一轮以来被 Stop hook 打回 {spins} 次")
-        for e in fresh:
-            if person_typed(e):
-                out.append(f"卡 {name} 收到 user 输入（{e['ts'][11:16]} UTC）：「{short(e['text'], 80)}」")
-    return f"本仓 {len(cards)} 张卡"
+            mine.append(f"卡 空转：{name} 上一轮以来被 Stop hook 打回 {spins} 次")
+        typed = [e for e in fresh if dispatch.person_typed(e)]
+        if typed:
+            mine.append(f"卡 {name} 收到 user 输入 {len(typed)} 条，最近一条（{typed[-1]['ts'][11:16]} UTC）："
+                        f"「{short(typed[-1]['text'], 80)}」")
 
 
 def scan_fable(snap: dict, out: list[str], notes: list[str]) -> None:
@@ -308,7 +303,10 @@ def gpu_state(snap: dict) -> dict:
         for h in snap.get("gpus", [])}
 
 
-def scan_gpus(snap: dict, plan: str | None, last: dict, out: list[str], keep: dict, now: float) -> str:
+def scan_gpus(snap: dict, plan: str | None, ours: dict[str, str], last: dict, out: list[str], keep: dict,
+              now: float) -> str:
+    """Per GPU host what changed; a card of the scanned repos (`ours`: key -> name) whose gpu_wait
+    has been queued 5 hours, once; the plan rows whose time came."""
     keep["gpus"] = cur = gpu_state(snap)
     prev, before = last.get("gpus"), len(out)
     for host, g in cur.items():
@@ -329,6 +327,16 @@ def scan_gpus(snap: dict, plan: str | None, last: dict, out: list[str], keep: di
         for what, key in (("锁", "claims"), ("排队", "waits")):
             bits += [f"{what} +{x}" for x in g[key] if x not in p[key]] + [f"{what} -{x}" for x in p[key] if x not in g[key]]
         out.append(f"GPU {host}：" + "；".join(bits))
+    queued: dict[str, list[tuple[float, str]]] = {}
+    for h in snap.get("gpus", []):
+        for x in h["waiting"]:
+            if x.get("card") in ours and x.get("started_at"):
+                queued.setdefault(x["card"], []).append((x["started_at"], h["host"]))
+    for key, xs in queued.items():
+        t0 = min(t for t, _ in xs)
+        if now - t0 >= STILL > last.get("now", 0) - t0:
+            out.append(f"GPU 排队 5 小时：{ours[key]}（{'、'.join(sorted({h for _, h in xs}))}，"
+                       f"排了 {(now - t0) / 3600:.1f} 小时）：照 5 小时那条收尾")
     if plan and last.get("now"):
         try:
             with open(plan, encoding="utf-8") as f:
@@ -349,56 +357,86 @@ def scan_gpus(snap: dict, plan: str | None, last: dict, out: list[str], keep: di
     return f"GPU {len(cur)} 台" + ("同上轮" if prev is not None and len(out) == before else "")
 
 
+def state_of(path: str) -> dict:
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--todo", default="docs/todo.md", help="the ledger, relative to the repo top")
-    ap.add_argument("--state", help="state file (default .humanize/dispatch-scan/state.json)")
+    ap.add_argument("repos", nargs="*", help="the repos to scan (default: the current checkout)")
+    ap.add_argument("--todo", default="docs/todo.md", help="the ledger, relative to each repo's top")
+    ap.add_argument("--state", help="the first repo's state file, whose board-wide part is the one compared "
+                                    "(default <repo>/.humanize/dispatch-scan/state.json)")
     a = ap.parse_args()
-    top = git("rev-parse", "--show-toplevel").strip()
-    os.chdir(top)
-    state = a.state or os.path.join(top, ".humanize", "dispatch-scan", "state.json")
-    try:
-        with open(state, encoding="utf-8") as f:
-            last = json.load(f)
-    except FileNotFoundError:
-        last = {}
+    tops = list(dict.fromkeys(git("-C", r, "rev-parse", "--show-toplevel").strip() for r in a.repos or ["."]))
+    paths = [os.path.abspath(a.state) if a.state and i == 0 else os.path.join(t, ".humanize", "dispatch-scan", "state.json")
+             for i, t in enumerate(tops)]
+    lasts = [state_of(p) for p in paths]
+    last = lasts[0]
     now = time.time()
     keep: dict = {"ts": dt.datetime.fromtimestamp(now, dt.timezone.utc).isoformat(timespec="milliseconds")[:-6] + "Z",
                   "now": now,
                   "date": dt.date.today().isoformat()}
+    head: list[str] = []
     out: list[str] = []
     notes: list[str] = []
     if last.get("date") != keep["date"]:
-        out.append(f"今天第一轮（{keep['date']}）：续定时，台账所有 open 条目从头分类")
+        head.append(f"今天第一轮（{keep['date']}）：续定时，台账所有 open 条目从头分类")
     keep["skills"] = {k: os.path.getmtime(p) for k, p in SKILLS.items()}
     changed = [k for k, m in keep["skills"].items() if last.get("skills", {}).get(k) not in (None, m)]
     if changed:
-        out.append("重读 skill：" + "、".join(changed) + " 的 SKILL.md 上一轮以来改过")
-    branch = git("symbolic-ref", "--short", "HEAD").strip()
-    summary = [scan_todo(a.todo, last, out, keep), scan_git(branch, a.todo, last, out, keep, notes)]
-    scan_ci(branch, last, out, keep, notes)
+        head.append("重读 skill：" + "、".join(changed) + " 的 SKILL.md 上一轮以来改过")
+    repos = []
+    for top, rlast in zip(tops, lasts):
+        os.chdir(top)
+        r = {"top": top, "last": rlast, "keep": {}, "out": [], "notes": []}
+        branch = git("symbolic-ref", "--short", "HEAD").strip()
+        r["summary"] = [scan_todo(a.todo, rlast, r["out"], r["keep"]),
+                        scan_git(branch, rlast, r["out"], r["keep"], r["notes"])]
+        scan_ci(branch, rlast, r["out"], r["keep"], r["notes"])
+        repos.append(r)
     try:
         snap = dispatch.call("GET", "/api/windows")
     except OSError as e:
         sys.exit(f"board 没读到（{e}）：这一轮不比，照七步走")
-    summary.append(scan_cards(snap, top, last, out, keep, now))
+    down = scan_hosts(snap, last, out, keep)
+    for r in repos:
+        r["summary"].append(scan_cards(snap, r["top"], down, r["last"], r["out"], r["keep"]))
+    scan_timelines(snap, last.get("ts", ""), {k: r["out"] for r in repos for k in r["keep"]["cards"]}, out)
     scan_fable(snap, out, notes)
-    summary.append(scan_gpus(snap, dispatch.FLEET.get("gpu", {}).get("plan"), last, out, keep, now))
-    tail = "，".join(filter(None, summary)) + (f"（{'；'.join(notes)}）" if notes else "")
-    if out:
-        print(f"要处理 {len(out)} 项：")
-        print("\n".join(f"- {x}" for x in out))
+    ours = {k: c["name"] for r in repos for k, c in r["keep"]["cards"].items()}
+    gpus = scan_gpus(snap, dispatch.FLEET.get("gpu", {}).get("plan"), ours, last, out, keep, now)
+
+    def said(xs: list[str]) -> str:
+        return f"（{'；'.join(xs)}）" if xs else ""
+
+    if len(repos) == 1:
+        r = repos[0]
+        found = head + r["out"] + out
+        tail = "，".join(filter(None, r["summary"] + [gpus])) + said(r["notes"] + notes)
+    else:
+        found = head + [f"[{os.path.basename(r['top'])}] {x}" for r in repos for x in r["out"]] + out
+        tail = "；".join([f"{os.path.basename(r['top'])}：{'，'.join(filter(None, r['summary']))}{said(r['notes'])}"
+                         for r in repos] + [gpus + said(notes)])
+    if found:
+        print(f"要处理 {len(found)} 项：")
+        print("\n".join(f"- {x}" for x in found))
         print(f"其余：{tail}")
     else:
         print(f"无变化：{tail}。这一轮到此收尾。")
-    os.makedirs(os.path.dirname(state), exist_ok=True)
-    ignore = os.path.join(os.path.dirname(state), ".gitignore")
-    if not a.state and not os.path.exists(ignore):
-        with open(ignore, "w") as f:
-            f.write("*\n")
-    with open(state + ".new", "w", encoding="utf-8") as f:
-        json.dump(keep, f, ensure_ascii=False, indent=1)
-    os.replace(state + ".new", state)
+    for i, (r, path) in enumerate(zip(repos, paths)):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        ignore = os.path.join(os.path.dirname(path), ".gitignore")
+        if not (a.state and i == 0) and not os.path.exists(ignore):
+            with open(ignore, "w") as f:
+                f.write("*\n")
+        with open(path + ".new", "w", encoding="utf-8") as f:
+            json.dump({**keep, **r["keep"]}, f, ensure_ascii=False, indent=1)
+        os.replace(path + ".new", path)
     return 0
 
 

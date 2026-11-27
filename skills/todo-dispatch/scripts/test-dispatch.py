@@ -3,18 +3,22 @@
 board URL board_config() picks from a board checkout with or without peers (the fake board
 stands in for the tunnel).
 
-The fake board answers GET /api/windows, POST /api/windows/create (a new card appears at once,
-under the name the test picks), POST /api/windows/<key>/prompt (recorded; `/rename <name>`
-renames the card unless the test turns that off), POST /api/usage (Fable weekly use as the test
-sets it) and POST /api/windows/<key>/model (recorded). Waits are patched out.
+The fake board answers GET /api/windows, GET /api/windows/<key>/timeline (the events the test
+sets, a list of reads in turn), POST /api/windows/create (a new card appears at once, under the
+name the test picks), POST /api/windows/<key>/prompt (recorded; `/rename <name>` renames the card
+unless the test turns that off), POST /api/usage (Fable weekly use as the test sets it, or a
+host's whole reading), POST /api/windows/<key>/model and POST /api/windows/<key>/close (both
+recorded). Waits are patched out. Nothing here reaches a real board.
 
 Run:  python3 skills/todo-dispatch/scripts/test-dispatch.py   (exit 0 = all pass)
 """
 import atexit
 import contextlib
+import datetime
 import importlib.util
 import io
 import json
+import math
 import os
 import shutil
 import socket
@@ -44,6 +48,10 @@ class FakeBoard:
         self.refuse_model = False
         self.session: dict = {}  # what the board knows of a new card's session
         self.platforms: list[str] = []
+        self.peers = [{"host": "h2", "online": True}]
+        self.usage: dict[str, dict] = {}  # a host's whole /api/usage reading, when the test sets one
+        self.timelines: dict[str, list[list[dict]]] = {}  # per card, what each read returns; the last one stays
+        self.closed: list[str] = []
         board = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -64,8 +72,10 @@ class FakeBoard:
                     self.send_header("Content-Length", "0")
                     self.end_headers()
                     return
-                self._reply({"host": "h1", "peers": [{"host": "h2", "online": True}],
-                             "windows": list(board.windows.values())})
+                if self.path.endswith("/timeline"):
+                    reads = board.timelines.get(self.path.split("/")[3]) or [[]]
+                    return self._reply({"events": reads.pop(0) if len(reads) > 1 else reads[0]})
+                self._reply({"host": "h1", "peers": board.peers, "windows": list(board.windows.values())})
 
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
@@ -77,6 +87,8 @@ class FakeBoard:
                                           "platform": body["platform"],
                                           **board.session}
                     return self._reply({"ok": True, "pane_id": "%9"})
+                if self.path == "/api/usage" and body["host"] in board.usage:
+                    return self._reply({"ok": True, **board.usage[body["host"]]})
                 if self.path == "/api/usage":
                     return self._reply({"ok": True, "limits": [
                         {"label": "Current week (all models)", "used": 40, "resets": "Nov 14"},
@@ -86,6 +98,9 @@ class FakeBoard:
                     return self._reply({"ok": False, "error": "the /model dialog never opened"}
                                        if board.refuse_model else {"ok": True})
                 key = self.path.split("/")[3]
+                if self.path.endswith("/close"):
+                    board.closed.append(key)
+                    return self._reply({"ok": True})
                 board.prompts.append((key, body["text"]))
                 if body["text"].startswith("/rename ") and board.refuse_rename:
                     return self._reply({"ok": False, "error": "send blocked: a picker is open"})
@@ -423,6 +438,173 @@ class DispatchRun(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("run record not written", out["warning"])
         self.assertEqual(BOARD.prompts[-1], ("h2:999", "do the item"))
+
+
+def reading(week: int | None, fable: int = 0, session: int | None = None, resets: str = "Dec 2, 9pm (UTC)",
+            account: str = "") -> dict:
+    """One host's /api/usage: weekly use (None: no weekly row), Fable weekly use, the 5-hour window."""
+    limits = ([] if session is None else [{"label": "Current session", "used": session, "resets": "6pm (UTC)"}]) + \
+        ([] if week is None else [{"label": "Current week (all models)", "used": week, "resets": resets}]) + \
+        [{"label": "Current week (Fable)", "used": fable, "resets": resets}]
+    return {"limits": limits, "account": {"email": account}} if account else {"limits": limits}
+
+
+class DispatchAuto(unittest.TestCase):
+    """`auto`: the host is picked by the account's usage; the readings go to stderr."""
+
+    def setUp(self):
+        BOARD.windows.clear()
+        BOARD.prompts.clear()
+        BOARD.models.clear()
+        BOARD.new_name = "proj-3b"
+        BOARD.honor_rename = True
+        BOARD.refuse_model = False
+        BOARD.peers = [{"host": h, "online": True} for h in ("a", "b", "c")]
+        self.addCleanup(setattr, BOARD, "peers", [{"host": "h2", "online": True}])
+        self.addCleanup(BOARD.usage.clear)
+
+    def auto(self, fleet: dict | None = None) -> tuple[int, dict, str]:
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(sys, "argv", ["dispatch.py", "auto", PROJ, PROMPT]), \
+                mock.patch.object(dispatch.time, "sleep"), contextlib.redirect_stdout(out), \
+                contextlib.redirect_stderr(err), \
+                mock.patch.object(dispatch, "FLEET", {"dispatch": {"card_hosts": ["a", "b", "c"], **(fleet or {})}}), \
+                mock.patch.object(dispatch.runs, "runs_dir", lambda *a: RUNS):
+            rc = dispatch.main()
+        return rc, json.loads(out.getvalue()) if out.getvalue() else {}, err.getvalue()
+
+    def test_the_account_using_least_of_its_weekly_quotas_gets_the_card(self):
+        BOARD.usage.update(a=reading(10, fable=90), b=reading(40, fable=40), c=reading(30, fable=70))
+        rc, out, err = self.auto()
+        self.assertEqual((rc, out["host"], BOARD.windows["b:999"]["host"]), (0, "b", "b"))
+        self.assertIn("账号 b：周 40%", err)
+        self.assertRegex(err, r"账号 b：.*；选中")
+
+    def test_a_full_week_or_a_nearly_full_five_hour_window_is_skipped(self):
+        BOARD.usage.update(a=reading(100), b=reading(5, session=85), c=reading(60, fable=60))
+        rc, out, err = self.auto()
+        self.assertEqual(out["host"], "c")
+        self.assertIn("跳过：周额度满", err)
+        self.assertIn("跳过：5 小时窗 85%", err)
+
+    def test_among_alike_accounts_the_earlier_reset_then_fewer_cards(self):
+        BOARD.usage.update(a=reading(30, resets="Dec 3, 9pm (UTC)"), b=reading(28, resets="Dec 1, 9pm (UTC)"),
+                           c=reading(20, resets="Dec 4, 9pm (UTC)"))
+        self.assertEqual(self.auto()[1]["host"], "b")  # within 10 points of c, and resets first
+        BOARD.windows.clear()
+        BOARD.usage.update(b=reading(29, resets="Dec 3, 9pm (UTC)"))
+        BOARD.add("a:1", "x")
+        self.assertEqual(self.auto()[1]["host"], "b")  # a and b alike, same reset; a has a card
+
+    def test_a_rounds_cards_spread_over_accounts(self):
+        BOARD.usage.update(a=reading(10), b=reading(50), c=reading(60))
+        self.assertEqual(self.auto()[1]["host"], "a")
+        self.assertEqual(self.auto()[1]["host"], "b")  # a got a card a moment ago
+
+    def test_hosts_of_one_account_count_together(self):
+        BOARD.usage.update(a=reading(10, account="x"), b=reading(10, account="x"), c=reading(15))
+        BOARD.windows["a:1"] = {"key": "a:1", "host": "a", "cwd": "/w", "started_at": time.time() * 1000, "name": "n"}
+        rc, out, err = self.auto()
+        self.assertEqual(out["host"], "c")  # the account of a and b got a card a moment ago
+        self.assertIn("账号 a+b：", err)
+
+    def test_no_weekly_cap_comes_after_capped_accounts_and_full_fable_switches_to_opus(self):
+        BOARD.usage.update(a=reading(None), b=reading(70, fable=100), c=reading(100))
+        rc, out, err = self.auto()
+        self.assertEqual((out["host"], out["model"]), ("b", "opus"))
+        self.assertIn("无周上限", err)
+
+    def test_a_host_off_the_shared_disk_is_not_picked_and_no_account_left_opens_nothing(self):
+        homes = os.path.join(TMP, "auto-homes")
+        os.makedirs(os.path.join(homes, "a"), exist_ok=True)
+        BOARD.usage.update(a=reading(100), b=reading(1), c=reading(1))
+        rc, out, err = self.auto({"homes": os.path.join(homes, "<NN>")})
+        self.assertEqual((rc, out), (1, {}))
+        self.assertIn("b、c：home 不在共享盘上", err)
+        self.assertIn("no account", err)
+        self.assertNotIn("b:999", BOARD.windows)
+
+    def test_reset_times_read(self):
+        now = datetime.datetime(2026, 11, 27, 15, 0, tzinfo=datetime.timezone.utc).timestamp()
+        self.assertEqual(dispatch.reset_at("Dec 2, 9pm (UTC)", now),
+                         datetime.datetime(2026, 12, 2, 21, 0, tzinfo=datetime.timezone.utc).timestamp())
+        self.assertEqual(dispatch.reset_at("Jan 1, 12am (UTC)", now),
+                         datetime.datetime(2027, 1, 1, 0, 0, tzinfo=datetime.timezone.utc).timestamp())
+        self.assertEqual(dispatch.reset_at("6:20pm (UTC)", now),
+                         datetime.datetime(2026, 11, 27, 18, 20, tzinfo=datetime.timezone.utc).timestamp())
+        self.assertEqual(dispatch.reset_at("2pm (UTC)", now),
+                         datetime.datetime(2026, 11, 28, 14, 0, tzinfo=datetime.timezone.utc).timestamp())
+        self.assertEqual(dispatch.reset_at("", now), math.inf)
+        self.assertEqual(dispatch.reset_at("Dec 2, 9pm (Nowhere/Zone)", now), math.inf)
+
+
+def event(kind: str, text: str = "", tool: str | None = None, by: str | None = None, minute: int = 0) -> dict:
+    return {"ts": f"2026-11-27T10:{minute:02d}:00.000Z", "kind": kind, "text": text, "tool": tool,
+            "extra": {"by": by} if by else {}}
+
+
+class Cards(unittest.TestCase):
+    """cards, tl and close: what the dispatcher reads and does to cards already on the board."""
+
+    def setUp(self):
+        BOARD.windows.clear()
+        BOARD.closed.clear()
+        BOARD.timelines.clear()
+        BOARD.add("h2:5", "proj-w05")
+        BOARD.windows["h2:5"].update(cwd=PROJ, triage="completed", model_label="Fable 5.2")
+        BOARD.add("h1:6", "other-w06")
+
+    def cli(self, *argv: str) -> tuple[int, str]:
+        out = io.StringIO()
+        with mock.patch.object(sys, "argv", ["dispatch.py", *argv]), mock.patch.object(dispatch.time, "sleep"), \
+                contextlib.redirect_stdout(out):
+            rc = dispatch.main()
+        return rc, out.getvalue()
+
+    def test_cards_one_line_each_and_a_filter(self):
+        rc, out = self.cli("cards")
+        self.assertEqual((rc, len(out.splitlines())), (0, 2))
+        self.assertIn(f"h2:5\tproj-w05\th2\tcompleted\tFable 5.2\t{PROJ}", out)
+        self.assertEqual(self.cli("cards", "proj-")[1].count("\n"), 1)
+
+    def test_tl_prints_the_last_events_in_time_order(self):
+        BOARD.timelines["h2:5"] = [[event("assistant_text", "second", minute=2), event("user_text", "first", by="web"),
+                                    event("tool_use", tool="Bash", minute=3) | {"extra": {"command": "ls"}}]]
+        rc, out = self.cli("tl", "proj-w05", "2", "40")
+        self.assertEqual(out.splitlines(), ['11-27T10:02:00 assistant_text: second',
+                                            '11-27T10:03:00 tool_use Bash: {"command": "ls"}'])
+
+    def test_close_once_the_handoff_is_the_last_thing_it_did(self):
+        BOARD.timelines["h2:5"] = [[event("user_text", "收尾吧", by="dispatcher"),
+                                    event("assistant_text", "交接已写完，可以关卡", minute=1),
+                                    event("user_text", "Stop hook feedback: goal not met", minute=2),
+                                    event("assistant_text", "还在等 user", minute=3),
+                                    event("user_text", "我是派单员：照常", by="dispatcher", minute=4)]]
+        rc, out = self.cli("close", "proj-w05")
+        self.assertEqual((rc, json.loads(out)["closed"], BOARD.closed), (0, True, ["h2:5"]))
+
+    def test_close_refuses_without_a_handoff_or_after_input_or_tool_calls(self):
+        BOARD.timelines["h2:5"] = [[event("assistant_text", "做完了")]]
+        rc, out = self.cli("close", "h2:5")
+        self.assertEqual((rc, BOARD.closed), (5, []))
+        self.assertIn("no 「交接已写完，可以关卡」", out)
+        BOARD.timelines["h2:5"] = [[event("assistant_text", "交接已写完，可以关卡"),
+                                    event("user_text", "先别关", by="web", minute=1),
+                                    event("tool_use", tool="Bash", minute=2)]]
+        rc, out = self.cli("close", "proj-w05")
+        self.assertEqual((rc, BOARD.closed), (5, []))
+        said = json.loads(out)
+        self.assertEqual((said["typed"], said["acted"]), (["先别关"], ["Bash"]))
+
+    def test_close_waits_for_the_handoff(self):
+        BOARD.timelines["h2:5"] = [[event("assistant_text", "在写交接")], [event("assistant_text", "在写交接")],
+                                   [event("assistant_text", "交接已写完，可以关卡")]]
+        rc, out = self.cli("close", "proj-w05", "--wait", "600")
+        self.assertEqual((rc, BOARD.closed), (0, ["h2:5"]))
+
+    def test_an_unknown_card_exits(self):
+        with self.assertRaises(SystemExit):
+            self.cli("close", "nobody")
 
 
 TUNNEL = {"board": {"aggregator": "agg-host", "tunnel_port": BOARD.server.server_address[1]}}

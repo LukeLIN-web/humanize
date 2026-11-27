@@ -180,7 +180,7 @@ class Scan(unittest.TestCase):
         out = self.scan()
         self.assertIn("摩擦提交", out)
         self.assertIn("退回 误带的 g.txt", out)
-        self.assertIn("认领提交带了另外 1 个文件", out)
+        self.assertNotIn("todo 认领", out)  # a claim commit carrying other files is not friction
 
     def test_cards_report_what_the_dispatcher_acts_on(self):
         card = {"key": "h:1", "host": "h", "cwd": self.repo, "name": "proj-w01", "status": "busy",
@@ -194,15 +194,6 @@ class Scan(unittest.TestCase):
         self.assertQuiet(self.scan())
         card.update(status="idle", triage="asking", triage_reason="在问：A 还是 B？")
         self.assertIn("卡 proj-w01：在问：A 还是 B？", self.scan())
-        self.assertQuiet(self.scan())
-        now = dt.datetime.now().timestamp()
-        with open(self.state) as f:
-            s = json.load(f)
-        s["cards"]["h:1"]["since"] = now - scan.STILL - 5
-        s["now"] = now - 600
-        with open(self.state, "w") as f:
-            json.dump(s, f)
-        self.assertIn("5 小时没变", self.scan())
         self.assertQuiet(self.scan())
         self.board.windows.remove(card)
         self.assertIn("卡 不见了：proj-w01", self.scan())
@@ -219,12 +210,12 @@ class Scan(unittest.TestCase):
 
         self.board.events = {
             "h:1": [line("我是派单员，派你做 A", by="dispatcher"),
-                  line("先别跑，等我看完", by="web"), line("Stop hook feedback: x"),
+                  line("先看 B", by="web"), line("先别跑，等我看完", by="web"), line("Stop hook feedback: x"),
                   line("Stop hook feedback: x"), line("Stop hook feedback: x")],
             "g:1": [line("You've hit your Fable limit · resets 3am", kind="assistant_text")]}
         out = self.scan()
-        self.assertIn("收到 user 输入", out)
-        self.assertIn("先别跑", out)
+        self.assertEqual(out.count("收到 user 输入"), 1)
+        self.assertRegex(out, r"卡 proj-w01 收到 user 输入 2 条，最近一条（\d\d:\d\d UTC）：「先别跑，等我看完」")
         self.assertNotIn("派你做 A", out)
         self.assertIn("空转：proj-w01", out)
         self.assertIn("撞限：other-x", out)
@@ -261,6 +252,64 @@ class Scan(unittest.TestCase):
             out = self.scan()
         self.assertIn(f"GPU 排程到点（{soon:%H:%M}）：约 {soon:%H:%M} 放 0-3 给 job", out)
         self.assertNotIn("已提醒", out)
+
+    def test_a_card_queued_five_hours_for_gpus_is_reported_once(self):
+        now = dt.datetime.now().timestamp()
+        self.board.windows = [{"key": "h:1", "host": "h", "cwd": self.repo, "name": "proj-w01", "triage": "working"},
+                              {"key": "h:2", "host": "h", "cwd": "/elsewhere", "name": "other-x"}]
+        wait = {"card": "h:1", "cwd": "/w/job", "cmd": "gpu_wait --num-gpus 2 -- x", "started_at": now - 3600}
+        self.board.gpus = [{"host": "h", "stale": False, "cards": [{"index": 0, "procs": [{}]}], "claims": [],
+                            "waiting": [wait, dict(wait, card="h:2")]},
+                           {"host": "g", "stale": False, "cards": [], "claims": [],
+                            "waiting": [dict(wait, started_at=now - scan.STILL - 60)]}]
+        self.scan()
+        self.assertQuiet(self.scan())  # queued an hour: nothing yet
+        self.edit_state(now=now - 120)  # the last round saw it queued under 5 hours on g
+        out = self.scan()
+        self.assertEqual(out.count("GPU 排队 5 小时"), 1)
+        self.assertIn("GPU 排队 5 小时：proj-w01（g、h，排了 5.0 小时）：照 5 小时那条收尾", out)
+        self.assertNotIn("other-x", out)
+        self.assertQuiet(self.scan())
+
+    def test_several_repos_in_one_scan(self):
+        side = os.path.join(self.root, "side")
+        git(self.root, "init", "-q", "--bare", "-b", "main", side + ".git")
+        git(self.root, "init", "-q", "-b", "main", side)
+        git(side, "remote", "add", "origin", side + ".git")
+        git(side, "config", "user.email", "t@t")
+        git(side, "config", "user.name", "t")
+        os.makedirs(os.path.join(side, "docs"))
+        with open(os.path.join(side, "docs", "todo.md"), "w") as f:
+            f.write("- [ ] **side item S**\n")
+        git(side, "add", "-A")
+        git(side, "commit", "-q", "-m", "start")
+        git(side, "push", "-q", "origin", "main")
+        card = {"key": "h:1", "host": "h", "cwd": self.repo, "name": "proj-w01", "triage": "working"}
+        other = {"key": "h:2", "host": "h", "cwd": "/w", "name": "side-w02", "triage": "working"}
+        self.board.windows = [card, other]
+        self.board.gpus = [{"host": "h", "stale": False, "cards": [{"index": 0, "procs": []}], "claims": [],
+                            "waiting": []}]
+        # the two scans the dispatcher ran one at a time, the second from an older scan.py ("since" per card)
+        self.scan("--todo", "docs/todo.md")
+        self.scan(side)
+        with open(os.path.join(side, ".humanize", "dispatch-scan", "state.json")) as f:
+            s = json.load(f)
+        s["cards"]["h:2"]["since"] = 0
+        with open(os.path.join(side, ".humanize", "dispatch-scan", "state.json"), "w") as f:
+            json.dump(s, f)
+        out = self.scan(self.repo, side)
+        self.assertQuiet(out)
+        self.assertRegex(out, r"^无变化：proj：未认领 2 条，main 与 origin 一致，本仓 1 张卡；side：未认领 1 条，.*本仓 1 张卡；GPU 1 台")
+        card.update(triage="asking", triage_reason="在问：A？")
+        other.update(triage="asking", triage_reason="在问：S？")
+        self.board.gpus[0]["cards"][0]["procs"] = [{}]
+        out = self.scan(self.repo, side)
+        self.assertIn("- [proj] 卡 proj-w01：在问：A？", out)
+        self.assertIn("- [side] 卡 side-w02：在问：S？", out)
+        self.assertEqual(out.count("GPU h："), 1)
+        self.assertQuiet(self.scan(self.repo, side))
+        for repo in (self.repo, side):
+            self.assertEqual(git(repo, "status", "--porcelain"), "")
 
     def test_a_newly_failed_ci_run_is_reported_once(self):
         runs = [{"databaseId": 2, "name": "ci", "status": "completed", "conclusion": "failure",
