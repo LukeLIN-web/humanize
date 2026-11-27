@@ -110,7 +110,7 @@ bash <本 skill>/scripts/push-shared-main.sh            # 在「推送」那行�
 
 ### 6. GPU 排程
 
-扫描列出 GPU 行或「排程到点」时，照 gpu-priority 的 `loop` 一节走一轮（user 2026-10-23「让 todo dispatch 自动调用一下这个 skill.」）；没列就只写「GPU 照排程」。gpu-priority 的正文在会话开头用 Skill 读一次（插件装法下 `humanize:gpu-priority`），重读的时机同本 skill。它只提醒 user 拍过板、已经到点的那几步，核对放卡和领卡；要新拍板的写进排程文件的「待 user 拍板」，由第 7 步转给 user。不管条目是不是你派的，全集群的卡都看。
+扫描列出 GPU 行或「排程到点」时，照 gpu-priority 的「在 todo-dispatch 的循环里」一节走一轮（user 2026-10-23「让 todo dispatch 自动调用一下这个 skill.」）；没列就只写「GPU 照排程」。gpu-priority 的正文在会话开头用 Skill 读一次（插件装法下 `humanize:gpu-priority`），重读的时机同本 skill。它只提醒 user 拍过板、已经到点的那几步，核对放卡和领卡；要新拍板的写进排程文件的「待 user 拍板」，由第 7 步转给 user。不管条目是不是你派的，全集群的卡都看。
 
 ### 7. 汇报
 
