@@ -17,30 +17,30 @@ Steps 1–4 open a remote shell that you drive with `scripts/rrun.sh`. When the 
 2. **Open the local tmux on a private socket and ssh (the only ssh of the whole workflow)**:
    ```bash
    T="tmux -L <private-socket>"   # every tmux call of the chain goes through $T
-   $T new-session -d -s "$S" -x 220 -y 50
+   $T new-session -d -s "$S" -x 220 -y 500   # tall: output taller than the pane is lost under the remote tmux layer
    $T send-keys -t "$S" 'ssh <host>' Enter
    ```
    Never the default socket (inside a tmux-hosted agent a bare `tmux` lands there via `$TMUX`): tools that scan it, such as a session dashboard, open their own windows in your session, and your send-keys then land in another agent's input box.
-   If the task chain works on a GitHub issue `#N`, tag this session and the remote tmux layer you open later, each on its own server, so CI can close them once the issue closes: `$T set-option -t "=$S:" @issue N`.
+   If the task chain works on a GitHub issue, tag this session, and in step 4 the remote tmux layer, so CI can close both once the issue closes: `$T set-option -t "=$S:" @issue <tag>`, in the form the project's rules give (`N` or `<repo>#N`).
 
 3. **Wait for login** with the shell-command helper (see "Sending"), bounded, never a fixed sleep:
    ```bash
    <skill-dir>/scripts/rrun.sh <private-socket> "$S" <host> 60 true
    ```
-   `<host>` is what `hostname -s` prints on the remote, not the alias you ssh to. Exit 0: a shell on `<host>` ran the command. Exit 3: ssh failed and the pane is back on the local shell, which a marker without the host check (`$(echo OK)`) would report as logged in. Exit 124 prints the pane tail (password or host-key prompt, refused connection).
+   `<host>` is what `hostname -s` prints on the remote, not the alias you ssh to. Exit 0: a shell on `<host>` ran the command. Exit 3: ssh failed and the pane is back on the local shell. Exit 124 prints the pane tail (password or host-key prompt, refused connection).
 
 4. **Open the remote tmux** (it survives a dropped connection: attach again and continue):
    ```bash
    $T send-keys -t "$S" 'tmux new -A -s '"$S" Enter
    ```
-   If this attaches to an existing remote session, inspect the pane before sending a shell marker; leave a mismatched session intact and use a new exclusive name. For a shell in this task chain's remote tmux, confirm it with `rrun.sh … true`, then mark the pane as a parent-controlled helper, so the board keeps it off the dashboard cards (history and session-id lookup still find it):
+   If this attaches to an existing remote session, inspect the pane before sending a shell marker; leave a mismatched session intact and use a new exclusive name. Confirm the remote shell and mark its pane, so the board keeps it off the dashboard cards (the `@issue` part only if step 2 set one):
    ```bash
-   $T send-keys -t "$S" 'tmux set-option -p @fleet-passive 1' Enter
+   <skill-dir>/scripts/rrun.sh <private-socket> "$S" <host> 60 'tmux set-option -p @fleet-passive 1; tmux set-option @issue <tag>'
    ```
 
 ## Sending
 
-- **Shell commands** to a remote shell (not the agent) go through `<skill-dir>/scripts/rrun.sh <private-socket> "$S" <host> <timeout_s> '<command>'`, not a wrapper of your own. Before every command it asserts the pane is on `<host>` (after a dropped ssh the pane is silently back on the local shell, and "remote" commands run there without error). The command travels base64-encoded, so `!` (history expansion in the remote interactive bash: `event not found`, nothing runs), `''`, nested quotes and multiple lines arrive intact. It prints the output between fresh per-call markers and exits with the command's status; its header lists the rest. Keep `clear` and `tmux clear-history` out of the command: they wipe the start marker, and the call fails with `rrun: output scrolled out of the pane` although the command ran. A command that prints more than the pane's scrollback fails the same way: redirect its output to a file and read the file.
+- **Shell commands** to a remote shell go through `<skill-dir>/scripts/rrun.sh <private-socket> "$S" <host> <timeout_s> '<command>'`, not a wrapper of your own. Before every command it asserts the pane is on `<host>`; the command travels base64-encoded, so any quoting, `!` and multiple lines arrive intact; it prints the output and exits with the command's status. Output taller than the pane is lost (rrun says so; the command still ran): redirect it to a file and read the file.
 - **Other text** (a prompt to a remote agent, an answer to an interactive program): **send the text and the Enter separately**; send the text with `-l` (literal, so tmux does not interpret `;`, `$`, etc.):
   ```bash
   $T send-keys -t "$S" -l '<prompt text>'
@@ -50,10 +50,10 @@ Steps 1–4 open a remote shell that you drive with `scripts/rrun.sh`. When the 
 
 ## Reading output / detecting completion
 
-- Read: `$T capture-pane -p -t "$S"` (add `-S -2000` for scrollback history).
-- Completion: `rrun.sh` polls shell commands; for the agent, poll its output state; always set an upper bound on the wait. For long jobs, judge completion by artifacts (files appearing, byte counts growing), not by guessing from pane text.
+- Read the pane (a prompt or a TUI; rrun already returns shell output): `$T capture-pane -p -t "$S" | grep -v '^$' | tail -20`.
+- Completion: `rrun.sh` polls shell commands; always set an upper bound on the wait. For long jobs, judge completion by artifacts (files appearing, byte counts growing), not by guessing from pane text.
 
 ## Teardown and discipline
 
 - **Keep the tmux alive**: do not kill the session while the task chain is unfinished. Only after everything is confirmed done, `$T kill-session -t "$S"` locally; the remote tmux is usually left in place for later inspection.
-- Never `pkill -f`; never `kill -9` remote CUDA processes.
+- Never `pkill -f`.
