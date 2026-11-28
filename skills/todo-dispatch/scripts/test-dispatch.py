@@ -39,6 +39,7 @@ class FakeBoard:
     def __init__(self):
         self.windows: dict[str, dict] = {}
         self.prompts: list[tuple[str, str]] = []
+        self.senders: list[str] = []  # each prompt's `by`
         self.new_name: str | None = None
         self.honor_rename = True
         self.refuse_rename = False
@@ -102,6 +103,7 @@ class FakeBoard:
                     board.closed.append(key)
                     return self._reply({"ok": True})
                 board.prompts.append((key, body["text"]))
+                board.senders.append(body.get("by"))
                 if body["text"].startswith("/rename ") and board.refuse_rename:
                     return self._reply({"ok": False, "error": "send blocked: a picker is open"})
                 if body["text"].startswith("/rename ") and board.honor_rename:
@@ -163,6 +165,14 @@ class DispatchNames(unittest.TestCase):
         BOARD.refuse_model = False
         BOARD.add("h1:1", "proj-cc")          # the dispatcher's own card, on another host
         BOARD.add("h2:2", "other-cc")
+
+    def test_lines_are_typed_as_the_dispatchers_own_card(self):
+        BOARD.windows["h1:1"]["session_id"] = "s-me"
+        BOARD.senders.clear()
+        dispatch.me.cache_clear()
+        with mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "s-me"}):
+            run()
+        self.assertEqual(BOARD.senders, ["proj-cc", "proj-cc"])
 
     def test_free_derived_name_is_still_renamed_out_of_the_derived_shape(self):
         BOARD.new_name = "proj-3b"
@@ -560,6 +570,16 @@ class Cards(unittest.TestCase):
                 contextlib.redirect_stdout(out):
             rc = dispatch.main()
         return rc, out.getvalue()
+
+    def test_say_types_into_the_named_card_as_this_session(self):
+        BOARD.prompts.clear()
+        BOARD.senders.clear()
+        BOARD.windows["h1:6"]["session_id"] = "s-me"
+        dispatch.me.cache_clear()
+        with mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "s-me"}):
+            rc, out = self.cli("say", "proj-w05", "收尾吧", "然后写交接")
+        self.assertEqual((rc, BOARD.prompts, BOARD.senders), (0, [("h2:5", "收尾吧 然后写交接")], ["other-w06"]))
+        self.assertIn("sent to h2:5", out)
 
     def test_cards_one_line_each_and_a_filter(self):
         rc, out = self.cli("cards")

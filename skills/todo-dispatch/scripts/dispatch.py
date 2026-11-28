@@ -51,6 +51,7 @@ show up, or more than one new card could be ours (nothing typed); 3 the prompt d
     python3 dispatch.py cards [<text>]
     python3 dispatch.py tl <key|name> [<events, 20>] [<chars each, 300>]
     python3 dispatch.py close <key|name> [--wait <seconds>]
+    python3 dispatch.py say <key|name> <text…>
 
 `cards` prints one line per card (key, name, host, triage, model, cwd), only the lines holding
 <text> when given. `tl` prints the card's last timeline events in time order. `close` closes a
@@ -58,9 +59,12 @@ card once it has handed over: the newest line it wrote holds HANDOFF and after t
 input a person typed (person_typed) and made no tool call; else it closes nothing, prints why
 and exits 5. `--wait` polls the timeline every 20 s up to that long for the HANDOFF line (a
 `/goal` card the goal hook keeps sending back is closed the same round); 3 when the board
-refused the close.
+refused the close. `say` types <text> into the card (newlines become spaces); exit 3 when it
+did not land. Every line this script types shows on the card's timeline as sent by the card it
+runs in (type_in).
 """
 import datetime
+import functools
 import json
 import math
 import os
@@ -151,6 +155,20 @@ def cards() -> dict:
     return {w["key"]: w for w in call("GET", "/api/windows")["windows"]}
 
 
+@functools.cache
+def me() -> str:
+    """The card this script runs in, by name: the one holding this Claude session's id, as scan.py
+    finds the dispatcher's own card. Empty outside a session. Read once, before the first line goes
+    in, so a board that stops answering reads later still gets the lines."""
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    return next((w.get("name") or w["key"] for w in cards().values() if sid and w.get("session_id") == sid), "")
+
+
+def type_in(key: str, text: str) -> dict:
+    """Type `text` into card `key`, named on its timeline as sent by me() (`api` when empty)."""
+    return call("POST", f"/api/windows/{key}/prompt", {"text": text, "by": me()})
+
+
 def claim_unique_name(key: str, cwd: str) -> tuple[str | None, str | None]:
     """`/rename` card `key` to a `<basename of cwd>-w<2 hex>` no other card on the board has.
     Returns (name, warning); the warning says the card still has its derived name because the
@@ -160,7 +178,7 @@ def claim_unique_name(key: str, cwd: str) -> tuple[str | None, str | None]:
     taken = {w.get("name") for k, w in now.items() if k != key}
     base = os.path.basename(cwd)
     want = random.choice([n for n in (f"{base}-w{i:02x}" for i in range(256)) if n not in taken])
-    r = call("POST", f"/api/windows/{key}/prompt", {"text": f"/rename {want}", "by": "dispatcher"})
+    r = type_in(key, f"/rename {want}")
     if r.get("ok"):
         for _ in range(15):
             time.sleep(2)
@@ -352,6 +370,14 @@ def show_timeline(said: list[str]) -> int:
     return 0
 
 
+def say(said: list[str]) -> int:
+    w = find_card(said[0])
+    r = type_in(w["key"], " ".join(said[1:]))
+    print(f"{'sent to' if r.get('ok') else 'NOT sent to'} {w['key']} ({w.get('name')})"
+          + ("" if r.get("ok") else f": {r.get('error')}"))
+    return 0 if r.get("ok") else 3
+
+
 def close_card(said: list[str]) -> int:
     w = find_card(said[0])
     deadline = time.time() + (float(said[said.index("--wait") + 1]) if "--wait" in said else 0)
@@ -381,8 +407,8 @@ def close_card(said: list[str]) -> int:
 
 
 def main() -> int:
-    if sys.argv[1:2] and sys.argv[1] in ("cards", "tl", "close"):
-        return {"cards": list_cards, "tl": show_timeline, "close": close_card}[sys.argv[1]](sys.argv[2:])
+    if sys.argv[1:2] and sys.argv[1] in ("cards", "tl", "close", "say"):
+        return {"cards": list_cards, "tl": show_timeline, "close": close_card, "say": say}[sys.argv[1]](sys.argv[2:])
     host, cwd, prompt_file = sys.argv[1:4]
     flow = sys.argv[5] if sys.argv[4:5] == ["--hmz"] else None
     with open(prompt_file, encoding="utf-8") as f:
@@ -439,7 +465,7 @@ def main() -> int:
     if flow:
         # hmz names its own sessions, takes its agents' models from its settings and keeps the run's
         # record itself (an epic), which the board reports as the card's transcript once the flow starts.
-        r = call("POST", f"/api/windows/{key}/prompt", {"text": f"${flow} {' '.join(text.split())}", "by": "dispatcher"})
+        r = type_in(key, f"${flow} {' '.join(text.split())}")
         card: dict = {}
         # Polled even when the board says the line did not land: its second paste of a line hmz was
         # slow to start on is refused ("cannot choose a flow while one is running") by the run the
@@ -471,7 +497,7 @@ def main() -> int:
     if not m.get("ok"):
         why = f"switch to {model} failed" if model else "Fable quota not read"
         warning = "; ".join(filter(None, [warning, f"{why} ({m.get('error')}): the card runs its default model"]))
-    r = call("POST", f"/api/windows/{key}/prompt", {"text": text, "by": "dispatcher"})
+    r = type_in(key, text)
     try:
         name = cards().get(key, {}).get("name", name)
     except OSError:
