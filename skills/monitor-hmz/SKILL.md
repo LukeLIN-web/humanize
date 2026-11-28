@@ -21,7 +21,7 @@ This is the hmz twin of `monitor-claude-goal` (same directory tree, `../monitor-
 
 - `<workspace>` — the directory the run is in (the hmz card's cwd). hmz holds one run per workspace, so the workspace names the target. The epic is re-resolved every tick, because `/resume` writes a new one.
 - `--cadence 1h` — tick interval.
-- `--decision-timeout 1h` — how long an agent's question to a person may stay unanswered before the monitor answers it (§5.2). `off` keeps it notify-only.
+- `--decision-timeout 1h` — how long a question asked of any role but `user` may stay unanswered before the monitor answers it (§5.2). A `user` question is never answered. `off` makes every question notify-only.
 - `--no-resume` — never `/resume` a run that died (§5.3). Notify instead.
 - `--codex-review MODEL:EFFORT` — off unless passed. When passed, follow `../monitor-claude-goal/references/codex-review.md`, with files under `/tmp/hmz-monitor/<slug>.codex/` and `-C <workspace>`.
 - `--notify-only` — kill switch: no say, no answer, no resume, no stop. Every proposed action goes to the tick output and the findings log.
@@ -36,7 +36,9 @@ Run the scripts with the Python that hmz is installed in: `PY=$(head -1 "$(comma
 
 **The run.** `hmz` (the TUI, usually a claude-board card) hands the run to a per-workspace host daemon (`hmz.daemon.running(ws)`), which holds it apart from the TUI: closing the card does not end the run. Each turn runs one agent headless (`claude --print --input-format stream-json …` or `codex app-server`). Whether a turn gets a fresh session is the flow's: flame_chase gives every turn a fresh one, so turns share only the repository and the budget is its only end; goal_reviewed's actor keeps one session for all its turns, and each reviewer starts fresh and writes `.hmz/reviews/<run>/review-<n>.md`. Read the flow's docstring on the first tick. A turn that fails ends the run.
 
-**The sandbox (fence).** A turn whose role is narrower than `danger-full-access` with network runs under `hmz internal fence`; one with it (goal_reviewed's actor) runs unfenced: no denials, no fence `TMPDIR`, and the jobs it detaches show up only by `cwd` and on the GPUs (H5). With the default permission (workspace writable, home and system read-only, network open), a write anywhere but the workspace, `/tmp`, `/var/tmp` and the CLI's own state fails with `Permission denied`: `~/.codex`, `~/.cache/huggingface`, other repos, shared tool directories. The turn's `TMPDIR` is `/tmp/hmz-fence-<id>`, and its XDG/pip/uv caches are pointed there too. Any process the turn starts inherits that `TMPDIR`, including one detached with `setsid`/`nohup`, which is how the snapshot finds jobs a turn left behind.
+**The sandbox (fence).** A turn whose role is narrower than `danger-full-access` with network runs under `hmz internal fence`; one with it (goal_reviewed's actor) runs unfenced: no denials, no fence `TMPDIR`, and the jobs it detaches show up only by `cwd` and on the GPUs (H5). With the default permission (workspace writable, home and system read-only, network open), a write anywhere but the workspace, `/tmp`, `/var/tmp` and the CLI's own state fails with `Permission denied`: `~/.codex`, `~/.cache/huggingface`, other repos, shared tool directories. A fenced agent's `TMPDIR` is `/tmp/hmz-fence-<id>`, one for all its turns, and its XDG/pip/uv caches are pointed there too. It is removed when the agent is stopped at the run's end. Any process a turn starts inherits that `TMPDIR`, which is how the snapshot finds jobs a turn left behind.
+
+**What outlives a turn.** When a turn's CLI exits, what it started dies with it unless it had already left the CLI's process tree. `setsid nohup <cmd> > log 2>&1 &` in a Bash call that then returns survives; `run_in_background`, `setsid <cmd> &` from a shell still running, and a launch whose Bash call is still running when the turn is cut off do not. When the turn ran under `hmz internal cred`, a survivor's `TracerPid` (`/proc/<pid>/status`) is that process: it tells a turn's job from another session's. A fenced turn's survivor stays fenced, and its output belongs in the workspace, not under its `TMPDIR`.
 
 **The budget.** hmz counts only its agents' model tokens (priced from the price list hmz caches per machine) and turn time. Anything a turn launches that spends money is outside it (§4, H2). With `graceful: true` a cap lets the turn under way finish, which can take hours. No new turn starts after the cap. A running run's budget cannot be raised (`references/resume-and-extend.md` §4).
 
@@ -48,13 +50,13 @@ Run the scripts with the Python that hmz is installed in: `PY=$(head -1 "$(comma
 
 | key | what it is |
 |---|---|
-| `daemon.status` | `state` (running / stopping / idle), `epic`, `usage` vs `budget`, `pending` (questions agents are waiting on a person for), `ended` |
+| `daemon.status` | `state` (running / stopping / idle), `epic`, `usage` vs `budget`, `pending` (questions waiting on a person, each with the `role` asked), `ended` |
 | `epic` | began, flow, agents, budget, task, `picked_up`, events, `ended`, final `usage_line` |
 | `chain` | cost and turn-seconds summed over the chain against the caps, cost per turn-hour, hours to each cap at that rate |
 | `turns` | one transcript per session, in the order the run opened them, each with its role, byte size and idle seconds. A role that keeps its session (goal_reviewed's actor) has one transcript for all its turns |
 | `turn_detail` | the tails of the most recently written transcripts: `user_lines` (the task and lines said into the turn), `said`, `commands`, `errors`, fence `denied` |
 | `processes_in_run` | the daemon's process tree: the working turn's CLI and its foreground tools |
-| `processes_outside_run_tree` / `current_turn_fence` | every process outside that tree that carries an hmz fence `TMPDIR`, or works in the workspace and is not under a tmux pane: jobs turns detached (another session's detached jobs match too: check args). A fence not in `current_turn_fence` belongs to a finished turn (or another hmz run on the machine: check `cwd` and args) |
+| `processes_outside_run_tree` / `current_turn_fence` | every process outside that tree that carries an hmz fence `TMPDIR`, or works in the workspace and is not under a tmux pane: jobs turns detached (another session's detached jobs match too: check args and `TracerPid`, §2 What outlives a turn). A fence not in `current_turn_fence` belongs to an agent with no turn open now (or another hmz run on the machine: check `cwd` and args) |
 | `gpu_cards`, `git`, `tui` | GPU use, commits since the chain began (other sessions' commits in a shared repo included), worktree status, a rebase or merge under way (`git.in_progress`), the TUI pane and its last lines |
 
 For the audit, read the turn transcripts themselves from the checkpoint's byte offsets. In Claude Code's layout use only records of type `user` and `assistant`: `api-request-blob` records replay earlier messages.
@@ -101,6 +103,7 @@ For the audit, read the turn transcripts themselves from the checkpoint's byte o
      - Fine: it moved the write into the workspace or `/tmp` and carried on.
      - A finding: it skipped the step, swapped in a different experiment, reported results the step would have produced, or wrote through a side door.
      - A denial nothing inside the fence can get past (a write the work needs outside the workspace): notify the human with the exact path. Fixing it is theirs: widen the role's permission in the flow's setup, or run that piece outside hmz.
+     - `Permission to use <tool> … has been denied` is not the fence: hmz allows every tool request a flow hook does not refuse, so it is the Claude settings' `deny` list, often on purpose. Judge what the turn did next the same way.
    - **H4 handoff.** A role that starts fresh each turn knows only what the last turn left in the repository: commits, plus whatever todo or results page the task names (for goal_reviewed, the review file). A new turn should build on that rather than redo it. A missing or ignored handoff is a finding.
    - **H5 jobs left behind, and collisions.**
      - Jobs: `processes_outside_run_tree`, and GPU jobs above all. Each needs a record in the repository of what it is, where its output goes and how to check it. Flag a later turn that relaunches the same job or crowds the same cards.
@@ -110,6 +113,7 @@ For the audit, read the turn transcripts themselves from the checkpoint's byte o
    - *progressing:* the transcript is advancing.
    - *waiting:* a foreground sleep or poll on a job that is still alive. Fine.
    - *stuck:* the transcript has been idle for ≥ 2× cadence while the CLI lives and what it waits on is dead. Notify only: a headless turn has no Escape, and a said line lands only when the hung tool returns.
+   - *spinning:* short turns one after another with no commits. flame_chase has no end but the budget, so once the goal is met it keeps spending this way. Notify the human: ending the run is theirs.
    - *asking:* `status.pending` is non-empty. Go to §5.2.
    - *ended* or *unfinished:* go to §5.3.
 5. **Decide.**
@@ -144,7 +148,11 @@ The default is auto-steer every finding. When unsure, send the best-judgment ste
 
 ### 5.2 An agent waiting on a person
 
-Notify on first sight. If the same question (same `question` id and text in `status.pending`) is still unanswered after `--decision-timeout`, answer it:
+Notify on first sight, and name the question in each later tick's line while it waits.
+
+Never answer a question asked of the `user` role, however long it waits (user 2026-11-27 定): a flow asks that role only what the user alone can decide. goal_reviewed waits on it spending nothing, and with the person marked away writes it to `for-user.md` and goes on. Relay an answer only when the user gives it to you.
+
+A question of any other role still unanswered after `--decision-timeout` (same `question` id and text in `status.pending`) is the monitor's to answer:
 
 ```bash
 cd /tmp && $PY -I <skill-dir>/scripts/hmz-say.py <workspace> "<answer>" --answer <question-id>
