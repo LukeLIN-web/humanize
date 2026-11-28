@@ -35,6 +35,11 @@ Run these probes before any code reading. Treat any counts or classifications ca
 7. **Trigger coverage per host.** For a hook that fires on a prompt convention, count per host the prompts that match the convention against the injections the hook left in transcripts. Wiring done machine by machine silently leaves the other hosts without it — prefer registering the hook where every host reads it (the repo's `.claude/settings.json`).
 8. **Sibling hooks that parse the same trigger.** Feed every hook that reads the same convention one corpus — plain, wrapped in the CLI's paste markup, the CLI's own slash form. When one learns a new form and the others don't, they drift; give them one shared parser.
 9. **Residue is two classes — don't conflate them.** Dead residue (crashed-session leftovers) is delete-once. A *live leak* — files that reappear minutes after you sweep — means the producer is still broken, and a single sweep hides it. Before "fixing cleanup at X's exit path", `grep` who actually writes the file: **same-name ≠ same-thing.** Check the consumer/registrar, not the filename.
+10. **Recurring failure signatures across sessions.** On every host the sessions ran on (transcripts are per host), count the sessions whose tool results carry each failure signature since the last pass:
+    ```bash
+    python3 <this skill>/scripts/failure-signatures.py --since <last pass, YYYY-MM-DD> --cwd <repo> ~/.claude/projects ~/.codex/sessions
+    ```
+    The default signatures are in the script (`--sig <regex>` replaces them). A signature seen in several sessions is fixed where the agent learned the command (environment, dispatch prompt, skill); check the friction ledger's earlier fixes for recurrence.
 
 ## Phase 2 — Repo audits (fan out one subagent per repo)
 
