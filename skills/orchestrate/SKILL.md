@@ -12,7 +12,7 @@ description: Run a multi-step engineering/research task as an orchestrator that 
 
 ## 两种模式：先读对应文件全文再动手
 
-- **协作 PR 模式**：user 要你并行派 agent 走 PR 流程推进仓库、观察协作摩擦并在流程上解决（「来，做 idea 1、2、3」，常带 merge queue、SemVer、CI/CD）。读同目录的 `collab-pr.md`；它覆盖规则 6、9。
+- **协作 PR 模式**：user 要你并行派 agent 走 PR 流程推进仓库、观察协作摩擦并在流程上解决（「来，做 idea 1、2、3」，常带 merge queue、SemVer、CI/CD）。读同目录的 `collab-pr.md`；它覆盖规则 6、9 和规则 7 的例外。
 - **里程碑模式**：user 给一个 milestone（「这个 milestone 要做 X」「开个 milestone」「按 milestone 走」），要你从 brainstorm 一路推到合进默认分支。读同目录的 `milestone.md`；它覆盖工作流第 2 步和规则 5、6、9。
 
 ## 十条规则
@@ -83,8 +83,6 @@ description: Run a multi-step engineering/research task as an orchestrator that 
 - **语法/导入**：用仓库自己的解释器 `python -c "import <module>"`，不要用系统 python。
 - **静态检查先行**：能用脚本静态查出来的（lint、类型、shellcheck、schema、import、禁用写法的 grep）都放进仓库的静态检查脚本，
   每次先于测试跑。review 里同一类意见第二次出现，就把它写成一条检查，不再靠人看。
-- **测试**：unit / system / heavy 分层、全量跑不 fail-fast（`scripts/snapshot-run.sh` 在快照里跑，第一处失败就开始修）、
-  不碰代码逻辑就不跑测试（`scripts/touches-logic.sh`），见 `milestone.md` 第 3 步作者派单的「测试」、第 6 步和第 8 步。
 - **离线核对**：把新代码跑在已有的、标签已知的产物上，和旧标签逐字节比；这是比单测强得多的判据。
 - **冒烟**：真实入口、最小规模（1 个 task、2 个 episode、1 张卡），看产物目录里有没有东西，再放量。
 - **放量跑**：怎么挂、怎么盯见「长 GPU 作业」第 3、4 步；按时间自查真实产物，不等通知。盯跑时每轮在**全部已有数据**上重算结论依赖的性质（配对两边是不是同一开局、

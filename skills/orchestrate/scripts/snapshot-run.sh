@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # snapshot-run.sh — 在工作树的快照里跑测试，好让人在测试还在跑的时候就开始改代码。orchestrate 的测试纪律
-# 用（见 ../SKILL.md「门禁怎么选」）：全量跑、不 fail-fast，日志里第一处失败一出现就开始修。
+# 用（见 ../milestone.md 第 3 步作者派单的「测试」、../collab-pr.md 第 2 步）：全量跑、不 fail-fast，日志里第一处失败一出现就开始修。
 #
 #   snapshot-run.sh [--link <路径>]... <日志> -- <命令> [参数...]
 #

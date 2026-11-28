@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # touches-logic.sh — 一组改动碰没碰到代码逻辑；没碰到就不跑任何测试。orchestrate 的测试纪律用
-# （见 ../SKILL.md「门禁怎么选」、../milestone.md 第 6 步），本地和 CI 用同一个判据：CI 里用的是拷进仓库的同一个脚本。
+# （见 ../milestone.md 第 6 步），本地和 CI 用同一个判据：CI 里用的是拷进仓库的同一个脚本。
 #
 #   touches-logic.sh <base> <head>     两个提交之间：从 merge-base(<base>, <head>) 到 <head>（CI 用这个）
 #   touches-logic.sh <base>            到工作树为止：从 merge-base(<base>, HEAD) 起，连同没提交的改动和没 add 的新文件
