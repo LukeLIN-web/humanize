@@ -97,7 +97,7 @@ user 2026-10-14：共享工作树的本地默认分支由派单员推。扫描�
 bash <本 skill>/scripts/push-shared-main.sh            # 在「推送」那行所在的仓库里跑；门禁默认 bash scripts/ci_check.sh，别的用 --gate '<命令>'
 ```
 
-它并上 origin、在 HEAD 的临时 detached worktree 里过门禁（只查已提交的内容）、非强制地推。退出码和动作：
+它并上 origin、在 HEAD 的临时 detached worktree 里过门禁（只查已提交的内容）、非强制地推。门禁的输出只在门禁红时印（末尾 40 行），不用接 `tail`。退出码和动作：
 
 | 退出 | 意思 | 动作 |
 |---|---|---|

@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # todo-dispatch 每轮的推送：共享工作树的本地默认分支，并上 origin 后在「已提交的内容」上过门禁，再非强制地推上去。
-# 门禁跑在 HEAD 的临时 detached worktree 里，查不到别的会话没提交的改动。在仓库里跑：
+# 门禁跑在 HEAD 的临时 detached worktree 里，查不到别的会话没提交的改动；门禁的输出只在门禁红时印（末尾 40 行，stderr），
+# 过了不印。在仓库里跑：
 #
 #   push-shared-main.sh [--gate '<命令>']      默认门禁 bash scripts/ci_check.sh
 #
 # 退出码：0 推上去了或没有要推的；2 推失败但 origin 没前进（看报错）；
 #         3 别的会话没提交的改动挡着并 origin（暂存的、没做完的合并、或 origin 要动的文件上有改动；等它清了重跑）；
-#         4 门禁红（没推，报出待推区间的提交）；5 并 origin 冲突（已 abort）；6 推被拒（origin 刚前进，重跑）
+#         4 门禁红（没推，报出门禁输出的末尾 40 行和待推区间的提交）；5 并 origin 冲突（已 abort）；6 推被拒（origin 刚前进，重跑）
 set -euo pipefail
 
 GATE='bash scripts/ci_check.sh'
@@ -36,8 +37,9 @@ SHA=$(git rev-parse HEAD)
 WT=$(mktemp -d)/gate
 trap 'git worktree remove --force "$WT" >/dev/null 2>&1 || true; rm -rf "$(dirname "$WT")"' EXIT
 git worktree add -q --detach "$WT" "$SHA"
-if ! (cd "$WT" && bash -c "$GATE"); then
-  echo "门禁红在 ${SHA:0:7}，没推。待推区间：" >&2
+if ! (cd "$WT" && bash -c "$GATE") >"$WT.log" 2>&1; then
+  tail -n 40 "$WT.log" >&2
+  echo "门禁红在 ${SHA:0:7}，没推（上面是门禁输出的末尾 40 行）。待推区间：" >&2
   git log --format='  %h %<(100,trunc)%s' "origin/$B..$SHA" >&2
   exit 4
 fi
