@@ -63,9 +63,9 @@ Where every number comes from (so it can be recomputed from the source's own fil
   "Stop hook feedback:". A stretch is a run of consecutive send-backs of one prompt where the
   agent made no tool call (no `tool_use` block) after any of them before the next send-back or
   the next prompt (a user record with a new `promptId`). Its seconds run from the first
-  send-back to the record that ends it; its output tokens are the `usage.output_tokens` of
-  the model requests inside it (the last value seen per request). Line numbers are 1-based
-  physical lines of the log.
+  send-back to the record that ends it; its spend is that of the model requests inside it
+  (the last `usage` seen per request), tokens of every kind priced request by request as the
+  head's spend from transcripts is. Line numbers are 1-based physical lines of the log.
 - What the user typed (Claude): `type == "user"` records with `origin.kind == "human"`, and
   `queued_command` attachments with that origin (typed while the agent was working); in logs
   older than the `origin` field, user records whose content is a string, not `isMeta`, not a
@@ -395,7 +395,12 @@ def transcript_spend(logs: list[Path]) -> dict[str, float]:
                 if r.get("type") == "assistant" and isinstance(message.get("usage"), dict):
                     ident = str(message.get("id") or r.get("requestId") or f"{path}:{line}")
                     last[ident] = (str(message.get("model") or ""), message["usage"])
-    if not last:
+    return requests_spend(list(last.values()))
+
+
+def requests_spend(requests: list[tuple[str, dict[str, Any]]]) -> dict[str, float]:
+    """Tokens by kind, and cost where hmz prices every model used, of model requests as (model, usage)."""
+    if not requests:
         return {}
     try:
         from hmz.coganchor import prices
@@ -403,7 +408,7 @@ def transcript_spend(logs: list[Path]) -> dict[str, float]:
         prices = None
     spent: dict[str, float] = {}
     cost, priced = 0.0, prices is not None
-    for model, usage in last.values():
+    for model, usage in requests:
         kinds = {kind: float(usage.get(field) or 0) for kind, field in TOKEN_FIELDS}
         for kind, tokens in kinds.items():
             spent[f"{kind}_tokens"] = spent.get(f"{kind}_tokens", 0.0) + tokens
@@ -420,6 +425,17 @@ def transcript_spend(logs: list[Path]) -> dict[str, float]:
     if priced:
         spent["cost"] = cost
     return spent
+
+
+def spend_text(spent: dict[str, float]) -> str:
+    """`cost $X; tokens: input N, cache read N, ...` of one spend, as the head and each stretch print it."""
+    tokens = ", ".join(
+        f"{kind.replace('_', ' ')} {int(spent[f'{kind}_tokens'])}"
+        for kind, _ in TOKEN_FIELDS
+        if f"{kind}_tokens" in spent
+    )
+    cost = f"${spent['cost']:.4f}" if "cost" in spent else "not priced (a model hmz has no price for)"
+    return f"cost {cost}; tokens: {tokens or 'none counted'}"
 
 
 def session_logs(epic: Path, session: dict[str, Any]) -> list[Path]:
@@ -449,7 +465,7 @@ def session_logs(epic: Path, session: dict[str, Any]) -> list[Path]:
 def claude_raw(path: Path) -> dict[str, Any]:
     """Model turns, send-backs and stretches of one Claude Code transcript."""
     request_of: dict[str, int] = {}
-    out_tokens: dict[int, int] = {}
+    usage_of: dict[int, tuple[str, dict[str, Any]]] = {}  # per turn, the last usage seen
     sendbacks: list[dict[str, Any]] = []
     cap_notes: list[dict[str, Any]] = []
     tools_after: list[int] = []  # tool_use count after each send-back
@@ -469,9 +485,8 @@ def claude_raw(path: Path) -> dict[str, Any]:
             if ident not in request_of:
                 request_of[ident] = len(request_of) + 1
             turn = request_of[ident]
-            usage = message.get("usage") if isinstance(message.get("usage"), dict) else {}
-            if "output_tokens" in usage:
-                out_tokens[turn] = int(usage.get("output_tokens") or 0)
+            if isinstance(message.get("usage"), dict):
+                usage_of[turn] = (str(message.get("model") or ""), message["usage"])
             blocks = message.get("content") if isinstance(message.get("content"), list) else []
             n_tools = sum(1 for b in blocks if isinstance(b, dict) and b.get("type") == "tool_use")
             events.append({"kind": "model", "turn": turn, "line": line, "at": at, "tools": n_tools})
@@ -564,7 +579,7 @@ def claude_raw(path: Path) -> dict[str, Any]:
                 "seconds": (end_at or last["at"] or 0) - (first["at"] or 0)
                 if first["at"]
                 else None,
-                "output_tokens": sum(out_tokens.get(t, 0) for t in turns),
+                "spent": requests_spend([usage_of[t] for t in turns if t in usage_of]),
                 "condition": first["condition"],
                 "reasons": [sendbacks[i]["reason"] for i in upto],
                 "prompt": first["prompt"],
@@ -584,7 +599,6 @@ def claude_raw(path: Path) -> dict[str, Any]:
     close(current)
     return {
         "model_turns": len(request_of),
-        "output_tokens": sum(out_tokens.values()),
         "sendbacks": sendbacks,
         "stretches": stretches,
         "caps": cap_notes,
@@ -820,15 +834,8 @@ def digest(info: dict[str, Any], top: int, repeat_min: int, stretch_min: int, us
     w(f"- began {iso(t0)}, ended {iso(t1)}, wall time {secs(t1 - t0) if t0 and t1 else '?'}")
     spent = info["spent"]
     if spent:
-        tokens = ", ".join(
-            f"{kind.replace('_', ' ')} {int(spent[f'{kind}_tokens'])}"
-            for kind, _ in TOKEN_FIELDS
-            if f"{kind}_tokens" in spent
-        )
         w(
-            f"- spend ({info['spent_from']}): cost "
-            + (f"${spent['cost']:.4f}" if "cost" in spent else "not priced (a model hmz has no price for)")
-            + f"; tokens: {tokens or 'none counted'}"
+            f"- spend ({info['spent_from']}): {spend_text(spent)}"
             + (f"; agent seconds {secs(spent['seconds'])}" if "seconds" in spent else "")
         )
     else:
@@ -1077,14 +1084,10 @@ def digest(info: dict[str, Any], top: int, repeat_min: int, stretch_min: int, us
                 continue
             any_stretch = True
             turns = f"turns {st['turns'][0]}-{st['turns'][1]}" if st["turns"] else "no model turn"
-            share = ""
-            total_out = info["spent"].get("output_tokens") or 0
-            if total_out and info["spent"].get("cost"):
-                share = f", about ${info['spent']['cost'] * st['output_tokens'] / total_out:.4f} of the run's cost by output-token share"
             w(
                 f"- **{s['role']} `{s['id'][:8]}`, {turns}**: sent back {st['count']} times in a row "
                 f"with no tool call ({st['in_prompt']} send-backs in this prompt); "
-                f"{secs(st['seconds'])}, {st['output_tokens']} output tokens{share}. "
+                f"{secs(st['seconds'])}, {spend_text(st['spent']) if st['spent'] else 'no model request'}. "
                 f"Ended by: {st['ended_by']}. Evidence: `{rel}` lines {st['first_line']}-{st['end_line'] or st['last_line']}."
             )
             if st["condition"]:
