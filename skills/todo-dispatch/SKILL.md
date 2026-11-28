@@ -32,7 +32,7 @@ python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("name")
 - 打印「无变化：…。这一轮到此收尾。」：汇报就回这一行，这一轮结束：不推、不读卡、不走 GPU 排程、不重列等 user 的条目。只有上一轮第 5 步退出 3 时，先再跑一次第 5 步。
 - 否则只处理它列出的事，七步里和它们无关的跳过。
 - 「今天第一轮」：续定时（见上），台账的 open 条目全部重新分类，等 user 的条目在汇报里重列一次。
-- 「重读 skill」，或这一轮之前刚压缩过上下文：用 Skill 重读本 skill 和 gpu-priority 再往下走；其余轮次照会话里已有的正文做。
+- 「重读 skill」：用 Skill 重读本 skill 和 gpu-priority 再往下走；其余轮次照会话里已有的正文做。
 - 目标仓库根的 `CLAUDE.md` 自动加载；`CONTRIBUTING.md`（台账在哪、认领规则和工具、门禁、提交与推送）会话开头读一次，`git log` 里它改过再重读。摩擦台账（目标仓库的 `docs/collab-friction.md`，没有就建）要记一行或核「待核」的修补时才读。
 
 ## 一轮七步
